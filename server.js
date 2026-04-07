@@ -7,7 +7,7 @@ const { createClient } = require('@supabase/supabase-js');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
