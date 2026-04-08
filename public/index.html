@@ -348,4 +348,190 @@ function calcSL(entry, direction) {
 function renderDivergences() {
   const divs = mkt.divergences;
   const el = document.getElementById('div-section');
-  if(!divs ||
+  if(!divs || !divs.length) {
+    el.innerHTML = '<div class="no-div">Sin divergencias activas en este momento</div>';
+    return;
+  }
+  el.innerHTML = divs.slice(0,5).map(d => {
+    const isShort = d.direction==='SHORT';
+    const col = isShort?'#ff4d6d':'#00d68f';
+    const tp1 = calcTP(d.entry, d.direction, d.liqTarget);
+    const sl = calcSL(d.entry, d.direction);
+    const rr = Math.abs((tp1 - d.entry) / (sl - d.entry)).toFixed(1);
+    const actClass = d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
+    const probClass = d.probability >= 85 ? (isShort?'blink-red':'blink-green') : '';
+    return `<div class="div-card ${isShort?'div-short':'div-long'}">
+      <div class="div-header">
+        <span class="div-name" style="color:${col}">${isShort?'▼':'▲'} ${d.name}</span>
+        <span class="div-prob ${probClass}" style="color:${col}">${d.probability}%</span>
+      </div>
+      <div class="div-desc">${d.description}</div>
+      <div class="div-footer">
+        <div class="div-levels">
+          <div class="div-level"><div class="div-level-lbl">Entry</div><div class="div-level-val">$${parseInt(d.entry).toLocaleString()}</div></div>
+          <div class="div-level"><div class="div-level-lbl">TP</div><div class="div-level-val" style="color:#00d68f">$${parseInt(tp1).toLocaleString()}</div></div>
+          <div class="div-level"><div class="div-level-lbl">SL</div><div class="div-level-val" style="color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div></div>
+          <div class="div-level"><div class="div-level-lbl">R:R</div><div class="div-level-val">1:${rr}</div></div>
+        </div>
+        <span class="action-badge ${actClass}">${d.action}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderCombined() {
+  const cs = mkt.combinedSignal;
+  const box = document.getElementById('combined-box');
+  if(!cs || !mkt.divergences?.length) { box.style.display='none'; return; }
+  box.style.display = 'block';
+  const isShort = cs.direction==='SHORT', isLong = cs.direction==='LONG';
+  const col = isShort?'#ff4d6d':isLong?'#00d68f':'#f59e0b';
+  box.className = `combined-box ${isShort?'comb-short':isLong?'comb-long':'comb-wait'}`;
+  const actClass = cs.action==='ENTRAR'?'act-enter':cs.action?.includes('ESPERAR')?'act-wait':'act-no';
+  box.innerHTML = `
+    <div class="comb-header">
+      <span style="font-size:22px">${isShort?'▼':isLong?'▲':'◆'}</span>
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span class="comb-dir" style="color:${col}">${cs.direction}</span>
+          <span class="comb-prob" style="color:${col}">${cs.probability}%</span>
+          <span class="action-badge ${actClass}">${cs.action}</span>
+        </div>
+        <div style="font-size:11px;color:#4b5563;margin-top:3px">${cs.shortCount||0} señales SHORT · ${cs.longCount||0} señales LONG activas</div>
+      </div>
+    </div>`;
+}
+
+function renderVRVP() {
+  const v = mkt.vrvp, p = mkt.price;
+  if(!v||!p) return;
+  const pocDist = (((p-v.poc)/v.poc)*100).toFixed(2);
+  const vahDist = (((p-v.vah)/v.vah)*100).toFixed(2);
+  const valDist = (((p-v.val)/v.val)*100).toFixed(2);
+  document.getElementById('vrvp-panel').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:0">
+      <div class="vrvp-row">
+        <span style="font-size:11px;color:#4b5563">VAH <span style="font-size:9px">(resistencia)</span></span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">$${parseInt(v.vah).toLocaleString()}</span>
+        <span style="font-size:10px;color:${parseFloat(vahDist)>0?'#00d68f':'#ff4d6d'}">${vahDist>0?'+':''}${vahDist}%</span>
+      </div>
+      <div class="vrvp-row" style="background:rgba(245,158,11,.06);border-radius:4px;padding:6px 0">
+        <span style="font-size:11px;color:#f59e0b;font-weight:700">POC <span style="font-size:9px">(máx. volumen)</span></span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:#f59e0b">$${parseInt(v.poc).toLocaleString()}</span>
+        <span style="font-size:10px;color:${parseFloat(pocDist)>0?'#00d68f':'#ff4d6d'}">${pocDist>0?'+':''}${pocDist}%</span>
+      </div>
+      <div class="vrvp-row">
+        <span style="font-size:11px;color:#4b5563">VAL <span style="font-size:9px">(soporte)</span></span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:#00d68f">$${parseInt(v.val).toLocaleString()}</span>
+        <span style="font-size:10px;color:${parseFloat(valDist)>0?'#00d68f':'#ff4d6d'}">${valDist>0?'+':''}${valDist}%</span>
+      </div>
+      <div style="font-size:10px;color:#2a3040;margin-top:6px;padding-top:5px;border-top:1px solid #1e2330">
+        ${p>v.poc?'▲ Precio sobre POC — zona de valor superada':'▼ Precio bajo POC — busca soporte en VAL'}
+        ${Math.abs(p-v.vah)/v.vah < 0.005 ? ' · ⚠ Precio tocando VAH — resistencia clave' : ''}
+      </div>
+    </div>`;
+}
+
+function renderOB() {
+  const ob = mkt.orderBook, p = mkt.price;
+  if(!ob) return;
+  const imb = parseFloat(ob.imbalance||0);
+  const col = imb>15?'#00d68f':imb<-15?'#ff4d6d':'#f59e0b';
+  const press = ob.pressure==='bid_dominant'?'Presión compradora':ob.pressure==='ask_dominant'?'Presión vendedora':'Equilibrado';
+  let wallsHtml = '';
+  (ob.bidWalls||[]).slice(0,2).forEach(w => { wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-bid">BID WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`; });
+  (ob.askWalls||[]).slice(0,2).forEach(w => { wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-ask">ASK WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`; });
+  document.getElementById('ob-panel').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;color:#4b5563">${press}</span>
+      <span class="mono" style="font-size:12px;font-weight:700;color:${col}">Imb: ${imb}%</span>
+    </div>
+    <div style="height:5px;background:#111520;border-radius:3px;overflow:hidden;margin-bottom:8px">
+      <div style="height:100%;width:${Math.min(100,Math.max(0,50+imb/2))}%;background:${col};border-radius:3px;transition:width .5s"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px">
+      <span style="color:#00d68f">BID ${ob.bidVol} BTC</span>
+      <span class="mono" style="font-weight:700">$${fmt(p)}</span>
+      <span style="color:#ff4d6d">ASK ${ob.askVol} BTC</span>
+    </div>
+    ${wallsHtml||'<div style="font-size:10px;color:#2a3040">Sin paredes significativas</div>'}
+    <div style="font-size:10px;color:#2a3040;margin-top:4px">Spread: $${ob.spread} (${ob.spreadPct}%)</div>`;
+}
+
+function renderLiq() {
+  const liq = mkt.liqMagnets, p = mkt.price;
+  if(!liq||!p) return;
+  document.getElementById('liq-panel').innerHTML = liq.slice(0,8).map(z => {
+    const col = z.direction==='up'?'#ff4d6d':'#00d68f';
+    const arrow = z.direction==='up'?'↑':'↓';
+    const isMajor = z.size >= 600;
+    const rowClass = isMajor ? 'liq-row liq-major' : 'liq-row';
+    const priceColor = isMajor ? '#f59e0b' : col;
+    const sizeColor = isMajor ? '#f59e0b' : '#4b5563';
+    return `<div class="${rowClass}">
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="width:7px;height:7px;border-radius:50%;background:${isMajor?'#f59e0b':col};display:inline-block;flex-shrink:0${isMajor?';box-shadow:0 0 6px #f59e0b':''}"></span>
+        <span class="mono" style="font-size:12px;font-weight:700;color:${priceColor}">$${parseInt(z.price).toLocaleString()}</span>
+        ${isMajor?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">MAYOR</span>':''}
+      </div>
+      <span style="font-size:10px;color:${sizeColor}">${z.label} · $${z.size}M</span>
+      <span style="font-size:11px;font-weight:700;color:${priceColor}">${arrow}${z.dist}%</span>
+    </div>`;
+  }).join('');
+}
+
+async function runAI() {
+  const btn=document.getElementById('ai-btn'), icon=document.getElementById('ai-icon'), result=document.getElementById('ai-result');
+  btn.disabled=true; icon.innerHTML='<span class="thinking">●</span>';
+  result.className='ai-box ai-loading';
+  result.innerHTML='<div class="ai-hdr"><span>✦</span><span style="font-size:13px;font-weight:700;color:#8b5cf6">Claude analizando...</span></div><div class="ai-reasoning">Procesando divergencias, imanes y sesgo multi-TF...</div>';
+  try {
+    const res = await fetch(`${API}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,marketData:mkt})});
+    const d = await res.json();
+    const isLong=d.direction==='LONG', isShort=d.direction==='SHORT';
+    const col = isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
+    result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
+    const actClass = d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
+    result.innerHTML=`
+      <div class="ai-hdr">
+        <span style="font-size:18px">${isLong?'▲':isShort?'▼':'◆'}</span>
+        <span style="font-size:14px;font-weight:700;color:${col}">${d.direction} — ${d.confidence}%</span>
+        <span class="action-badge ${actClass}">${d.action||'ESPERAR'}</span>
+      </div>
+      <div class="ai-reasoning">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div>
+      <div class="ai-levels">
+        <div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div>
+        <div class="ai-level"><div class="ai-level-lbl">TP1/TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()}<br><span style="font-size:10px">$${(d.tp2||0).toLocaleString()}</span></div></div>
+        <div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div>
+      </div>`;
+    if(d.entry){document.getElementById('c-ent').value=d.entry.toFixed(1);document.getElementById('c-tp').value=d.tp1.toFixed(1);document.getElementById('c-sl').value=d.sl.toFixed(1);calc();}
+  } catch(e) {
+    result.className='ai-box ai-wait';
+    result.innerHTML='<div class="ai-hdr"><span>⚠</span><span style="font-size:13px;font-weight:700;color:#f59e0b">Error de conexión</span></div>';
+  }
+  btn.disabled=false; icon.textContent='✦';
+}
+
+function calc() {
+  const cap=parseFloat(document.getElementById('c-cap').value)||0;
+  const lev=parseFloat(document.getElementById('c-lev').value)||1;
+  const ent=parseFloat(document.getElementById('c-ent').value)||0;
+  const tp=parseFloat(document.getElementById('c-tp').value)||0;
+  const sl=parseFloat(document.getElementById('c-sl').value)||0;
+  const sz=cap*lev;
+  document.getElementById('r-sz').textContent=sz?'$'+fmt(sz):'–';
+  if(ent&&tp&&sl){
+    const pr=sz*(tp-ent)/ent, ls=sz*(ent-sl)/ent, rr=Math.abs(pr/ls);
+    document.getElementById('r-pr').textContent=(pr>0?'+':'')+'$'+fmt(Math.abs(pr));
+    document.getElementById('r-ls').textContent='-$'+fmt(Math.abs(ls));
+    document.getElementById('r-rr').textContent='1:'+rr.toFixed(2);
+    document.getElementById('r-rr').style.color=rr>=2?'#00d68f':rr>=1?'#f59e0b':'#ff4d6d';
+    document.getElementById('r-lq').textContent='$'+fmt(ent*(1-1/lev*0.9));
+  }
+}
+
+fetchAll();
+setInterval(fetchAll, 30000);
+</script>
+</body>
+</html>
