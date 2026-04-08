@@ -486,7 +486,7 @@ async function runAI() {
   result.className='ai-box ai-loading';
   result.innerHTML='<div class="ai-hdr"><span>✦</span><span style="font-size:13px;font-weight:700;color:#8b5cf6">Claude analizando...</span></div><div class="ai-reasoning">Procesando divergencias, imanes y sesgo multi-TF...</div>';
   try {
-    const res = await fetch(`${API}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,marketData:mkt})});
+    const res = await fetch(`${API}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,marketData:{price:mkt.price,change24h:mkt.change24h,fundingRate:mkt.fundingRate,openInterest:mkt.openInterest,volume24h:mkt.volume24h,rsi15m:mkt.rsi15m,rsiOverbought:mkt.rsiOverbought,rsiOversold:mkt.rsiOversold,cvd15m:mkt.cvd15m,vrvp:mkt.vrvp,bb15m:mkt.bb15m,vwap15m:mkt.vwap15m,volDeltaPct:mkt.volDeltaPct,orderBook:{pressure:mkt.orderBook?.pressure,imbalance:mkt.orderBook?.imbalance,bidWalls:mkt.orderBook?.bidWalls?.slice(0,2),askWalls:mkt.orderBook?.askWalls?.slice(0,2)},liqMagnets:mkt.liqMagnets?.slice(0,5),divergences:mkt.divergences?.slice(0,3),combinedSignal:mkt.combinedSignal,bias:{tf15m:{bias:mkt.bias?.tf15m?.bias,score:mkt.bias?.tf15m?.score,rsi:mkt.bias?.tf15m?.rsi},tf1h:{bias:mkt.bias?.tf1h?.bias,score:mkt.bias?.tf1h?.score,rsi:mkt.bias?.tf1h?.rsi},tf4h:{bias:mkt.bias?.tf4h?.bias,score:mkt.bias?.tf4h?.score,rsi:mkt.bias?.tf4h?.rsi},tf1d:{bias:mkt.bias?.tf1d?.bias,score:mkt.bias?.tf1d?.score,rsi:mkt.bias?.tf1d?.rsi}}}})});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const text = await res.text();
     const d = JSON.parse(text);
