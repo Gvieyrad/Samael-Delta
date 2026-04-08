@@ -487,7 +487,9 @@ async function runAI() {
   result.innerHTML='<div class="ai-hdr"><span>✦</span><span style="font-size:13px;font-weight:700;color:#8b5cf6">Claude analizando...</span></div><div class="ai-reasoning">Procesando divergencias, imanes y sesgo multi-TF...</div>';
   try {
     const res = await fetch(`${API}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,marketData:mkt})});
-    const d = await res.json();
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const text = await res.text();
+    const d = JSON.parse(text);
     const isLong=d.direction==='LONG', isShort=d.direction==='SHORT';
     const col = isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
     result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
