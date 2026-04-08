@@ -1,4 +1,4 @@
-require('dotenv').config();
+  require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -198,7 +198,7 @@ app.get('/api/market/:symbol', async (req, res) => {
   try {
     const symbol = req.params.symbol || 'BTCUSDT';
 
-    const [ticker, oiRes, funding, klines15m, klines1h, klines4h, klines1d, oiHistory, obRes] = await Promise.all([
+    const [ticker, oiRes, funding, klines15m, klines1h, klines4h, klines1d, , obRes] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
@@ -206,7 +206,7 @@ app.get('/api/market/:symbol', async (req, res) => {
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
-      axios.get(`${BINANCE}/fapi/v1/openInterestHist?symbol=${symbol}&period=15m&limit=10`),
+      axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`)
     ]);
 
@@ -214,7 +214,7 @@ app.get('/api/market/:symbol', async (req, res) => {
     const rsi15m = calcRSI(closes15m);
     const cvd15m = calcCVD(klines15m.data);
     const vrvp = calcVRVP(klines15m.data);
-    const oiDelta = calcOIDelta(oiHistory.data);
+    const oiDelta = { delta: 0, deltaPct: '0.000', trend: 'flat', momentum: 'weak' };
     const divergence = detectDivergence(klines15m.data, cvd15m, oiDelta);
     const ob = analyzeOrderBook(obRes.data.bids, obRes.data.asks);
 
