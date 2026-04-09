@@ -85,6 +85,10 @@ body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size
 .ai-level{background:rgba(0,0,0,.25);border-radius:5px;padding:6px 8px;text-align:center}
 .ai-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px}
 .ai-level-val{font-family:monospace;font-size:12px;font-weight:700}
+.scalp-active{animation:pulse .8s infinite}
+.badge-confirmed{background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
+.badge-pending{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
+.badge-scalp{background:rgba(139,92,246,.15);color:#8b5cf6;border:1px solid rgba(139,92,246,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
 .btn-ai{background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.35);color:#8b5cf6;font-size:12px;padding:5px 13px;border-radius:5px;cursor:pointer;font-weight:600;font-family:inherit;display:flex;align-items:center;gap:5px}
 .btn-ai:hover{background:rgba(139,92,246,.18)}
 .btn-ai:disabled{opacity:.5;cursor:not-allowed}
@@ -145,6 +149,7 @@ input[type=number]:focus{border-color:#f59e0b}
       <div style="display:flex;gap:6px">
         <button class="btn-ai" id="ai-btn" onclick="runAI()"><span id="ai-icon">✦</span> Analizar</button>
         <button class="btn-ai" id="alert-btn" onclick="triggerAlert()" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);color:#f59e0b" title="Disparar alerta Telegram ahora"><span id="alert-icon">🔔</span></button>
+        <button class="btn-ai" id="scalp-btn" onclick="toggleScalping()" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.35);color:#8b5cf6" title="Modo Scalping — análisis cada 3 min"><span id="scalp-icon">⚡</span> Scalp</button>
       </div>
     </div>
     <div class="cb">
@@ -383,7 +388,10 @@ function renderCombined(){
         </div>
         <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
       </div>
-      <button class="${btnClass}" style="font-size:16px;padding:12px 20px;min-width:110px">${btnLabel}</button>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+        <button class="${btnClass}" style="font-size:16px;padding:12px 20px;min-width:110px">${btnLabel}</button>
+        <span id="signal-confirmation-badge"></span>
+      </div>
     </div>`;
 }
 
