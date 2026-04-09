@@ -1829,22 +1829,27 @@ app.get('/api/ml/insights', async (req, res) => {
       recommendations: []
     };
 
-    // Stats por fuente (backtest, auto, scalping, manual)
-    const sources = ['backtest', 'auto', 'scalping', 'manual'];
+    // Stats por fuente — obtener TODOS los trades cerrados de Supabase
+    const { data: allTrades } = await supabase.from('paper_trades')
+      .select('source, status, pnl_usd')
+      .in('status', ['won','lost','closed']);
+
+    const sources = ['scalping', 'auto', 'manual', 'backtest'];
     insights.bySource = {};
     for (const src of sources) {
-      const srcTrades = trades.filter(t => t.source === src);
-      const srcWon = srcTrades.filter(t => t.status === 'won');
-      const srcLost = srcTrades.filter(t => t.status === 'lost');
-      if (srcTrades.length === 0) continue;
-      const srcPnl = srcTrades.reduce((s,t) => s + (parseFloat(t.pnl_usd)||0), 0);
+      const srcTrades = (allTrades || []).filter(t => t.source === src);
+      const srcWon  = srcTrades.filter(t => t.status === 'won');
+      const srcLost = srcTrades.filter(t => t.status === 'lost' || t.status === 'closed');
+      const closed  = srcTrades.filter(t => t.status !== 'open');
+      if (closed.length === 0) continue;
+      const srcPnl = closed.reduce((s,t) => s + (parseFloat(t.pnl_usd)||0), 0);
       insights.bySource[src] = {
-        total: srcTrades.length,
+        total: closed.length,
         won: srcWon.length,
         lost: srcLost.length,
-        winRate: parseFloat(((srcWon.length / srcTrades.length) * 100).toFixed(1)),
+        winRate: parseFloat(((srcWon.length / Math.max(closed.length,1)) * 100).toFixed(1)),
         totalPnl: parseFloat(srcPnl.toFixed(2)),
-        avgPnl: parseFloat((srcPnl / srcTrades.length).toFixed(2))
+        avgPnl: parseFloat((srcPnl / Math.max(closed.length,1)).toFixed(2))
       };
     }
 
