@@ -410,7 +410,7 @@ function renderOB(){
       </div>
       <div style="position:relative;height:8px;background:#1e2330;border-radius:4px;overflow:hidden;margin-bottom:4px">
         <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#4b5563;z-index:2"></div>
-        ${cvdVal > 2 ? `<div style="position:absolute;left:50%;top:0;height:100%;width:${Math.min(50,cvdBarPct-50)}%;background:#00d68f;border-radius:0 4px 4px 0;transition:all .5s"></div>` : cvdVal < -2 ? `<div style="position:absolute;right:50%;top:0;height:100%;width:${Math.min(50,50-cvdBarPct)}%;background:#ff4d6d;border-radius:4px 0 0 4px;transition:all .5s"></div>` : ''}
+        ${Math.abs(cvdVal) > 2 ? `<div style="position:absolute;${cvdVal>0?'left:50%':'right:50%'};top:0;height:100%;width:${Math.min(50,Math.abs(cvdVal)*1.2)}%;background:${cvdVal>0?'#00d68f':'#ff4d6d'};border-radius:${cvdVal>0?'0 4px 4px 0':'4px 0 0 4px'};transition:all .5s"></div>` : ''}
       </div>
       <div style="display:flex;justify-content:space-between;font-size:9px;color:#2a3040">
         <span>Ventas agresivas</span>
