@@ -943,11 +943,17 @@ Responde SOLO JSON sin markdown:
 function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas — faltan TELEGRAM_CHAT_ID y TELEGRAM_TOKEN');
-    return;
+  // Igual monitorear paper trades aunque no haya Telegram
+  setInterval(monitorPaperTrades, 5 * 60 * 1000);
+  setTimeout(monitorPaperTrades, 15000);
+  return;
   }
   const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15');
   const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
   console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
+  // Monitor de paper trades cada 5 minutos
+  setInterval(monitorPaperTrades, 5 * 60 * 1000);
+  setTimeout(monitorPaperTrades, 15000); // primer chequeo a los 15s
 
   setInterval(async () => {
     for (const symbol of symbols) {
@@ -980,6 +986,179 @@ app.get('/api/alert/status', (req, res) => {
     minConfidence: parseInt(process.env.ALERT_MIN_CONFIDENCE || '80'),
   });
 });
+
+
+// ─── PAPER TRADING ───────────────────────────────────────────────
+
+// Abrir trade simulado
+app.post('/api/paper/open', async (req, res) => {
+  try {
+    const { symbol, direction, entry, tp1, tp2, sl, rr, confidence,
+            size_usd, leverage, divergences, fibonacci, source } = req.body;
+    const { data, error } = await supabase.from('paper_trades').insert({
+      symbol, direction, entry, tp1, tp2, sl, rr, confidence,
+      size_usd: size_usd || 1000,
+      leverage: leverage || 10,
+      divergences, fibonacci,
+      source: source || 'manual',
+      status: 'open'
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, trade: data });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cerrar trade simulado
+app.post('/api/paper/close/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { close_price, close_reason } = req.body;
+
+    // Obtener el trade
+    const { data: trade, error: fetchErr } = await supabase
+      .from('paper_trades').select('*').eq('id', id).single();
+    if (fetchErr) throw fetchErr;
+
+    const entry = parseFloat(trade.entry);
+    const closeP = parseFloat(close_price);
+    const size = parseFloat(trade.size_usd);
+    const lev = parseFloat(trade.leverage);
+
+    // Calcular PnL
+    const priceDiff = trade.direction === 'LONG'
+      ? (closeP - entry) / entry
+      : (entry - closeP) / entry;
+    const pnl_pct = parseFloat((priceDiff * 100 * lev).toFixed(2));
+    const pnl_usd = parseFloat((size * priceDiff * lev).toFixed(2));
+
+    const { data, error } = await supabase.from('paper_trades').update({
+      status: close_reason === 'tp1' || close_reason === 'tp2' ? 'won'
+            : close_reason === 'sl' ? 'lost' : 'closed',
+      close_price: closeP,
+      close_reason,
+      pnl_usd,
+      pnl_pct,
+      closed_at: new Date().toISOString()
+    }).eq('id', id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, trade: data });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Obtener trades abiertos
+app.get('/api/paper/open', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('paper_trades')
+      .select('*').eq('status', 'open')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Historial y estadísticas
+app.get('/api/paper/stats', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('paper_trades')
+      .select('*').neq('status', 'open')
+      .order('created_at', { ascending: false }).limit(100);
+    if (error) throw error;
+
+    const total = data.length;
+    const won = data.filter(t => t.status === 'won').length;
+    const lost = data.filter(t => t.status === 'lost').length;
+    const winRate = total > 0 ? ((won / total) * 100).toFixed(1) : 0;
+    const totalPnl = data.reduce((s, t) => s + (parseFloat(t.pnl_usd) || 0), 0);
+    const avgWin = won > 0
+      ? data.filter(t=>t.status==='won').reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0) / won
+      : 0;
+    const avgLoss = lost > 0
+      ? Math.abs(data.filter(t=>t.status==='lost').reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0) / lost)
+      : 0;
+    const profitFactor = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : '∞';
+
+    // Max drawdown
+    let peak = 0, maxDD = 0, cumPnl = 0;
+    data.slice().reverse().forEach(t => {
+      cumPnl += parseFloat(t.pnl_usd) || 0;
+      if (cumPnl > peak) peak = cumPnl;
+      const dd = peak - cumPnl;
+      if (dd > maxDD) maxDD = dd;
+    });
+
+    res.json({
+      total, won, lost,
+      winRate: parseFloat(winRate),
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      avgWin: parseFloat(avgWin.toFixed(2)),
+      avgLoss: parseFloat(avgLoss.toFixed(2)),
+      profitFactor,
+      maxDrawdown: parseFloat(maxDD.toFixed(2)),
+      recentTrades: data.slice(0, 20)
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Monitor automático: cierra trades que llegaron a TP o SL
+async function monitorPaperTrades() {
+  try {
+    const { data: openTrades } = await supabase.from('paper_trades')
+      .select('*').eq('status', 'open');
+    if (!openTrades?.length) return;
+
+    for (const trade of openTrades) {
+      try {
+        const priceRes = await axios.get(
+          `${BINANCE}/fapi/v1/ticker/price?symbol=${trade.symbol}`
+        );
+        const currentPrice = parseFloat(priceRes.data.price);
+        const tp1 = parseFloat(trade.tp1);
+        const sl  = parseFloat(trade.sl);
+
+        let closeReason = null;
+        if (trade.direction === 'LONG') {
+          if (currentPrice >= tp1) closeReason = 'tp1';
+          else if (currentPrice <= sl) closeReason = 'sl';
+        } else {
+          if (currentPrice <= tp1) closeReason = 'tp1';
+          else if (currentPrice >= sl) closeReason = 'sl';
+        }
+
+        if (closeReason) {
+          const entry = parseFloat(trade.entry);
+          const priceDiff = trade.direction === 'LONG'
+            ? (currentPrice - entry) / entry
+            : (entry - currentPrice) / entry;
+          const pnl_pct = parseFloat((priceDiff * 100 * trade.leverage).toFixed(2));
+          const pnl_usd = parseFloat((trade.size_usd * priceDiff * trade.leverage).toFixed(2));
+
+          await supabase.from('paper_trades').update({
+            status: closeReason === 'tp1' ? 'won' : 'lost',
+            close_price: currentPrice,
+            close_reason: closeReason,
+            pnl_usd, pnl_pct,
+            closed_at: new Date().toISOString()
+          }).eq('id', trade.id);
+
+          console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
+
+          // Notificar por Telegram
+          if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
+            const emoji = closeReason === 'tp1' ? '✅' : '❌';
+            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${entry.toLocaleString()} → Cierre: $${currentPrice.toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd} (${pnl_pct}%)`;
+            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
+          }
+        }
+      } catch(_) {}
+    }
+  } catch(e) {
+    console.error('Monitor paper trades error:', e.message);
+  }
+}
 
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
