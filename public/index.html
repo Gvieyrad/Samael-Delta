@@ -54,13 +54,14 @@ body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size
 .div-level{background:rgba(0,0,0,.35);border-radius:5px;padding:5px 8px;text-align:center;flex:1}
 .div-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px}
 .div-level-val{font-family:monospace;font-size:11px;font-weight:700}
-.div-action-btn{border-radius:6px;padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;border:none;font-family:inherit;min-width:80px;text-align:center;flex-shrink:0;transition:opacity .15s}
-.div-action-btn:hover{opacity:.85}
-.btn-long{background:#00d68f;color:#000}
-.btn-short{background:#ff4d6d;color:#fff}
-.btn-wait-long{background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3)}
-.btn-wait-short{background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.3)}
-.btn-no{background:rgba(255,255,255,.05);color:#4b5563;border:1px solid #1e2330}
+.div-action-btn{border-radius:7px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;border:none;font-family:inherit;min-width:100px;text-align:center;flex-shrink:0;transition:all .15s;letter-spacing:.5px}
+.div-action-btn:hover{opacity:.85;transform:scale(1.03)}
+.div-action-btn:active{transform:scale(.97)}
+.btn-long{background:#00d68f;color:#000;box-shadow:0 0 12px rgba(0,214,143,.35)}
+.btn-short{background:#ff4d6d;color:#fff;box-shadow:0 0 12px rgba(255,77,109,.35)}
+.btn-wait-long{background:rgba(0,214,143,.15);color:#00d68f;border:2px solid rgba(0,214,143,.4);font-size:13px}
+.btn-wait-short{background:rgba(255,77,109,.15);color:#ff4d6d;border:2px solid rgba(255,77,109,.4);font-size:13px}
+.btn-no{background:rgba(255,255,255,.05);color:#4b5563;border:1px solid #1e2330;font-size:13px}
 .action-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:4px}
 .act-enter{background:rgba(0,214,143,.15);color:#00d68f}
 .act-wait{background:rgba(245,158,11,.15);color:#f59e0b}
@@ -101,9 +102,7 @@ input[type=number]:focus{border-color:#f59e0b}
 .res-lbl{font-size:11px;color:#4b5563}
 .res-val{font-family:monospace;font-size:12px;font-weight:700}
 .vrvp-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.lnk{background:#111520;border:1px solid #1e2330;border-radius:6px;padding:7px;text-align:center;text-decoration:none;display:block;transition:all .15s}
-.lnk:hover{border-color:#2a3040}
-.lnk-name{font-size:10px;font-weight:600;color:#e2e4ea;display:block;margin-top:2px}
+
 .thinking{display:inline-block;animation:pulse .7s infinite}
 .no-div{text-align:center;padding:20px;color:#4b5563;font-size:12px}
 </style>
@@ -205,17 +204,7 @@ input[type=number]:focus{border-color:#f59e0b}
     <div class="cb" style="padding:7px 14px" id="fib-panel"></div>
   </div>
 
-  <div class="card">
-    <div class="ch"><span class="ct">Links rápidos</span></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:10px 14px">
-      <a class="lnk" href="https://www.tradingview.com/chart/?symbol=BINANCE:BTCUSDT.P" target="_blank"><div style="font-size:13px">📊</div><span class="lnk-name">TradingView</span></a>
-      <a class="lnk" href="https://www.coinglass.com/LiquidationData" target="_blank"><div style="font-size:13px">🔥</div><span class="lnk-name">Coinglass</span></a>
-      <a class="lnk" href="https://www.coinglass.com/pro/futures/OpenInterest" target="_blank"><div style="font-size:13px">📈</div><span class="lnk-name">OI Live</span></a>
-      <a class="lnk" href="https://www.binance.com/en/futures/BTC_USDT_PERP" target="_blank"><div style="font-size:13px">💹</div><span class="lnk-name">Binance Fut.</span></a>
-      <a class="lnk" href="https://www.coinglass.com/FundingRate" target="_blank"><div style="font-size:13px">💰</div><span class="lnk-name">Funding</span></a>
-      <a class="lnk" href="https://www.youtube.com/results?search_query=BTC+order+book+live" target="_blank"><div style="font-size:13px">📖</div><span class="lnk-name">Libro órd.</span></a>
-    </div>
-  </div>
+
 
 </div>
 </div>
@@ -372,7 +361,7 @@ function renderCombined(){
         </div>
         <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
       </div>
-      <button class="${btnClass}">${btnLabel}</button>
+      <button class="${btnClass}" style="font-size:16px;padding:12px 20px;min-width:110px">${btnLabel}</button>
     </div>`;
 }
 
@@ -455,10 +444,11 @@ function renderLiq(){
   const belowHtml=below.slice(0,4).map(z=>zoneRow(z)).join('');
   document.getElementById('liq-panel').innerHTML=`<div style="padding:0 0 4px">
     ${aboveHtml}
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #2a3040;border-bottom:1px solid #2a3040;margin:2px 0;background:rgba(245,158,11,.05)">
-      <div style="width:4px;height:18px;border-radius:2px;background:#f59e0b;box-shadow:0 0 6px #f59e0b;flex-shrink:0"></div>
-      <span style="font-size:10px;color:#4b5563">Precio actual</span>
-      <span class="mono" style="font-size:13px;font-weight:700;color:#f59e0b;margin-left:auto">$${parseInt(p).toLocaleString()}</span>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:5px;margin:4px 0;background:#ffffff;border:none">
+      <div style="width:4px;height:20px;border-radius:2px;background:#080a0d;flex-shrink:0"></div>
+      <span style="font-size:10px;color:#080a0d;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Precio actual</span>
+      <span class="mono" style="font-size:14px;font-weight:800;color:#080a0d;margin-left:auto">$${parseInt(p).toLocaleString()}</span>
+      <span style="font-size:10px;color:#4b5563;background:#e5e7eb;padding:1px 6px;border-radius:3px">◄</span>
     </div>
     ${belowHtml}
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;padding-top:4px;border-top:1px solid rgba(255,255,255,.03)">
