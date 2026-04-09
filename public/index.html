@@ -946,7 +946,11 @@ function renderPaper() {
           <button onclick="closePaperTrade('${t.id}','sl')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
           <button onclick="closePaperTrade('${t.id}','manual')" style="padding:7px 10px;background:#111520;color:#4b5563;border:1px solid #1e2330;border-radius:5px;font-size:11px;cursor:pointer">✕</button>
         </div>
-        <div style="font-size:9px;color:#2a3040;margin-top:6px">Abierto: ${time} · Conf: ${t.confidence||0}%</div>
+        <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
+          <span>Abierto: ${time}</span>
+          <span style="background:${t.source==='scalping'?'rgba(139,92,246,.15)':t.source==='auto'?'rgba(0,214,143,.1)':'rgba(245,158,11,.1)'};color:${t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':'#f59e0b'};padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px">${t.source==='scalping'?'⚡ Scalping':t.source==='auto'?'🤖 Auto':'👤 Manual'}</span>
+          <span>Conf: ${t.confidence||0}%</span>
+        </div>
       </div>`;
     });
   } else {
