@@ -936,7 +936,13 @@ Responde SOLO JSON sin markdown:
 
     // 7. AUTO PAPER TRADING — si confianza >= umbral, abrir trade simulado
     const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '85');
-    if (signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR') {
+    // Filtro de tendencia macro: no ir contra el 1D
+    const trend1d = bias1d.bias;
+    const trendOk = signal.direction === 'ESPERAR' ? false :
+      signal.direction === 'LONG'  ? (trend1d !== 'short') :
+      signal.direction === 'SHORT' ? (trend1d !== 'long')  : true;
+
+    if (signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk) {
       try {
         // Verificar que no hay ya un trade abierto del mismo par y dirección
         const { data: existing } = await supabase.from('paper_trades')
@@ -948,6 +954,8 @@ Responde SOLO JSON sin markdown:
             // Señal
             confidence: signal.confidence,
             direction: signal.direction,
+            trend_aligned: trendOk,
+            trend_1d: trend1d,
             // Indicadores principales
             rsi_15m: marketData.rsi15m,
             cvd_pct: cvd15m.cvdPct,
@@ -1353,6 +1361,9 @@ app.post('/api/backtest/run', async (req, res) => {
       if (combinedSignal.direction === 'ESPERAR') continue;
       if (combinedSignal.probability < minConfidence) continue;
       if (divergences.length < 2) continue;
+      // Filtro macro: no ir contra tendencia 1D
+      if (combinedSignal.direction === 'LONG'  && bias1d.bias === 'short') continue;
+      if (combinedSignal.direction === 'SHORT' && bias1d.bias === 'long')  continue;
 
       // Calcular TP y SL basados en ATR (Average True Range) para realismo
       const highs = slice15m.slice(-14).map(k => parseFloat(k[2]));
