@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.7.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.8.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -325,27 +325,27 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const aboveVwap=lastClose>vwap, belowVwap=lastClose<vwap;
   const hasBidWall=(ob.bidWalls?.length||0)>0, hasAskWall=(ob.askWalls?.length||0)>0;
 
-  // 1. Absorción de Compras (SHORT)
+  // 1. Absorción de Compras (SHORT) — ML: más victorias del sistema
   if(priceUp&&cvdRising&&cvdAgressive){
-    let prob=68;
+    let prob=73; // ML: subido de 68 a 73
     if(hasAskWall) prob+=12; if(oiFalling) prob+=8; if(lastRSI>65) prob+=7; if(lastRSI>75) prob+=8;
     if(bearishContext) prob+=8; if(aboveVwap) prob+=5; if(volClimaxUp) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
     divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista'].filter(Boolean) });
   }
 
-  // 2. Absorción de Ventas (LONG)
+  // 2. Absorción de Ventas (LONG) — ML: segunda divergencia con más victorias
   if(priceDown&&cvdFalling&&cvdAgressive){
-    let prob=68;
+    let prob=73; // ML: subido de 68 a 73
     if(hasBidWall) prob+=12; if(lastRSI<35) prob+=10; if(lastRSI<25) prob+=8;
     if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5; if(volClimaxDown) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
     divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Ballena comprando con límites — CVD ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista'].filter(Boolean) });
   }
 
-  // 3. Divergencia RSI Bajista
+  // 3. Divergencia RSI Bajista — ML: 41 victorias
   if(lastHigh>prevHigh&&lastRSI<prevRSI-3){
-    let prob=62;
+    let prob=64; // ML: ajustado
     if(cvdFalling) prob+=15; if(oiRising&&priceUp) prob+=5; if(lastRSI>60) prob+=7; if(lastRSI>70) prob+=8;
     if(bearishContext) prob+=8; if(hasAskWall) prob+=8;
     if(prevHigh>prevHigh2&&prevRSI<prevRSI8-2) prob+=10; // triple
@@ -353,9 +353,9 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
     divergences.push({ type:'rsi_bajista', name:'Div. RSI Bajista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`Precio HH ($${parseInt(lastHigh).toLocaleString()}) pero RSI LH (${lastRSI} vs ${prevRSI}) — momentum agotado.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[cvdFalling&&'CVD divergente',bearishContext&&'Contexto bajista',hasAskWall&&'Muro ask'].filter(Boolean) });
   }
 
-  // 4. Divergencia RSI Alcista
+  // 4. Divergencia RSI Alcista — ML: 23 victorias
   if(lastLow<prevLow&&lastRSI>prevRSI+3){
-    let prob=62;
+    let prob=64; // ML: ajustado
     if(cvdRising) prob+=15; if(lastRSI<40) prob+=7; if(lastRSI<30) prob+=8;
     if(bullishContext) prob+=8; if(hasBidWall) prob+=8;
     if(prevLow<prevLow2&&prevRSI>prevRSI8+2) prob+=10; // triple
@@ -457,6 +457,10 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
 }
 
 function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null) {
+  // Bonus ML: si hay 2+ divergencias de absorción = señal muy fuerte
+  const absorcionCount = divergences.filter(d =>
+    d.type === 'absorcion_compras' || d.type === 'absorcion_ventas'
+  ).length;
   if(!divergences.length) return { direction:'ESPERAR', probability:30, action:'ESPERAR', reason:'Sin divergencias activas' };
   const shorts=divergences.filter(d=>d.direction==='SHORT');
   const longs=divergences.filter(d=>d.direction==='LONG');
@@ -506,6 +510,9 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
     if (direction === 'LONG' && fib.extImpact.signal === 'long_exhaustion') prob = Math.min(95, prob + 10);
     prob = Math.max(5, prob - fib.totalPenalty);
   }
+
+  // Bonus absorción doble (ML: las más ganadoras)
+  if (absorcionCount >= 2) prob = Math.min(95, prob + 8);
 
   const action=prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
   const fibSummary = fib?.nearestRetrace?.dist < 0.8 ? `Fib ${fib.nearestRetrace.label} cerca` : fib?.nearestExt?.dist < 0.8 ? `Ext Fib ${fib.nearestExt.label} cerca` : null;
@@ -1659,6 +1666,6 @@ app.get('/api/ml/insights', async (req, res) => {
 
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
-  console.log(`Panel Futuros LO v3.7 corriendo en puerto ${PORT}`);
+  console.log(`Panel Futuros LO v3.8 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
