@@ -1476,16 +1476,27 @@ app.post('/api/backtest/run', async (req, res) => {
     const endTime = Date.now();
     const startTime = endTime - (months * 30 * 24 * 60 * 60 * 1000);
 
-    // Descargar datos históricos 15m, 1h, 4h
-    const [klines15m, klines1h, klines4h, klines1d, oiHistory] = await Promise.all([
-      fetchKlinesHistory(symbol, '15m', startTime, endTime),
-      fetchKlinesHistory(symbol, '1h', startTime, endTime),
-      fetchKlinesHistory(symbol, '4h', startTime, endTime),
-      fetchKlinesHistory(symbol, '1d', startTime - 30*24*60*60*1000, endTime),
-      fetchOIHistory(symbol, '1h', 500).catch(() => [])
-    ]);
+    // Descargar datos históricos secuencialmente para evitar rate limits
+    console.log(`📥 Descargando 15m...`);
+    const klines15m = await fetchKlinesHistory(symbol, '15m', startTime, endTime);
+    await new Promise(r => setTimeout(r, 500));
+    console.log(`📥 Descargando 1h...`);
+    const klines1h = await fetchKlinesHistory(symbol, '1h', startTime, endTime);
+    await new Promise(r => setTimeout(r, 500));
+    console.log(`📥 Descargando 4h...`);
+    const klines4h = await fetchKlinesHistory(symbol, '4h', startTime, endTime);
+    await new Promise(r => setTimeout(r, 500));
+    console.log(`📥 Descargando 1d...`);
+    const klines1d = await fetchKlinesHistory(symbol, '1d', startTime - 30*24*60*60*1000, endTime);
+    const oiHistory = [];
 
-    console.log(`📊 Datos descargados: ${klines15m.length} velas 15m`);
+    console.log(`📊 Datos descargados: ${klines15m.length} velas 15m | ${klines1h.length} 1h | ${klines4h.length} 4h`);
+    
+    if (klines15m.length === 0) {
+      console.error('❌ No se descargaron datos — verificar conexión a Binance');
+      backtestRunning = false;
+      return;
+    }
 
     let tradesInserted = 0, tradesWon = 0, tradesLost = 0;
     const batchInsert = [];
