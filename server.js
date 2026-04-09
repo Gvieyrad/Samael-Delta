@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.1.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.3.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -166,7 +166,122 @@ function calcLiqMagnets(price) {
   return zones.map(z=>({price:parseFloat((price*(1+z.dist)).toFixed(0)),size:z.size,label:z.label,dist:Math.abs(z.dist*100).toFixed(1),direction:z.dist>0?'up':'down',isMajor:z.size>=600})).sort((a,b)=>Math.abs(parseFloat(a.dist))-Math.abs(parseFloat(b.dist)));
 }
 
-function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oiTrend15m) {
+
+// ─── FIBONACCI AUTOMÁTICO ─────────────────────────────────────────
+function calcFibonacci(klines, price) {
+  if (!klines || klines.length < 20) return null;
+
+  const highs = klines.map(k => parseFloat(k[2]));
+  const lows  = klines.map(k => parseFloat(k[3]));
+  const n = klines.length;
+
+  // Detectar swing high y swing low recientes (ventana de 5 velas)
+  let swingHigh = -Infinity, swingLow = Infinity;
+  let swingHighIdx = 0, swingLowIdx = 0;
+
+  for (let i = 2; i < n - 2; i++) {
+    if (highs[i] > highs[i-1] && highs[i] > highs[i-2] &&
+        highs[i] > highs[i+1] && highs[i] > highs[i+2]) {
+      if (highs[i] > swingHigh) { swingHigh = highs[i]; swingHighIdx = i; }
+    }
+    if (lows[i] < lows[i-1] && lows[i] < lows[i-2] &&
+        lows[i] < lows[i+1] && lows[i] < lows[i+2]) {
+      if (lows[i] < swingLow) { swingLow = lows[i]; swingLowIdx = i; }
+    }
+  }
+
+  if (swingHigh === -Infinity || swingLow === Infinity) return null;
+
+  const range = swingHigh - swingLow;
+  if (range <= 0) return null;
+
+  // Determinar dirección del swing: ¿el high vino antes o después del low?
+  const isUptrend = swingLowIdx < swingHighIdx; // low primero = tendencia alcista
+
+  // Niveles de retroceso de Fibonacci
+  const retLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  // Niveles de extensión
+  const extLevels = [1.272, 1.414, 1.618, 2.0, 2.618];
+
+  const retracements = retLevels.map(r => ({
+    level: r,
+    price: isUptrend ? swingHigh - range * r : swingLow + range * r,
+    label: r === 0 ? '0%' : r === 1 ? '100%' : `${(r*100).toFixed(1)}%`,
+    isKey: [0.382, 0.5, 0.618].includes(r)
+  }));
+
+  const extensions = extLevels.map(r => ({
+    level: r,
+    price: isUptrend ? swingHigh + range * (r - 1) : swingLow - range * (r - 1),
+    label: `${(r*100).toFixed(1)}%`,
+    isKey: [1.618, 2.618].includes(r)
+  }));
+
+  // Detectar en qué nivel de Fibonacci está el precio actual
+  let nearestRetrace = null, nearestExt = null;
+  let minRetDist = Infinity, minExtDist = Infinity;
+
+  retracements.forEach(lvl => {
+    const dist = Math.abs(price - lvl.price) / price * 100;
+    if (dist < minRetDist) { minRetDist = dist; nearestRetrace = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; }
+  });
+
+  extensions.forEach(lvl => {
+    const dist = Math.abs(price - lvl.price) / price * 100;
+    if (dist < minExtDist) { minExtDist = dist; nearestExt = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; }
+  });
+
+  // Calcular impacto en probabilidad
+  // Precio tocando nivel clave de Fibonacci = señal más fuerte
+  function fibImpact(nearest, isRetracement) {
+    if (!nearest) return { bonus: 0, penalty: 0, signal: 'none' };
+    const isKey = nearest.isKey;
+    const isVeryClose = nearest.dist < 0.3; // dentro del 0.3%
+    const isClose = nearest.dist < 0.8;     // dentro del 0.8%
+
+    if (!isClose) return { bonus: 0, penalty: 0, signal: 'none' };
+
+    // En retrocesos: precio en 0.618 o 0.382 = rebote probable
+    if (isRetracement && isKey) {
+      return {
+        bonus: isVeryClose ? 15 : 8,
+        penalty: 0,
+        signal: isUptrend ? 'long_bounce' : 'short_bounce',
+        description: `Precio en retroceso Fib ${nearest.label} — zona de rebote clave`
+      };
+    }
+    // En extensiones: precio alcanzando 1.618 = agotamiento probable
+    if (!isRetracement && isKey) {
+      return {
+        bonus: 0,
+        penalty: isVeryClose ? 12 : 6, // penaliza entrar a favor del trend en extensión
+        signal: isUptrend ? 'short_exhaustion' : 'long_exhaustion',
+        description: `Precio en extensión Fib ${nearest.label} — zona de agotamiento`
+      };
+    }
+    return { bonus: isVeryClose ? 5 : 3, penalty: 0, signal: 'weak' };
+  }
+
+  const retImpact = fibImpact(nearestRetrace, true);
+  const extImpact = fibImpact(nearestExt, false);
+
+  return {
+    swingHigh: parseFloat(swingHigh.toFixed(1)),
+    swingLow: parseFloat(swingLow.toFixed(1)),
+    isUptrend,
+    range: parseFloat(range.toFixed(1)),
+    retracements: retracements.map(r => ({ ...r, price: parseFloat(r.price.toFixed(1)) })),
+    extensions: extensions.map(r => ({ ...r, price: parseFloat(r.price.toFixed(1)) })),
+    nearestRetrace: nearestRetrace ? { ...nearestRetrace, price: parseFloat(nearestRetrace.price.toFixed(1)) } : null,
+    nearestExt: nearestExt ? { ...nearestExt, price: parseFloat(nearestExt.price.toFixed(1)) } : null,
+    retImpact,
+    extImpact,
+    totalBonus: retImpact.bonus + extImpact.bonus,
+    totalPenalty: retImpact.penalty + extImpact.penalty
+  };
+}
+
+function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib=null) {
   const divergences=[];
   const closes=klines15m.map(k=>parseFloat(k[4]));
   const highs=klines15m.map(k=>parseFloat(k[2]));
@@ -322,10 +437,26 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
     divergences.push({ type:'short_squeeze', name:'Squeeze de Shorts', direction:'LONG', probability:Math.min(90,prob), entry:price, description:'OI alto + funding muy positivo + precio sube — shorts siendo liquidados. Momentum alcista.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding extremo','Precio subiendo'] });
   }
 
+  // Aplicar impacto de Fibonacci a todas las divergencias
+  if (fib) {
+    divergences.forEach(d => {
+      const isLong = d.direction === 'LONG';
+      const isShort = d.direction === 'SHORT';
+      // Retroceso en zona clave: suma si la dirección coincide con el rebote esperado
+      if (fib.retImpact.signal === 'long_bounce' && isLong) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      if (fib.retImpact.signal === 'short_bounce' && isShort) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      // Extensión en zona clave: suma a reversión, penaliza continuación
+      if (fib.extImpact.signal === 'short_exhaustion' && isShort) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'long_exhaustion' && isLong) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'short_exhaustion' && isLong) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+      if (fib.extImpact.signal === 'long_exhaustion' && isShort) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+    });
+  }
+
   return divergences.sort((a,b)=>b.probability-a.probability);
 }
 
-function calcCombinedSignal(divergences, bias4h, bias1d) {
+function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null) {
   if(!divergences.length) return { direction:'ESPERAR', probability:30, action:'ESPERAR', reason:'Sin divergencias activas' };
   const shorts=divergences.filter(d=>d.direction==='SHORT');
   const longs=divergences.filter(d=>d.direction==='LONG');
@@ -333,10 +464,181 @@ function calcCombinedSignal(divergences, bias4h, bias1d) {
   const longScore=longs.reduce((s,d)=>s+d.probability,0)/(longs.length||1);
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
+
+  // Bonus por contexto multi-TF
   if(direction==='SHORT'&&(bias4h?.bias==='short'||bias1d?.bias==='short')) prob=Math.min(95,prob+8);
   if(direction==='LONG'&&(bias4h?.bias==='long'||bias1d?.bias==='long')) prob=Math.min(95,prob+8);
+
+  // Bonus por ballenas: si las ballenas confirman la dirección
+  if(whaleData && whaleData.whaleCount >= 3) {
+    if(direction==='LONG' && whaleData.whaleBias==='bull') prob=Math.min(95,prob+10);
+    if(direction==='SHORT' && whaleData.whaleBias==='bear') prob=Math.min(95,prob+10);
+    if(direction==='LONG' && whaleData.whaleBias==='bear') prob=Math.max(5,prob-8);
+    if(direction==='SHORT' && whaleData.whaleBias==='bull') prob=Math.max(5,prob-8);
+  }
+
+  // Bonus por libro profundo
+  if(deepOB) {
+    const deepImb = deepOB.deepImbalance || 0;
+    if(direction==='LONG' && deepImb > 20) prob=Math.min(95,prob+6);
+    if(direction==='SHORT' && deepImb < -20) prob=Math.min(95,prob+6);
+  }
+
+  // Fibonacci: rebote en nivel clave suma a la señal
+  if (fib) {
+    if (direction === 'LONG' && fib.retImpact.signal === 'long_bounce') prob = Math.min(95, prob + fib.totalBonus);
+    if (direction === 'SHORT' && fib.retImpact.signal === 'short_bounce') prob = Math.min(95, prob + fib.totalBonus);
+    if (direction === 'SHORT' && fib.extImpact.signal === 'short_exhaustion') prob = Math.min(95, prob + 10);
+    if (direction === 'LONG' && fib.extImpact.signal === 'long_exhaustion') prob = Math.min(95, prob + 10);
+    prob = Math.max(5, prob - fib.totalPenalty);
+  }
+
   const action=prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
-  return { direction, probability:Math.round(prob), action, shortCount:shorts.length, longCount:longs.length };
+  const fibSummary = fib?.nearestRetrace?.dist < 0.8 ? `Fib ${fib.nearestRetrace.label} cerca` : fib?.nearestExt?.dist < 0.8 ? `Ext Fib ${fib.nearestExt.label} cerca` : null;
+  const whaleSummary = whaleData?.whaleCount > 0 ? `${whaleData.whaleCount} ballenas — ${whaleData.dominance}` : null;
+  return { direction, probability:Math.round(prob), action, shortCount:shorts.length, longCount:longs.length, whaleSummary, fibSummary };
+}
+
+
+// ─── LIQUIDACIONES REALES (allForceOrders) ───────────────────────
+async function fetchForceOrders(symbol) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/allForceOrders?symbol=${symbol}&limit=200`);
+    const orders = res.data || [];
+    // Agrupar por rango de precio ($50 buckets para BTC)
+    const bucketSize = symbol.includes('BTC') ? 100 : symbol.includes('ETH') ? 10 : 1;
+    const buckets = {};
+    let totalLongs = 0, totalShorts = 0;
+    orders.forEach(o => {
+      const price = parseFloat(o.averagePrice || o.price);
+      const qty = parseFloat(o.executedQty || o.origQty);
+      const usdVal = price * qty;
+      const bucket = Math.round(price / bucketSize) * bucketSize;
+      if (!buckets[bucket]) buckets[bucket] = { price: bucket, longLiq: 0, shortLiq: 0, total: 0 };
+      // SELL = liquidación de LONG (long fue liquidado), BUY = liquidación de SHORT
+      if (o.side === 'SELL') { buckets[bucket].longLiq += usdVal; totalLongs += usdVal; }
+      else { buckets[bucket].shortLiq += usdVal; totalShorts += usdVal; }
+      buckets[bucket].total += usdVal;
+    });
+    const zones = Object.values(buckets)
+      .filter(b => b.total > 10000)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 20)
+      .map(b => ({
+        price: b.price,
+        longLiq: Math.round(b.longLiq / 1000),   // en $K
+        shortLiq: Math.round(b.shortLiq / 1000),
+        total: Math.round(b.total / 1000),
+        dominant: b.longLiq > b.shortLiq ? 'longs' : 'shorts'
+      }));
+    return { zones, totalLongs: Math.round(totalLongs/1000), totalShorts: Math.round(totalShorts/1000), count: orders.length };
+  } catch(e) {
+    return { zones: [], totalLongs: 0, totalShorts: 0, count: 0 };
+  }
+}
+
+// ─── LIBRO PROFUNDO — CLUSTERS DE ÓRDENES PASIVAS ────────────────
+async function fetchDeepOrderBook(symbol) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=500`);
+    const bids = res.data.bids || [], asks = res.data.asks || [];
+    const bucketSize = symbol.includes('BTC') ? 50 : symbol.includes('ETH') ? 5 : 0.5;
+
+    function clusterSide(orders, side) {
+      const buckets = {};
+      orders.forEach(([priceStr, qtyStr]) => {
+        const price = parseFloat(priceStr), qty = parseFloat(qtyStr);
+        const bucket = Math.round(price / bucketSize) * bucketSize;
+        buckets[bucket] = (buckets[bucket] || 0) + qty;
+      });
+      // Calcular media y std para detectar clusters significativos
+      const vals = Object.values(buckets);
+      const mean = vals.reduce((a,b)=>a+b,0) / vals.length;
+      const std = Math.sqrt(vals.reduce((s,v)=>s+Math.pow(v-mean,2),0)/vals.length);
+      const threshold = mean + std * 2; // 2 sigma = cluster significativo
+      return Object.entries(buckets)
+        .filter(([, qty]) => qty > threshold)
+        .map(([price, qty]) => ({
+          price: parseFloat(price),
+          qty: parseFloat(qty.toFixed(2)),
+          usdVal: Math.round(parseFloat(price) * qty),
+          side,
+          strength: qty / mean, // cuántas veces el promedio
+          breakProb: side === 'ask'
+            ? Math.round(Math.min(85, Math.max(15, 100 - (qty/mean)*15)))
+            : Math.round(Math.min(85, Math.max(15, 100 - (qty/mean)*15)))
+        }))
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 8);
+    }
+
+    const bidClusters = clusterSide(bids, 'bid');
+    const askClusters = clusterSide(asks, 'ask');
+
+    // Total de liquidez en libro profundo
+    const totalBidLiq = bids.reduce((s,[,q])=>s+parseFloat(q),0);
+    const totalAskLiq = asks.reduce((s,[,q])=>s+parseFloat(q),0);
+    const deepImbalance = ((totalBidLiq - totalAskLiq) / (totalBidLiq + totalAskLiq) * 100).toFixed(1);
+
+    return { bidClusters, askClusters, deepImbalance: parseFloat(deepImbalance), totalBidLiq: totalBidLiq.toFixed(1), totalAskLiq: totalAskLiq.toFixed(1) };
+  } catch(e) {
+    return { bidClusters: [], askClusters: [], deepImbalance: 0 };
+  }
+}
+
+// ─── DETECCIÓN DE BALLENAS (aggTrades) ───────────────────────────
+async function detectWhales(symbol, price) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/aggTrades?symbol=${symbol}&limit=500`);
+    const trades = res.data || [];
+    const whaleThreshold = symbol.includes('BTC') ? 500000 : symbol.includes('ETH') ? 100000 : 50000; // USD
+
+    const whales = [];
+    let whaleBuyVol = 0, whaleSellVol = 0;
+    let totalBuyVol = 0, totalSellVol = 0;
+
+    trades.forEach(t => {
+      const tradePrice = parseFloat(t.p);
+      const qty = parseFloat(t.q);
+      const usdVal = tradePrice * qty;
+      const isBuy = !t.m; // m=true significa market maker = sell side agressor
+      if (isBuy) totalBuyVol += usdVal; else totalSellVol += usdVal;
+      if (usdVal >= whaleThreshold) {
+        whales.push({
+          price: tradePrice,
+          qty: qty.toFixed(3),
+          usdVal: Math.round(usdVal),
+          side: isBuy ? 'buy' : 'sell',
+          time: t.T,
+          isAggressive: true // aggTrades son siempre agresivas (market orders)
+        });
+        if (isBuy) whaleBuyVol += usdVal; else whaleSellVol += usdVal;
+      }
+    });
+
+    // CVD de ballenas
+    const whaleCVD = whaleBuyVol - whaleSellVol;
+    const whaleBias = whaleCVD > 0 ? 'bull' : whaleCVD < 0 ? 'bear' : 'neutral';
+    const whaleCount = whales.length;
+    const lastWhale = whales[whales.length - 1] || null;
+
+    // Ratio de absorción: ballenas vs volumen total
+    const whaleRatio = (whaleBuyVol + whaleSellVol) / (totalBuyVol + totalSellVol + 1) * 100;
+
+    return {
+      whales: whales.slice(-10), // últimas 10
+      whaleBuyVol: Math.round(whaleBuyVol / 1000),
+      whaleSellVol: Math.round(whaleSellVol / 1000),
+      whaleCVD: Math.round(whaleCVD / 1000),
+      whaleBias,
+      whaleCount,
+      whaleRatio: parseFloat(whaleRatio.toFixed(1)),
+      lastWhale,
+      dominance: whaleBuyVol > whaleSellVol * 1.5 ? 'buyers' : whaleSellVol > whaleBuyVol * 1.5 ? 'sellers' : 'balanced'
+    };
+  } catch(e) {
+    return { whales: [], whaleBuyVol: 0, whaleSellVol: 0, whaleCVD: 0, whaleBias: 'neutral', whaleCount: 0 };
+  }
 }
 
 app.get('/api/market/:symbol', async (req, res) => {
@@ -356,6 +658,13 @@ app.get('/api/market/:symbol', async (req, res) => {
       fetchOIHistory(symbol,'4h',10),
     ]);
 
+    const price_temp = parseFloat(ticker.data.lastPrice);
+    const [liqData, deepOB, whaleData] = await Promise.all([
+      fetchForceOrders(symbol),
+      fetchDeepOrderBook(symbol),
+      detectWhales(symbol, price_temp),
+    ]);
+
     const price=parseFloat(ticker.data.lastPrice);
     const fundingRate=parseFloat(funding.data.lastFundingRate);
     const closes15m=k15m.data.map(k=>parseFloat(k[4]));
@@ -368,6 +677,9 @@ app.get('/api/market/:symbol', async (req, res) => {
     const ob=analyzeOB(obRes.data.bids,obRes.data.asks);
     const liqMagnets=calcLiqMagnets(price);
 
+    // Enriquecer divergencias con datos de ballenas y liquidaciones reales
+    // El bias de ballenas suma/resta a la señal combinada
+
     const oiTrend15m=calcOITrend(oi15mHist);
     const oiTrend1h=calcOITrend(oi1hHist);
     const oiTrend4h=calcOITrend(oi4hHist);
@@ -377,8 +689,10 @@ app.get('/api/market/:symbol', async (req, res) => {
     const bias4h=calcBias(k4h.data,oi4hHist,fundingRate);
     const bias1d=calcBias(k1d.data,null,fundingRate);
 
-    const divergences=detectDivergences(k15m.data,ob,price,fundingRate,bias4h,bias1d,oiTrend15m);
-    const combinedSignal=calcCombinedSignal(divergences,bias4h,bias1d);
+    const fib15m = calcFibonacci(k15m.data, price);
+    const fib4h  = calcFibonacci(k4h.data, price);
+    const divergences=detectDivergences(k15m.data,ob,price,fundingRate,bias4h,bias1d,oiTrend15m,fib15m);
+    const combinedSignal=calcCombinedSignal(divergences,bias4h,bias1d,whaleData,deepOB,fib15m);
 
     const vols=k15m.data.slice(-5).map(k=>parseFloat(k[5]));
     const avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4;
@@ -397,7 +711,9 @@ app.get('/api/market/:symbol', async (req, res) => {
       volDeltaPct:parseFloat(volDeltaPct),
       orderBook:ob, liqMagnets, divergences, combinedSignal,
       bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d },
-      klines:k15m.data.slice(-20)
+      klines:k15m.data.slice(-20),
+      liqData, deepOB, whaleData,
+      fibonacci:{ tf15m:fib15m, tf4h:fib4h }
     });
   } catch(e) {
     console.error('Market error:',e.message);
@@ -471,4 +787,4 @@ app.get('/api/trades', async (req, res) => {
 });
 
 const PORT=process.env.PORT||3001;
-app.listen(PORT,()=>console.log(`Panel Futuros LO v3.1 corriendo en puerto ${PORT}`));
+app.listen(PORT,()=>console.log(`Panel Futuros LO v3.3 corriendo en puerto ${PORT}`));
