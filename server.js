@@ -1936,9 +1936,16 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const atr3m   = Math.max(rawAtr, minAtr);
 
     const isLong = scalpDir === 'LONG';
-    const tp1 = isLong ? price + atr3m * 2.0 : price - atr3m * 2.0;  // R:R 1:2.5
+    const tp1 = isLong ? price + atr3m * 2.0 : price - atr3m * 2.0;
     const sl  = isLong ? price - atr3m * 0.8  : price + atr3m * 0.8;
-    const rr  = (Math.abs(tp1 - price) / Math.abs(sl - price)).toFixed(1);
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    const rr  = rrVal.toFixed(1);
+    
+    // Filtro R:R mínimo 1.5 — si no es rentable no enviamos señal
+    if (rrVal < 1.5) {
+      console.log(`⚠️ Scalping ${scalpDir} ${symbol} descartado — R:R ${rr} < 1.5 mínimo`);
+      return;
+    }
 
     const topReasons = signals
       .filter(s => s.dir === scalpDir)
