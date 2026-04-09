@@ -178,18 +178,8 @@ input[type=number]:focus{border-color:#f59e0b}
 <div class="rcol">
 
   <div class="card">
-    <div class="ch"><span class="ct">Volume Profile (VRVP)</span></div>
-    <div class="cb" id="vrvp-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Libro de órdenes</span></div>
+    <div class="ch"><span class="ct">Libro de órdenes + CVD</span></div>
     <div class="ob-wrap" id="ob-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Mapa de liquidaciones</span><span style="font-size:9px;color:#2a3040">datos reales Binance</span></div>
-    <div class="cb" style="padding:7px 14px" id="liq-panel"></div>
   </div>
 
   <div class="card">
@@ -200,6 +190,16 @@ input[type=number]:focus{border-color:#f59e0b}
   <div class="card">
     <div class="ch"><span class="ct">Radar de ballenas</span></div>
     <div class="cb" style="padding:7px 14px" id="whale-panel"></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Mapa de liquidaciones</span><span style="font-size:9px;color:#2a3040">datos reales Binance</span></div>
+    <div class="cb" style="padding:7px 14px" id="liq-panel"></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Volume Profile (VRVP)</span></div>
+    <div class="cb" id="vrvp-panel"></div>
   </div>
 
   <div class="card">
@@ -380,13 +380,59 @@ function renderVRVP(){
 }
 
 function renderOB(){
-  const ob=mkt.orderBook,p=mkt.price;if(!ob)return;
-  const imb=parseFloat(ob.imbalance||0),col=imb>15?'#00d68f':imb<-15?'#ff4d6d':'#f59e0b';
+  const ob=mkt.orderBook, p=mkt.price, cvd=mkt.cvd15m;
+  if(!ob)return;
+  const imb=parseFloat(ob.imbalance||0);
+  const col=imb>15?'#00d68f':imb<-15?'#ff4d6d':'#f59e0b';
   const press=ob.pressure==='bid_dominant'?'Presión compradora':ob.pressure==='ask_dominant'?'Presión vendedora':'Equilibrado';
+
+  // CVD velocímetro
+  const cvdVal = cvd?.cvdPct || 0;
+  const cvdDelta5 = cvd?.delta5 || 0;
+  const cvdCol = cvdVal > 5 ? '#00d68f' : cvdVal < -5 ? '#ff4d6d' : cvdVal > 0 ? '#34d399' : '#f87171';
+  const cvdTrend = cvd?.trend === 'bull' ? '▲' : '▼';
+  const cvdLabel = cvd?.trend === 'bull' ? 'Compras' : 'Ventas';
+  const cvdAgresivo = Math.abs(cvdVal) > 10;
+  // Barra del velocímetro: 0% = todo ventas, 50% = neutro, 100% = todo compras
+  const cvdBarPct = Math.min(100, Math.max(0, 50 + cvdVal * 2));
+  const cvdClass = cvdAgresivo ? (cvd?.trend==='bull'?'blink-green':'blink-red') : '';
+
   let wallsHtml='';
   (ob.bidWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-bid">BID WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
   (ob.askWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-ask">ASK WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
-  document.getElementById('ob-panel').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:11px;color:#4b5563">${press}</span><span class="mono" style="font-size:12px;font-weight:700;color:${col}">Imb: ${imb}%</span></div><div style="height:5px;background:#111520;border-radius:3px;overflow:hidden;margin-bottom:8px"><div style="height:100%;width:${Math.min(100,Math.max(0,50+imb/2))}%;background:${col};border-radius:3px;transition:width .5s"></div></div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px"><span style="color:#00d68f">BID ${ob.bidVol} BTC</span><span class="mono" style="font-weight:700">$${fmt(p)}</span><span style="color:#ff4d6d">ASK ${ob.askVol} BTC</span></div>${wallsHtml||'<div style="font-size:10px;color:#2a3040">Sin paredes significativas</div>'}<div style="font-size:10px;color:#2a3040;margin-top:4px">Spread: $${ob.spread} (${ob.spreadPct}%)</div>`;
+
+  document.getElementById('ob-panel').innerHTML=`
+    <!-- CVD Velocímetro -->
+    <div style="background:#111520;border-radius:7px;padding:9px 11px;margin-bottom:10px;border:1px solid #1e2330">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+        <span style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px">CVD 15m</span>
+        <span class="mono ${cvdClass}" style="font-size:16px;font-weight:800;color:${cvdCol}">${cvdTrend} ${cvdVal >= 0 ? '+' : ''}${cvdVal}%</span>
+      </div>
+      <div style="position:relative;height:8px;background:#1e2330;border-radius:4px;overflow:hidden;margin-bottom:4px">
+        <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#2a3040"></div>
+        <div style="height:100%;width:${cvdBarPct}%;background:${cvdCol};border-radius:4px;transition:width .5s;max-width:100%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#2a3040">
+        <span>Ventas</span>
+        <span style="color:${cvdCol};font-weight:600">${cvdLabel}${cvdAgresivo?' — AGRESIVO':''}</span>
+        <span>Compras</span>
+      </div>
+    </div>
+    <!-- Libro -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;color:#4b5563">${press}</span>
+      <span class="mono" style="font-size:12px;font-weight:700;color:${col}">Imb: ${imb}%</span>
+    </div>
+    <div style="height:5px;background:#111520;border-radius:3px;overflow:hidden;margin-bottom:8px">
+      <div style="height:100%;width:${Math.min(100,Math.max(0,50+imb/2))}%;background:${col};border-radius:3px;transition:width .5s"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px">
+      <span style="color:#00d68f">BID ${ob.bidVol} BTC</span>
+      <span class="mono" style="font-weight:700">$${fmt(p)}</span>
+      <span style="color:#ff4d6d">ASK ${ob.askVol} BTC</span>
+    </div>
+    ${wallsHtml||'<div style="font-size:10px;color:#2a3040">Sin paredes significativas</div>'}
+    <div style="font-size:10px;color:#2a3040;margin-top:4px">Spread: $${ob.spread} (${ob.spreadPct}%)</div>`;
 }
 
 function liqProbability(z){
@@ -686,8 +732,194 @@ async function triggerAlert() {
   }
 }
 
+
+// ─── PAPER TRADING ───────────────────────────────────────────────
+let paperStats = null;
+let openTrades = [];
+
+async function refreshPaper() {
+  try {
+    const [statsRes, openRes] = await Promise.all([
+      fetch(`${API}/api/paper/stats`).then(r=>r.json()),
+      fetch(`${API}/api/paper/open`).then(r=>r.json())
+    ]);
+    paperStats = statsRes;
+    openTrades = openRes;
+    renderPaper();
+  } catch(e) { console.error('Paper trading error:', e); }
+}
+
+async function openPaperTrade(direction) {
+  if (!mkt.price) return;
+  const cs = mkt.combinedSignal;
+  const entry = mkt.price;
+  const liq = mkt.liqMagnets?.[0];
+
+  // Calcular TP y SL desde la calculadora o valores automáticos
+  const entryInput = parseFloat(document.getElementById('c-ent').value) || entry;
+  const tp1Input   = parseFloat(document.getElementById('c-tp').value)  || (direction==='LONG' ? entry*1.025 : entry*0.975);
+  const slInput    = parseFloat(document.getElementById('c-sl').value)  || (direction==='LONG' ? entry*0.988 : entry*1.012);
+  const capital    = parseFloat(document.getElementById('c-cap').value) || 1000;
+  const leverage   = parseFloat(document.getElementById('c-lev').value) || 10;
+
+  const rr = Math.abs((tp1Input-entryInput)/(slInput-entryInput)).toFixed(1);
+
+  try {
+    const res = await fetch(`${API}/api/paper/open`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        symbol: pair, direction,
+        entry: entryInput, tp1: tp1Input, tp2: tp1Input,
+        sl: slInput, rr: `1:${rr}`,
+        confidence: cs?.probability || 0,
+        size_usd: capital, leverage,
+        divergences: mkt.divergences?.slice(0,3),
+        fibonacci: mkt.fibonacci?.tf15m,
+        source: 'manual'
+      })
+    });
+    const d = await res.json();
+    if (d.ok) { await refreshPaper(); showToast(direction === 'LONG' ? '▲ Paper LONG abierto' : '▼ Paper SHORT abierto', direction==='LONG'?'#00d68f':'#ff4d6d'); }
+  } catch(e) { showToast('Error al abrir trade', '#ff4d6d'); }
+}
+
+async function closePaperTrade(id, reason) {
+  const priceRes = await fetch(`${API}/api/market/${pair}`).then(r=>r.json()).catch(()=>({price:mkt.price}));
+  const closePrice = priceRes.price || mkt.price;
+  try {
+    await fetch(`${API}/api/paper/close/${id}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ close_price: closePrice, close_reason: reason })
+    });
+    await refreshPaper();
+    showToast('Trade cerrado', '#f59e0b');
+  } catch(e) {}
+}
+
+function showToast(msg, col='#f59e0b') {
+  let t = document.getElementById('toast');
+  if (!t) { t = document.createElement('div'); t.id='toast'; t.style.cssText='position:fixed;bottom:20px;right:20px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;transition:opacity .3s'; document.body.appendChild(t); }
+  t.textContent = msg; t.style.background = col; t.style.color = col==='#f59e0b'?'#000':'#fff'; t.style.opacity = '1';
+  setTimeout(() => { t.style.opacity = '0'; }, 2500);
+}
+
+function renderPaper() {
+  const el = document.getElementById('paper-panel');
+  if (!el) return;
+
+  // Stats summary en el header
+  if (paperStats) {
+    const s = paperStats;
+    const pnlCol = s.totalPnl >= 0 ? '#00d68f' : '#ff4d6d';
+    document.getElementById('paper-stats-summary').innerHTML =
+      `<span style="color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}% WR</span>
+       <span style="color:#4b5563;margin:0 4px">·</span>
+       <span style="color:${pnlCol}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</span>
+       <span style="color:#4b5563;margin:0 4px">·</span>
+       <span style="color:#4b5563">${s.total} trades</span>`;
+  }
+
+  // Botones abrir trade — desactivar según señal combinada
+  const cs = mkt.combinedSignal;
+  const sig = cs?.direction || 'ESPERAR';
+  const longEnabled  = sig === 'LONG'  || sig === 'ESPERAR';
+  const shortEnabled = sig === 'SHORT' || sig === 'ESPERAR';
+  const longStyle  = longEnabled
+    ? 'flex:1;padding:10px;background:#00d68f;color:#000;border:none;border-radius:7px;font-size:14px;font-weight:800;cursor:pointer'
+    : 'flex:1;padding:10px;background:#1e2330;color:#2a3040;border:1px solid #1e2330;border-radius:7px;font-size:14px;font-weight:800;cursor:not-allowed';
+  const shortStyle = shortEnabled
+    ? 'flex:1;padding:10px;background:#ff4d6d;color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:800;cursor:pointer'
+    : 'flex:1;padding:10px;background:#1e2330;color:#2a3040;border:1px solid #1e2330;border-radius:7px;font-size:14px;font-weight:800;cursor:not-allowed';
+  const sigLabel = sig !== 'ESPERAR' ? `<div style="text-align:center;font-size:10px;color:#4b5563;margin-bottom:6px">Señal activa: <span style="color:${sig==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700">${sig}</span> ${cs?.probability||0}% — solo se habilita el lado correcto</div>` : '';
+  let html = `${sigLabel}<div style="display:flex;gap:8px;margin-bottom:12px">
+    <button onclick="${longEnabled?"openPaperTrade('LONG')":''}" ${longEnabled?'':'disabled'} style="${longStyle}">▲ LONG</button>
+    <button onclick="${shortEnabled?"openPaperTrade('SHORT')":''}" ${shortEnabled?'':'disabled'} style="${shortStyle}">▼ SHORT</button>
+  </div>`;
+
+  // Trades abiertos
+  if (openTrades.length > 0) {
+    html += `<div style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Posiciones abiertas</div>`;
+    openTrades.forEach(t => {
+      const isLong = t.direction === 'LONG';
+      const col = isLong ? '#00d68f' : '#ff4d6d';
+      const currentP = mkt.price || 0;
+      const entry = parseFloat(t.entry);
+      const priceDiff = isLong ? (currentP-entry)/entry : (entry-currentP)/entry;
+      const floatingPnl = parseFloat((t.size_usd * priceDiff * t.leverage).toFixed(2));
+      const floatingCol = floatingPnl >= 0 ? '#00d68f' : '#ff4d6d';
+      const time = new Date(t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'});
+      html += `<div style="background:#111520;border:1px solid ${col}33;border-radius:7px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:700;color:${col}">${isLong?'▲':'▼'} ${t.direction} ${t.symbol}</span>
+          <span style="font-size:12px;font-weight:700;color:${floatingCol}">${floatingPnl>=0?'+':''}$${floatingPnl}</span>
+        </div>
+        <div style="display:flex;gap:8px;font-size:10px;color:#4b5563;margin-bottom:8px">
+          <span>Entry: <span class="mono" style="color:#e2e4ea">$${parseInt(t.entry).toLocaleString()}</span></span>
+          <span>TP: <span class="mono" style="color:#00d68f">$${parseInt(t.tp1).toLocaleString()}</span></span>
+          <span>SL: <span class="mono" style="color:#ff4d6d">$${parseInt(t.sl).toLocaleString()}</span></span>
+          <span style="margin-left:auto">${time}</span>
+        </div>
+        <div style="display:flex;gap:5px">
+          <button onclick="closePaperTrade('${t.id}','tp1')" style="flex:1;padding:5px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP ✓</button>
+          <button onclick="closePaperTrade('${t.id}','sl')" style="flex:1;padding:5px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.3);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL ✗</button>
+          <button onclick="closePaperTrade('${t.id}','manual')" style="flex:1;padding:5px;background:rgba(245,158,11,.1);color:#f59e0b;border:1px solid rgba(245,158,11,.3);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">Cerrar</button>
+        </div>
+      </div>`;
+    });
+  } else {
+    html += `<div style="font-size:11px;color:#2a3040;text-align:center;padding:8px 0">Sin posiciones abiertas</div>`;
+  }
+
+  // Historial reciente
+  if (paperStats?.recentTrades?.length) {
+    html += `<div style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px">Historial reciente</div>`;
+
+    // Métricas
+    const s = paperStats;
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:10px">
+      <div style="background:#111520;border-radius:5px;padding:6px;text-align:center">
+        <div style="font-size:9px;color:#4b5563">Win Rate</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}%</div>
+      </div>
+      <div style="background:#111520;border-radius:5px;padding:6px;text-align:center">
+        <div style="font-size:9px;color:#4b5563">PnL Total</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:${s.totalPnl>=0?'#00d68f':'#ff4d6d'}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</div>
+      </div>
+      <div style="background:#111520;border-radius:5px;padding:6px;text-align:center">
+        <div style="font-size:9px;color:#4b5563">Profit F.</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:#f59e0b">${s.profitFactor}</div>
+      </div>
+      <div style="background:#111520;border-radius:5px;padding:6px;text-align:center">
+        <div style="font-size:9px;color:#4b5563">Max DD</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">-$${s.maxDrawdown}</div>
+      </div>
+    </div>`;
+
+    paperStats.recentTrades.slice(0,8).forEach(t => {
+      const won = t.status === 'won';
+      const lost = t.status === 'lost';
+      const pnlCol = won ? '#00d68f' : lost ? '#ff4d6d' : '#f59e0b';
+      const statusIcon = won ? '✓' : lost ? '✗' : '—';
+      const date = new Date(t.closed_at || t.created_at).toLocaleDateString('es-PE',{month:'2-digit',day:'2-digit'});
+      html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03)">
+        <span style="font-size:12px;color:${pnlCol};font-weight:700">${statusIcon}</span>
+        <span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:600">${t.direction}</span>
+        <span style="font-size:10px;color:#4b5563">${t.symbol}</span>
+        <span style="font-size:10px;color:#4b5563;margin-left:auto">${date}</span>
+        <span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:55px;text-align:right">${(t.pnl_usd>=0?'+':'') + '$'+(t.pnl_usd||0).toFixed(0)}</span>
+      </div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+
 fetchAll();
 setInterval(fetchAll,30000);
+setInterval(refreshPaper,60000);
+setTimeout(refreshPaper,2000);
 </script>
 </body>
 </html>
