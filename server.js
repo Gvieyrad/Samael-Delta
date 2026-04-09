@@ -239,7 +239,7 @@ function calcFibonacci(klines, price) {
     const isVeryClose = nearest.dist < 0.3; // dentro del 0.3%
     const isClose = nearest.dist < 0.8;     // dentro del 0.8%
 
-    if (!isClose) return { bonus: 0, penalty: 0, signal: 'none' };
+    if (!isClose) return { bonus: 0, penalty: 0, signal: 'none', description: '' };
 
     // En retrocesos: precio en 0.618 o 0.382 = rebote probable
     if (isRetracement && isKey) {
@@ -254,12 +254,12 @@ function calcFibonacci(klines, price) {
     if (!isRetracement && isKey) {
       return {
         bonus: 0,
-        penalty: isVeryClose ? 12 : 6, // penaliza entrar a favor del trend en extensión
+        penalty: isVeryClose ? 12 : 6,
         signal: isUptrend ? 'short_exhaustion' : 'long_exhaustion',
         description: `Precio en extensión Fib ${nearest.label} — zona de agotamiento`
       };
     }
-    return { bonus: isVeryClose ? 5 : 3, penalty: 0, signal: 'weak' };
+    return { bonus: isVeryClose ? 5 : 3, penalty: 0, signal: 'weak', description: `Nivel Fib ${nearest.label} cercano` };
   }
 
   const retImpact = fibImpact(nearestRetrace, true);
