@@ -489,10 +489,10 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
       liqTarget: nearLiq?.price,
       confluence: [
         lastRSI < 35 && 'RSI sobreventa',
-        cvdRising && priceDown5 && 'CVD divergente alcista',
-        oiFalling && priceDown5 && 'OI cayendo (shorts cierran)',
+        cvdRising && priceDownRegime && 'CVD divergente alcista',
+        oiFalling && priceDownRegime && 'OI cayendo (shorts cierran)',
         fundingRate < -0.0005 && 'Funding negativo extremo',
-        lastVol > avgVol * 2 && priceDown5 && 'Volumen clímax bajista',
+        lastVol > avgVol * 2 && priceDownRegime && 'Volumen clímax bajista',
       ].filter(Boolean)
     });
   }
@@ -525,10 +525,10 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
       liqTarget: nearLiq?.price,
       confluence: [
         lastRSI > 68 && 'RSI sobrecompra',
-        cvdFalling && priceUp5 && 'CVD divergente bajista',
-        oiFalling && priceUp5 && 'OI cayendo (longs cierran)',
+        cvdFalling && priceUpRegime && 'CVD divergente bajista',
+        oiFalling && priceUpRegime && 'OI cayendo (longs cierran)',
         fundingRate > 0.001 && 'Funding positivo extremo',
-        lastVol > avgVol * 2 && priceUp5 && 'Volumen clímax alcista',
+        lastVol > avgVol * 2 && priceUpRegime && 'Volumen clímax alcista',
       ].filter(Boolean)
     });
   }
