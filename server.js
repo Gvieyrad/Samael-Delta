@@ -555,7 +555,7 @@ async function fetchDeepOrderBook(symbol) {
       const vals = Object.values(buckets);
       const mean = vals.reduce((a,b)=>a+b,0) / vals.length;
       const std = Math.sqrt(vals.reduce((s,v)=>s+Math.pow(v-mean,2),0)/vals.length);
-      const threshold = mean + std * 2; // 2 sigma = cluster significativo
+      const threshold = mean + std * 1.2; // 1.2 sigma = más sensible
       return Object.entries(buckets)
         .filter(([, qty]) => qty > threshold)
         .map(([price, qty]) => ({
