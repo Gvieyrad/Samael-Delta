@@ -638,12 +638,12 @@ function renderFib() {
   if (fib.retImpact.signal !== 'none' && fib.nearestRetrace?.dist < 0.8) {
     const sigCol = fib.retImpact.signal === 'long_bounce' ? '#00d68f' : '#ff4d6d';
     fibSignalHtml = `<div style="padding:6px 8px;background:rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.08);border-radius:5px;border:1px solid rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.25);margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;color:${sigCol}">⬟ ${fib.retImpact.description}</div>
-      <div style="font-size:10px;color:#4b5563;margin-top:2px">Bonus aplicado: +${fib.retImpact.bonus}% a probabilidades</div>
+      <div style="font-size:11px;font-weight:700;color:${sigCol}">⬟ ${fib.retImpact.description||'Zona de rebote Fibonacci activa'}</div>
+      <div style="font-size:10px;color:#4b5563;margin-top:2px">Bonus aplicado: +${fib.retImpact.bonus||0}% a probabilidades</div>
     </div>`;
   } else if (fib.extImpact.signal !== 'none' && fib.nearestExt?.dist < 0.8) {
     fibSignalHtml = `<div style="padding:6px 8px;background:rgba(139,92,246,.08);border-radius:5px;border:1px solid rgba(139,92,246,.25);margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;color:#8b5cf6">⬟ ${fib.extImpact.description}</div>
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6">⬟ ${fib.extImpact.description||'Zona de agotamiento Fibonacci'}</div>
       <div style="font-size:10px;color:#4b5563;margin-top:2px">Zona de agotamiento — ${fib.extImpact.penalty > 0 ? 'penaliza continuación -'+fib.extImpact.penalty+'%' : 'confirma reversión'}</div>
     </div>`;
   }
