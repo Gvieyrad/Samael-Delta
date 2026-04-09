@@ -1928,12 +1928,15 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     }
 
     // Señal confirmada — calcular TP y SL basados en ATR 3m
-    const highs3m = k3m.data.slice(-10).map(k => parseFloat(k[2]));
-    const lows3m  = k3m.data.slice(-10).map(k => parseFloat(k[3]));
-    const atr3m   = highs3m.reduce((s, h, i) => s + (h - lows3m[i]), 0) / 10;
+    const highs3m = k3m.data.slice(-20).map(k => parseFloat(k[2]));
+    const lows3m  = k3m.data.slice(-20).map(k => parseFloat(k[3]));
+    const rawAtr  = highs3m.reduce((s, h, i) => s + (h - lows3m[i]), 0) / 20;
+    // Mínimo garantizado: 0.15% del precio (evita ATR=0 en activos de bajo precio)
+    const minAtr  = price * 0.0015;
+    const atr3m   = Math.max(rawAtr, minAtr);
 
     const isLong = scalpDir === 'LONG';
-    const tp1 = isLong ? price + atr3m * 1.5 : price - atr3m * 1.5;
+    const tp1 = isLong ? price + atr3m * 2.0 : price - atr3m * 2.0;  // R:R 1:2.5
     const sl  = isLong ? price - atr3m * 0.8  : price + atr3m * 0.8;
     const rr  = (Math.abs(tp1 - price) / Math.abs(sl - price)).toFixed(1);
 
@@ -1955,7 +1958,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}
 📐 R:R 1:${rr}
 ━━━━━━━━━━━━━━
-📊 ${scalpProb}% confianza | ATR: $${atr3m.toFixed(0)}
+📊 ${scalpProb}% confianza | ATR: $${atr3m.toFixed(2)}
 ⚡ ${topReasons}
 🕐 ${new Date().toLocaleTimeString('es-PE')} — ACTUAR EN 2-3 MIN`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
