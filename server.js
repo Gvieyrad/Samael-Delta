@@ -447,12 +447,12 @@ Responde SOLO JSON sin markdown:
 
     analyzeCache[symbol]={ ts:now, data:signal };
 
-    await supabase.from('signals').insert({ symbol, direction:signal.direction, confidence:signal.confidence, entry:signal.entry, tp1:signal.tp1, tp2:signal.tp2, sl:signal.sl, rr:signal.rr, reasoning:signal.reasoning, market_data:d }).catch(()=>{});
+    try { await supabase.from('signals').insert({ symbol, direction:signal.direction, confidence:signal.confidence, entry:signal.entry, tp1:signal.tp1, tp2:signal.tp2, sl:signal.sl, rr:signal.rr, reasoning:signal.reasoning, market_data:d }); } catch(_){}
 
     if(signal.confidence>=75&&process.env.TELEGRAM_CHAT_ID){
       const e=signal.direction==='LONG'?'▲':signal.direction==='SHORT'?'▼':'◆';
       const msg=`${e} ${signal.direction} — ${symbol}\n💰 Entry: $${signal.entry}\n🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}\n🛑 SL: $${signal.sl} | ${signal.rr}\n📊 ${signal.confidence}% — ${signal.action}\n💬 ${signal.reasoning}`;
-      bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg).catch(()=>{});
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg); } catch(_){}
     }
 
     res.json(signal);
