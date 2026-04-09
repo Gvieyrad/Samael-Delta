@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.3.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.4.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -786,5 +786,203 @@ app.get('/api/trades', async (req, res) => {
   try { const {data,error}=await supabase.from('trades').select('*').order('created_at',{ascending:false}).limit(50); if(error) throw error; res.json(data); } catch(e){ res.status(500).json({error:e.message}); }
 });
 
+
+// ─── ALERTAS TELEGRAM AUTOMÁTICAS ────────────────────────────────
+let alertCache = {}; // evitar alertas duplicadas por señal
+
+async function runAutoAnalysis(symbol = 'BTCUSDT') {
+  try {
+    // 1. Obtener datos de mercado
+    const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
+    const price_temp = parseFloat(price_temp_res.data.lastPrice);
+
+    const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
+      Promise.resolve(price_temp_res),
+      axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
+      fetchOIHistory(symbol,'15m',10),
+      fetchOIHistory(symbol,'1h',10),
+      fetchOIHistory(symbol,'4h',10),
+    ]);
+
+    const [liqData, deepOB, whaleData] = await Promise.all([
+      fetchForceOrders(symbol),
+      fetchDeepOrderBook(symbol),
+      detectWhales(symbol, price_temp),
+    ]);
+
+    const price = parseFloat(ticker.data.lastPrice);
+    const fundingRate = parseFloat(funding.data.lastFundingRate);
+    const closes15m = k15m.data.map(k => parseFloat(k[4]));
+
+    const cvd15m = calcCVD(k15m.data);
+    const vrvp = calcVRVP(k15m.data);
+    const ob = analyzeOB(obRes.data.bids, obRes.data.asks);
+
+    const oiTrend15m = calcOITrend(oi15mHist);
+    const oiTrend1h  = calcOITrend(oi1hHist);
+    const oiTrend4h  = calcOITrend(oi4hHist);
+
+    const bias15m = calcBias(k15m.data, oi15mHist, fundingRate);
+    const bias1h  = calcBias(k1h.data, oi1hHist, fundingRate);
+    const bias4h  = calcBias(k4h.data, oi4hHist, fundingRate);
+    const bias1d  = calcBias(k1d.data, null, fundingRate);
+
+    const fib15m = calcFibonacci(k15m.data, price);
+    const fib4h  = calcFibonacci(k4h.data, price);
+
+    const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
+    const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m);
+
+    // 2. Verificar si hay señal fuerte
+    const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '80');
+    const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
+
+    if (combinedSignal.direction === 'ESPERAR') return;
+    if (combinedSignal.probability < minConfidence) return;
+    if (divergences.length < minDivergences) return;
+
+    // 3. Evitar spam: no repetir la misma señal en 30 minutos
+    const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
+    const now = Date.now();
+    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 30 * 60 * 1000) return;
+    alertCache[cacheKey] = now;
+
+    // 4. Llamar a Claude para análisis completo
+    const marketData = {
+      price, change24h: parseFloat(ticker.data.priceChangePercent),
+      fundingRate, openInterest: parseFloat(oiRes.data.openInterest),
+      rsi15m: calcRSI(closes15m), cvd15m, vrvp,
+      volDeltaPct: 0, orderBook: ob,
+      liqMagnets: calcLiqMagnets(price).slice(0,5),
+      divergences: divergences.slice(0,4),
+      combinedSignal,
+      bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d }
+    };
+
+    const divSummary = divergences.slice(0,3).map(d =>
+      `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`
+    ).join('\n');
+
+    const b = marketData.bias;
+    const prompt = `Eres un trader experto en futuros perpetuos. Analiza y da señal precisa.
+
+MERCADO: ${symbol} — $${price} (${marketData.change24h?.toFixed(2)}%)
+RSI 15m: ${marketData.rsi15m}
+CVD 15m: tendencia=${cvd15m.trend}, cvdPct=${cvd15m.cvdPct}%
+OI: ${marketData.openInterest?.toFixed(0)} | Funding: ${(fundingRate*100).toFixed(4)}%
+VRVP: POC=$${vrvp.poc} VAH=$${vrvp.vah} VAL=$${vrvp.val}
+SESGO: 15m=${b.tf15m?.bias}(${b.tf15m?.score}) 1H=${b.tf1h?.bias}(${b.tf1h?.score}) 4H=${b.tf4h?.bias}(${b.tf4h?.score}) 1D=${b.tf1d?.bias}(${b.tf1d?.score})
+DIVERGENCIAS (${divergences.length}):
+${divSummary}
+SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
+${fib15m?.nearestRetrace?.dist < 0.8 ? 'FIB: precio en retroceso ' + fib15m.nearestRetrace.label + ' — ' + fib15m.retImpact.description : ''}
+REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dir=trend real.
+Responde SOLO JSON sin markdown:
+{"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const text = response.content[0].text;
+    const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
+
+    if (signal.confidence < minConfidence) return;
+
+    // 5. Enviar alerta a Telegram
+    if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) return;
+
+    const dir = signal.direction;
+    const emoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '🟡';
+    const fibNote = fib15m?.nearestRetrace?.dist < 0.8
+      ? `\n⬟ Fib ${fib15m.nearestRetrace.label} — ${fib15m.retImpact.description}`
+      : '';
+    const whaleNote = whaleData?.whaleCount >= 3
+      ? `\n🐋 Ballenas: ${whaleData.dominance} (${whaleData.whaleCount} trades)`
+      : '';
+
+    const msg = `${emoji} *${dir}* — ${symbol}
+━━━━━━━━━━━━━━
+💰 Entry: *$${signal.entry?.toLocaleString()}*
+🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}
+🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}
+━━━━━━━━━━━━━━
+📊 Confianza: *${signal.confidence}%* — ${signal.action}
+📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas
+💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}
+━━━━━━━━━━━━━━
+🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+
+    await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
+    console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
+
+    // 6. Guardar en Supabase
+    try {
+      await supabase.from('signals').insert({
+        symbol, direction: signal.direction, confidence: signal.confidence,
+        entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2,
+        sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning,
+        market_data: marketData, source: 'auto_alert'
+      });
+    } catch(_) {}
+
+  } catch(e) {
+    console.error('Auto-analysis error:', e.message);
+  }
+}
+
+// ─── JOB PERIÓDICO ───────────────────────────────────────────────
+function startAlertJob() {
+  if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
+    console.log('⚠️ Alertas Telegram desactivadas — faltan TELEGRAM_CHAT_ID y TELEGRAM_TOKEN');
+    return;
+  }
+  const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15');
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
+  console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
+
+  setInterval(async () => {
+    for (const symbol of symbols) {
+      await runAutoAnalysis(symbol.trim());
+      await new Promise(r => setTimeout(r, 3000)); // 3s entre símbolos
+    }
+  }, intervalMin * 60 * 1000);
+
+  // Correr inmediatamente al arrancar
+  setTimeout(async () => {
+    for (const symbol of symbols) {
+      await runAutoAnalysis(symbol.trim());
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }, 10000); // 10 segundos después de arrancar
+}
+
+// Endpoint manual para disparar análisis ahora
+app.post('/api/alert/trigger', async (req, res) => {
+  const symbol = req.body.symbol || 'BTCUSDT';
+  await runAutoAnalysis(symbol);
+  res.json({ ok: true, message: `Análisis disparado para ${symbol}` });
+});
+
+app.get('/api/alert/status', (req, res) => {
+  res.json({
+    active: !!(process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN),
+    intervalMin: parseInt(process.env.ALERT_INTERVAL_MIN || '15'),
+    symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','),
+    minConfidence: parseInt(process.env.ALERT_MIN_CONFIDENCE || '80'),
+  });
+});
+
 const PORT=process.env.PORT||3001;
-app.listen(PORT,()=>console.log(`Panel Futuros LO v3.3 corriendo en puerto ${PORT}`));
+app.listen(PORT,()=>{
+  console.log(`Panel Futuros LO v3.4 corriendo en puerto ${PORT}`);
+  startAlertJob();
+});
