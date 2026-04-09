@@ -1849,6 +1849,193 @@ app.get('/api/ml/insights', async (req, res) => {
   }
 });
 
+
+// ─── MODO SCALPING — análisis cada 3 minutos ─────────────────────
+let scalpingActive = false;
+let scalpingInterval = null;
+const scalpingHistory = {}; // historial de señales para confirmación rápida
+
+async function runScalpingAnalysis(symbol = 'BTCUSDT') {
+  try {
+    const [tickerRes, k3m, k1m, obRes, fundingRes] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=30`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=50`),
+      axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+    ]);
+
+    const price = parseFloat(tickerRes.data.lastPrice);
+    const fundingRate = parseFloat(fundingRes.data.lastFundingRate);
+    const ob = analyzeOB(obRes.data.bids, obRes.data.asks);
+    const cvd3m = calcCVD(k3m.data);
+    const cvd1m = calcCVD(k1m.data);
+    const rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
+    const fib3m = calcFibonacci(k3m.data, price);
+
+    // Señal scalping — más rápida, prioriza libro y CVD inmediato
+    let scalpDir = null;
+    let scalpProb = 0;
+    const signals = [];
+
+    // Libro de órdenes — más confiable para scalping
+    const imb = parseFloat(ob.imbalance || 0);
+    if (imb > 20) { signals.push({ dir: 'LONG', w: 30, reason: `Imbalance bid +${imb}%` }); }
+    if (imb < -20) { signals.push({ dir: 'SHORT', w: 30, reason: `Imbalance ask ${imb}%` }); }
+
+    // CVD 1m — más inmediato
+    if (cvd1m.trend === 'bull' && cvd1m.cvdPct > 5) signals.push({ dir: 'LONG', w: 25, reason: `CVD 1m +${cvd1m.cvdPct}%` });
+    if (cvd1m.trend === 'bear' && cvd1m.cvdPct < -5) signals.push({ dir: 'SHORT', w: 25, reason: `CVD 1m ${cvd1m.cvdPct}%` });
+
+    // CVD 3m — confirmación
+    if (cvd3m.trend === 'bull') signals.push({ dir: 'LONG', w: 20, reason: 'CVD 3m alcista' });
+    if (cvd3m.trend === 'bear') signals.push({ dir: 'SHORT', w: 20, reason: 'CVD 3m bajista' });
+
+    // RSI 3m
+    if (rsi3m < 35) signals.push({ dir: 'LONG', w: 15, reason: `RSI 3m ${rsi3m} (sobreventa)` });
+    if (rsi3m > 65) signals.push({ dir: 'SHORT', w: 15, reason: `RSI 3m ${rsi3m} (sobrecompra)` });
+
+    // Fibonacci 3m
+    if (fib3m?.retImpact?.signal === 'long_bounce') signals.push({ dir: 'LONG', w: 15, reason: `Fib ${fib3m.nearestRetrace?.label}` });
+    if (fib3m?.retImpact?.signal === 'short_bounce') signals.push({ dir: 'SHORT', w: 15, reason: `Fib ${fib3m.nearestRetrace?.label}` });
+
+    // Muro en el libro
+    if (ob.bidWalls?.length > 0) signals.push({ dir: 'LONG', w: 10, reason: 'Muro BID detectado' });
+    if (ob.askWalls?.length > 0) signals.push({ dir: 'SHORT', w: 10, reason: 'Muro ASK detectado' });
+
+    // Calcular dirección dominante
+    const longScore  = signals.filter(s => s.dir === 'LONG').reduce((a, s) => a + s.w, 0);
+    const shortScore = signals.filter(s => s.dir === 'SHORT').reduce((a, s) => a + s.w, 0);
+    const totalScore = longScore + shortScore;
+
+    if (totalScore === 0) return;
+
+    scalpDir  = longScore > shortScore ? 'LONG' : 'SHORT';
+    scalpProb = Math.round((Math.max(longScore, shortScore) / Math.max(totalScore, 1)) * 100);
+
+    if (scalpProb < 65) return; // umbral mínimo scalping
+
+    // Confirmación rápida: 2 señales en la misma dirección en 6 minutos
+    if (!scalpingHistory[symbol]) scalpingHistory[symbol] = [];
+    const now = Date.now();
+    scalpingHistory[symbol].push({ dir: scalpDir, prob: scalpProb, ts: now });
+    scalpingHistory[symbol] = scalpingHistory[symbol].filter(s => now - s.ts < 6 * 60 * 1000);
+
+    const confirmed = scalpingHistory[symbol].filter(s => s.dir === scalpDir);
+    if (confirmed.length < 2) {
+      console.log(`⚡ Scalping ${scalpDir} ${symbol} ${scalpProb}% — esperando confirmación (${confirmed.length}/2)`);
+      return;
+    }
+
+    // Señal confirmada — calcular TP y SL basados en ATR 3m
+    const highs3m = k3m.data.slice(-10).map(k => parseFloat(k[2]));
+    const lows3m  = k3m.data.slice(-10).map(k => parseFloat(k[3]));
+    const atr3m   = highs3m.reduce((s, h, i) => s + (h - lows3m[i]), 0) / 10;
+
+    const isLong = scalpDir === 'LONG';
+    const tp1 = isLong ? price + atr3m * 1.5 : price - atr3m * 1.5;
+    const sl  = isLong ? price - atr3m * 0.8  : price + atr3m * 0.8;
+    const rr  = (Math.abs(tp1 - price) / Math.abs(sl - price)).toFixed(1);
+
+    const topReasons = signals
+      .filter(s => s.dir === scalpDir)
+      .sort((a, b) => b.w - a.w)
+      .slice(0, 3)
+      .map(s => s.reason)
+      .join(' · ');
+
+    console.log(`⚡ Scalping CONFIRMADO: ${scalpDir} ${symbol} ${scalpProb}% — ${topReasons}`);
+
+    // Notificar Telegram
+    if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
+      const emoji = isLong ? '⚡🟢' : '⚡🔴';
+      const msg = `${emoji} *SCALPING ${scalpDir}* — ${symbol}
+━━━━━━━━━━━━━━
+💰 Entry: *$${parseInt(price).toLocaleString()}*
+🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}
+📐 R:R 1:${rr}
+━━━━━━━━━━━━━━
+📊 ${scalpProb}% confianza | ATR: $${atr3m.toFixed(0)}
+⚡ ${topReasons}
+🕐 ${new Date().toLocaleTimeString('es-PE')} — ACTUAR EN 2-3 MIN`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+
+    // Auto paper trade scalping si prob >= 80%
+    const scalpThreshold = parseInt(process.env.SCALP_THRESHOLD || '80');
+    if (scalpProb >= scalpThreshold) {
+      try {
+        const { data: existing } = await supabase.from('paper_trades')
+          .select('id').eq('symbol', symbol).eq('status', 'open').eq('direction', scalpDir);
+        if (!existing || existing.length === 0) {
+          await supabase.from('paper_trades').insert({
+            symbol, direction: scalpDir,
+            entry: price, tp1, tp2: tp1, sl,
+            rr: `1:${rr}`, confidence: scalpProb,
+            size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+            leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
+            source: 'scalping', status: 'open',
+            market_data: {
+              confidence: scalpProb, direction: scalpDir,
+              rsi_3m: rsi3m, cvd_1m: cvd1m.cvdPct, cvd_3m: cvd3m.cvdPct,
+              ob_imbalance: imb, long_score: longScore, short_score: shortScore,
+              price, timestamp: new Date().toISOString(), mode: 'scalping'
+            }
+          });
+          console.log(`⚡ Auto scalp paper trade: ${scalpDir} ${symbol} @ $${price}`);
+        }
+      } catch(e) { console.error('Scalp paper trade error:', e.message); }
+    }
+
+    // Limpiar historial para no repetir
+    scalpingHistory[symbol] = [];
+
+  } catch(e) {
+    console.error('Scalping error:', e.message);
+  }
+}
+
+// Endpoints para controlar el modo scalping
+app.post('/api/scalping/start', (req, res) => {
+  if (scalpingActive) return res.json({ ok: false, message: 'Scalping ya activo' });
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
+  const intervalMin = parseFloat(process.env.SCALP_INTERVAL_MIN || '3');
+  scalpingActive = true;
+  scalpingInterval = setInterval(async () => {
+    for (const sym of symbols) {
+      await runScalpingAnalysis(sym.trim());
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }, intervalMin * 60 * 1000);
+  // Primera corrida inmediata
+  setTimeout(async () => {
+    for (const sym of symbols) {
+      await runScalpingAnalysis(sym.trim());
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }, 5000);
+  console.log(`⚡ Modo scalping activado — cada ${intervalMin} min para: ${symbols.join(', ')}`);
+  res.json({ ok: true, message: `Scalping activado cada ${intervalMin} min`, symbols });
+});
+
+app.post('/api/scalping/stop', (req, res) => {
+  if (!scalpingActive) return res.json({ ok: false, message: 'Scalping no estaba activo' });
+  clearInterval(scalpingInterval);
+  scalpingActive = false;
+  scalpingInterval = null;
+  console.log('⚡ Modo scalping desactivado');
+  res.json({ ok: true, message: 'Scalping desactivado' });
+});
+
+app.get('/api/scalping/status', (req, res) => {
+  res.json({
+    active: scalpingActive,
+    intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'),
+    threshold: parseInt(process.env.SCALP_THRESHOLD || '80'),
+    symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',')
+  });
+});
+
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
   console.log(`Panel Futuros LO v4.0 corriendo en puerto ${PORT}`);
