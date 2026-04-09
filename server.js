@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.4.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.6.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -924,7 +924,7 @@ Responde SOLO JSON sin markdown:
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
 
-    // 6. Guardar en Supabase
+    // 6. Guardar señal en Supabase
     try {
       await supabase.from('signals').insert({
         symbol, direction: signal.direction, confidence: signal.confidence,
@@ -933,6 +933,101 @@ Responde SOLO JSON sin markdown:
         market_data: marketData, source: 'auto_alert'
       });
     } catch(_) {}
+
+    // 7. AUTO PAPER TRADING — si confianza >= umbral, abrir trade simulado
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '85');
+    if (signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR') {
+      try {
+        // Verificar que no hay ya un trade abierto del mismo par y dirección
+        const { data: existing } = await supabase.from('paper_trades')
+          .select('id').eq('symbol', symbol).eq('status', 'open').eq('direction', signal.direction);
+
+        if (!existing || existing.length === 0) {
+          // Capturar snapshot completo de indicadores para ML futuro
+          const mlSnapshot = {
+            // Señal
+            confidence: signal.confidence,
+            direction: signal.direction,
+            // Indicadores principales
+            rsi_15m: marketData.rsi15m,
+            cvd_pct: cvd15m.cvdPct,
+            cvd_trend: cvd15m.trend,
+            funding_rate: fundingRate,
+            oi_trend_15m: oiTrend15m.trend,
+            oi_delta_15m: oiTrend15m.deltaPct,
+            // Bias por TF
+            bias_15m: bias15m.bias, bias_15m_score: bias15m.score,
+            bias_1h: bias1h.bias, bias_1h_score: bias1h.score,
+            bias_4h: bias4h.bias, bias_4h_score: bias4h.score,
+            bias_1d: bias1d.bias, bias_1d_score: bias1d.score,
+            // Divergencias
+            divergence_count: divergences.length,
+            top_divergence: divergences[0]?.type,
+            top_divergence_prob: divergences[0]?.probability,
+            short_count: combinedSignal.shortCount,
+            long_count: combinedSignal.longCount,
+            // Fibonacci
+            fib_level: fib15m?.nearestRetrace?.label,
+            fib_dist: fib15m?.nearestRetrace?.dist,
+            fib_signal: fib15m?.retImpact?.signal,
+            fib_bonus: fib15m?.retImpact?.bonus,
+            // Ballenas
+            whale_count: whaleData?.whaleCount,
+            whale_bias: whaleData?.whaleBias,
+            whale_dominance: whaleData?.dominance,
+            whale_ratio: whaleData?.whaleRatio,
+            // Libro profundo
+            deep_imbalance: deepOB?.deepImbalance,
+            bid_clusters: deepOB?.bidClusters?.length,
+            ask_clusters: deepOB?.askClusters?.length,
+            // VRVP
+            price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3),
+            price_vs_vah: ((marketData.price - vrvp.vah) / vrvp.vah * 100).toFixed(3),
+            price_vs_val: ((marketData.price - vrvp.val) / vrvp.val * 100).toFixed(3),
+            // Precio y contexto
+            price: marketData.price,
+            timestamp: new Date().toISOString()
+          };
+
+          const { data: newTrade } = await supabase.from('paper_trades').insert({
+            symbol,
+            direction: signal.direction,
+            entry: signal.entry,
+            tp1: signal.tp1,
+            tp2: signal.tp2,
+            sl: signal.sl,
+            rr: signal.rr,
+            confidence: signal.confidence,
+            size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+            leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
+            divergences: divergences.slice(0,5),
+            fibonacci: fib15m,
+            source: 'auto',
+            status: 'open',
+            // Snapshot ML completo
+            market_data: mlSnapshot
+          }).select().single();
+
+          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry} (${signal.confidence}%)`);
+
+          // Notificar por Telegram que se abrió un trade automático
+          if (process.env.TELEGRAM_CHAT_ID) {
+            const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼';
+            const autoMsg = `🤖 *Auto Paper Trade abierto*
+${tradeEmoji} ${signal.direction} ${symbol}
+💰 Entry: $${signal.entry?.toLocaleString()}
+🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}
+📊 ${signal.confidence}% confianza
+📐 ${signal.rr} R:R`;
+            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {}
+          }
+        } else {
+          console.log(`⏭ Auto paper trade omitido: ya hay ${existing.length} trade(s) ${signal.direction} abierto(s) para ${symbol}`);
+        }
+      } catch(paperErr) {
+        console.error('Auto paper trade error:', paperErr.message);
+      }
+    }
 
   } catch(e) {
     console.error('Auto-analysis error:', e.message);
@@ -1160,8 +1255,333 @@ async function monitorPaperTrades() {
   }
 }
 
+
+
+// ─── BACKTESTING HISTÓRICO ────────────────────────────────────────
+// Descarga klines históricos de Binance y simula el sistema completo
+// Corre UNA sola vez via POST /api/backtest/run
+
+let backtestRunning = false;
+
+async function fetchKlinesHistory(symbol, interval, startTime, endTime) {
+  const allKlines = [];
+  let start = startTime;
+  while (start < endTime) {
+    try {
+      const res = await axios.get(`${BINANCE}/fapi/v1/klines`, {
+        params: { symbol, interval, startTime: start, endTime, limit: 1500 }
+      });
+      const klines = res.data;
+      if (!klines.length) break;
+      allKlines.push(...klines);
+      start = klines[klines.length - 1][0] + 1;
+      if (klines.length < 1500) break;
+      await new Promise(r => setTimeout(r, 200)); // rate limit
+    } catch(e) { break; }
+  }
+  return allKlines;
+}
+
+app.post('/api/backtest/run', async (req, res) => {
+  if (backtestRunning) return res.json({ error: 'Backtesting ya en progreso' });
+
+  const {
+    symbol = 'BTCUSDT',
+    months = 12,        // cuántos meses hacia atrás
+    minConfidence = 80, // umbral mínimo de señal
+    leverage = 10,
+    sizeUsd = 1000
+  } = req.body;
+
+  // Responder inmediatamente — el proceso corre en background
+  res.json({ ok: true, message: `Backtesting iniciado: ${symbol} últimos ${months} meses` });
+  backtestRunning = true;
+
+  try {
+    console.log(`🔄 Backtesting ${symbol} — ${months} meses...`);
+
+    const endTime = Date.now();
+    const startTime = endTime - (months * 30 * 24 * 60 * 60 * 1000);
+
+    // Descargar datos históricos 15m, 1h, 4h
+    const [klines15m, klines1h, klines4h, klines1d, oiHistory] = await Promise.all([
+      fetchKlinesHistory(symbol, '15m', startTime, endTime),
+      fetchKlinesHistory(symbol, '1h', startTime, endTime),
+      fetchKlinesHistory(symbol, '4h', startTime, endTime),
+      fetchKlinesHistory(symbol, '1d', startTime - 30*24*60*60*1000, endTime),
+      fetchOIHistory(symbol, '1h', 500).catch(() => [])
+    ]);
+
+    console.log(`📊 Datos descargados: ${klines15m.length} velas 15m`);
+
+    let tradesInserted = 0, tradesWon = 0, tradesLost = 0;
+    const batchInsert = [];
+
+    // Iterar desde la vela 100 (necesitamos historial para calcular indicadores)
+    for (let i = 100; i < klines15m.length - 20; i++) {
+      const slice15m = klines15m.slice(Math.max(0, i - 100), i + 1);
+      const currentKline = klines15m[i];
+      const price = parseFloat(currentKline[4]); // close price
+      const timestamp = currentKline[0];
+
+      // Encontrar velas correspondientes en otros TF
+      const slice1h  = klines1h.filter(k => k[0] <= timestamp).slice(-60);
+      const slice4h  = klines4h.filter(k => k[0] <= timestamp).slice(-50);
+      const slice1d  = klines1d.filter(k => k[0] <= timestamp).slice(-30);
+
+      if (slice1h.length < 20 || slice4h.length < 20) continue;
+
+      // Calcular indicadores
+      const cvd15m   = calcCVD(slice15m);
+      const vrvp     = calcVRVP(slice15m);
+      const rsi15m   = calcRSI(slice15m.map(k => parseFloat(k[4])));
+      const fib15m   = calcFibonacci(slice15m, price);
+      const fib4h    = calcFibonacci(slice4h, price);
+
+      // Bias por TF (sin OI histórico — aproximación)
+      const bias15m  = calcBias(slice15m, null, 0);
+      const bias1h   = calcBias(slice1h, null, 0);
+      const bias4h   = calcBias(slice4h, null, 0);
+      const bias1d   = calcBias(slice1d, null, 0);
+
+      // OB simulado — no disponible históricamente, usar valores neutros
+      const ob = { bidWalls: [], askWalls: [], imbalance: '0', pressure: 'balanced' };
+
+      const divergences = detectDivergences(slice15m, ob, price, 0, bias4h, bias1d, { trend: 'flat' }, fib15m);
+      const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, null, null, fib15m);
+
+      if (combinedSignal.direction === 'ESPERAR') continue;
+      if (combinedSignal.probability < minConfidence) continue;
+      if (divergences.length < 2) continue;
+
+      // Calcular TP y SL basados en ATR (Average True Range) para realismo
+      const highs = slice15m.slice(-14).map(k => parseFloat(k[2]));
+      const lows  = slice15m.slice(-14).map(k => parseFloat(k[3]));
+      const atr   = highs.reduce((s,h,i) => s + (h - lows[i]), 0) / 14;
+
+      const isLong = combinedSignal.direction === 'LONG';
+      const tp1 = isLong ? price + atr * 2 : price - atr * 2;
+      const sl  = isLong ? price - atr * 1  : price + atr * 1;
+      const rr  = '1:2.0';
+
+      // Simular resultado: buscar qué tocó primero en las siguientes 20 velas
+      let closePrice = null, closeReason = null, closedAt = null;
+      for (let j = i + 1; j < Math.min(i + 48, klines15m.length); j++) {
+        const futureHigh = parseFloat(klines15m[j][2]);
+        const futureLow  = parseFloat(klines15m[j][3]);
+        const futureTime = klines15m[j][0];
+        if (isLong) {
+          if (futureLow <= sl)  { closePrice = sl;  closeReason = 'sl';  closedAt = futureTime; break; }
+          if (futureHigh >= tp1){ closePrice = tp1; closeReason = 'tp1'; closedAt = futureTime; break; }
+        } else {
+          if (futureHigh >= sl) { closePrice = sl;  closeReason = 'sl';  closedAt = futureTime; break; }
+          if (futureLow <= tp1) { closePrice = tp1; closeReason = 'tp1'; closedAt = futureTime; break; }
+        }
+      }
+
+      // Si no llegó a ninguno en 48 velas (12 horas), cerrar al precio final
+      if (!closePrice) {
+        const lastIdx = Math.min(i + 48, klines15m.length - 1);
+        closePrice = parseFloat(klines15m[lastIdx][4]);
+        closeReason = 'timeout';
+        closedAt = klines15m[lastIdx][0];
+      }
+
+      const priceDiff = isLong ? (closePrice - price) / price : (price - closePrice) / price;
+      const pnlUsd = parseFloat((sizeUsd * priceDiff * leverage).toFixed(2));
+      const pnlPct = parseFloat((priceDiff * 100 * leverage).toFixed(2));
+      const status = closeReason === 'tp1' ? 'won' : closeReason === 'sl' ? 'lost' : (pnlUsd >= 0 ? 'won' : 'lost');
+
+      if (status === 'won') tradesWon++; else tradesLost++;
+
+      // Snapshot ML completo
+      const mlSnapshot = {
+        confidence: combinedSignal.probability,
+        direction: combinedSignal.direction,
+        rsi_15m: rsi15m,
+        cvd_pct: cvd15m.cvdPct,
+        cvd_trend: cvd15m.trend,
+        funding_rate: 0,
+        oi_trend_15m: 'flat',
+        bias_15m: bias15m.bias, bias_15m_score: bias15m.score,
+        bias_1h: bias1h.bias, bias_1h_score: bias1h.score,
+        bias_4h: bias4h.bias, bias_4h_score: bias4h.score,
+        bias_1d: bias1d.bias, bias_1d_score: bias1d.score,
+        divergence_count: divergences.length,
+        top_divergence: divergences[0]?.type,
+        top_divergence_prob: divergences[0]?.probability,
+        short_count: combinedSignal.shortCount,
+        long_count: combinedSignal.longCount,
+        fib_level: fib15m?.nearestRetrace?.label,
+        fib_dist: fib15m?.nearestRetrace?.dist,
+        fib_signal: fib15m?.retImpact?.signal,
+        fib_bonus: fib15m?.retImpact?.bonus,
+        whale_count: 0, whale_bias: 'neutral',
+        price_vs_poc: vrvp.poc > 0 ? ((price - vrvp.poc) / vrvp.poc * 100).toFixed(3) : 0,
+        price_vs_vah: vrvp.vah > 0 ? ((price - vrvp.vah) / vrvp.vah * 100).toFixed(3) : 0,
+        price_vs_val: vrvp.val > 0 ? ((price - vrvp.val) / vrvp.val * 100).toFixed(3) : 0,
+        price, timestamp: new Date(timestamp).toISOString(),
+        atr: atr.toFixed(2)
+      };
+
+      batchInsert.push({
+        symbol, direction: combinedSignal.direction,
+        entry: price, tp1, tp2: tp1, sl, rr,
+        confidence: combinedSignal.probability,
+        size_usd: sizeUsd, leverage,
+        status, close_price: closePrice,
+        close_reason: closeReason,
+        pnl_usd: pnlUsd, pnl_pct: pnlPct,
+        created_at: new Date(timestamp).toISOString(),
+        closed_at: closedAt ? new Date(closedAt).toISOString() : null,
+        divergences: divergences.slice(0,3),
+        fibonacci: fib15m ? { nearestRetrace: fib15m.nearestRetrace, retImpact: fib15m.retImpact } : null,
+        market_data: mlSnapshot,
+        source: 'backtest'
+      });
+
+      // Insertar en batches de 50
+      if (batchInsert.length >= 50) {
+        await supabase.from('paper_trades').insert([...batchInsert]);
+        tradesInserted += batchInsert.length;
+        batchInsert.length = 0;
+        console.log(`📈 Progreso: ${tradesInserted} trades insertados (${tradesWon}W/${tradesLost}L)`);
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      // Saltar 4 velas (1 hora) para evitar trades superpuestos
+      i += 4;
+    }
+
+    // Insertar resto
+    if (batchInsert.length > 0) {
+      await supabase.from('paper_trades').insert(batchInsert);
+      tradesInserted += batchInsert.length;
+    }
+
+    const finalWinRate = tradesInserted > 0 ? ((tradesWon / (tradesWon + tradesLost)) * 100).toFixed(1) : 0;
+    console.log(`✅ Backtesting completado: ${tradesInserted} trades | WR: ${finalWinRate}% | ${tradesWon}W/${tradesLost}L`);
+
+    if (process.env.TELEGRAM_CHAT_ID) {
+      try {
+        await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,
+          `✅ *Backtesting completado*\n📊 ${symbol} — ${months} meses\n🔢 ${tradesInserted} trades históricos\n📈 Win Rate inicial: ${finalWinRate}%\n✓ ${tradesWon} ganados | ✗ ${tradesLost} perdidos`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch(_) {}
+    }
+
+  } catch(e) {
+    console.error('Backtest error:', e.message);
+  } finally {
+    backtestRunning = false;
+  }
+});
+
+app.get('/api/backtest/status', async (req, res) => {
+  const { data } = await supabase.from('paper_trades')
+    .select('status, source').eq('source', 'backtest');
+  const total = data?.length || 0;
+  const won   = data?.filter(t => t.status === 'won').length || 0;
+  const lost  = data?.filter(t => t.status === 'lost').length || 0;
+  res.json({
+    running: backtestRunning,
+    total, won, lost,
+    winRate: total > 0 ? ((won/total)*100).toFixed(1) : 0
+  });
+});
+
+// ─── ANÁLISIS ML — PATRONES GANADORES ────────────────────────────
+app.get('/api/ml/insights', async (req, res) => {
+  try {
+    const { data: trades } = await supabase.from('paper_trades')
+      .select('*').neq('status', 'open').order('created_at', { ascending: false }).limit(500);
+
+    if (!trades || trades.length < 10) {
+      return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
+    }
+
+    const won = trades.filter(t => t.status === 'won');
+    const lost = trades.filter(t => t.status === 'lost');
+
+    // Analizar qué indicadores correlacionan con trades ganadores
+    function avg(arr, key) {
+      const vals = arr.map(t => parseFloat(t.market_data?.[key])).filter(v => !isNaN(v));
+      return vals.length > 0 ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : null;
+    }
+    function pct(arr, key, value) {
+      const matches = arr.filter(t => t.market_data?.[key] === value).length;
+      return arr.length > 0 ? ((matches/arr.length)*100).toFixed(1) : 0;
+    }
+
+    const insights = {
+      total: trades.length,
+      won: won.length,
+      lost: lost.length,
+      winRate: ((won.length/trades.length)*100).toFixed(1),
+      totalPnl: trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0).toFixed(2),
+
+      // Confianza promedio ganadores vs perdedores
+      avgConfidenceWon: avg(won, 'confidence'),
+      avgConfidenceLost: avg(lost, 'confidence'),
+
+      // RSI — ¿en qué rango se gana más?
+      avgRsiWon: avg(won, 'rsi_15m'),
+      avgRsiLost: avg(lost, 'rsi_15m'),
+
+      // CVD — ¿agresividad correlaciona?
+      avgCvdWon: avg(won, 'cvd_pct'),
+      avgCvdLost: avg(lost, 'cvd_pct'),
+
+      // Fibonacci — ¿cuándo está activo se gana más?
+      winRateWithFib: won.filter(t=>t.market_data?.fib_bonus>0).length / Math.max(1, trades.filter(t=>t.market_data?.fib_bonus>0).length) * 100,
+
+      // Ballenas — ¿cuando hay ballenas se gana más?
+      winRateWithWhales: won.filter(t=>t.market_data?.whale_count>=3).length / Math.max(1, trades.filter(t=>t.market_data?.whale_count>=3).length) * 100,
+
+      // Bias 4H alineado con dirección
+      winRateAligned4h: (() => {
+        const aligned = trades.filter(t =>
+          (t.direction==='LONG' && t.market_data?.bias_4h==='long') ||
+          (t.direction==='SHORT' && t.market_data?.bias_4h==='short')
+        );
+        const alignedWon = aligned.filter(t=>t.status==='won').length;
+        return aligned.length > 0 ? ((alignedWon/aligned.length)*100).toFixed(1) : 'n/a';
+      })(),
+
+      // Top divergencias en trades ganadores
+      topDivergencesWon: won.reduce((acc, t) => {
+        const d = t.market_data?.top_divergence;
+        if (d) acc[d] = (acc[d]||0) + 1;
+        return acc;
+      }, {}),
+
+      // Recomendaciones automáticas
+      recommendations: []
+    };
+
+    // Generar recomendaciones basadas en los datos
+    if (parseFloat(insights.avgConfidenceWon) > parseFloat(insights.avgConfidenceLost) + 5) {
+      insights.recommendations.push(`Subir umbral mínimo a ${Math.round(parseFloat(insights.avgConfidenceWon)-2)}% (ganadores tienen ${insights.avgConfidenceWon}% vs ${insights.avgConfidenceLost}% perdedores)`);
+    }
+    if (parseFloat(insights.winRateWithFib) > parseFloat(insights.winRate) + 10) {
+      insights.recommendations.push(`Fibonacci activo mejora win rate en ${(parseFloat(insights.winRateWithFib)-parseFloat(insights.winRate)).toFixed(1)}% — priorizar señales con nivel Fib cercano`);
+    }
+    if (parseFloat(insights.winRateAligned4h) > parseFloat(insights.winRate) + 10) {
+      insights.recommendations.push(`Bias 4H alineado mejora win rate en ${(parseFloat(insights.winRateAligned4h)-parseFloat(insights.winRate)).toFixed(1)}% — requerir confirmación 4H`);
+    }
+    if (parseFloat(insights.winRateWithWhales) > parseFloat(insights.winRate) + 8) {
+      insights.recommendations.push(`Ballenas activas mejoran resultados — agregar como requisito mínimo 3 whale trades`);
+    }
+
+    res.json(insights);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
-  console.log(`Panel Futuros LO v3.4 corriendo en puerto ${PORT}`);
+  console.log(`Panel Futuros LO v3.6 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
