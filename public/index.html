@@ -1168,11 +1168,83 @@ function renderML() {
   el.innerHTML = html;
 }
 
+
+// ─── MODO SCALPING ────────────────────────────────────────────────
+let scalpingOn = false;
+
+async function toggleScalping() {
+  const btn = document.getElementById('scalp-btn');
+  const icon = document.getElementById('scalp-icon');
+  if (!scalpingOn) {
+    btn.disabled = true;
+    icon.textContent = '⏳';
+    const res = await fetch(`${API}/api/scalping/start`, { method: 'POST' }).then(r => r.json()).catch(() => null);
+    btn.disabled = false;
+    if (res?.ok) {
+      scalpingOn = true;
+      btn.style.background = 'rgba(139,92,246,.35)';
+      btn.style.borderColor = '#8b5cf6';
+      btn.style.boxShadow = '0 0 10px rgba(139,92,246,.5)';
+      icon.textContent = '⚡';
+      showToast('⚡ Scalping activado — análisis cada 3 min', '#8b5cf6');
+    } else {
+      icon.textContent = '⚡';
+      showToast('Error al activar scalping', '#ff4d6d');
+    }
+  } else {
+    await fetch(`${API}/api/scalping/stop`, { method: 'POST' }).catch(() => null);
+    scalpingOn = false;
+    btn.style.background = 'rgba(139,92,246,.1)';
+    btn.style.borderColor = 'rgba(139,92,246,.35)';
+    btn.style.boxShadow = 'none';
+    icon.textContent = '⚡';
+    showToast('Scalping desactivado', '#f59e0b');
+  }
+}
+
+async function checkScalpingStatus() {
+  try {
+    const res = await fetch(`${API}/api/scalping/status`).then(r => r.json());
+    if (res.active) {
+      scalpingOn = true;
+      const btn = document.getElementById('scalp-btn');
+      if (btn) {
+        btn.style.background = 'rgba(139,92,246,.35)';
+        btn.style.borderColor = '#8b5cf6';
+        btn.style.boxShadow = '0 0 10px rgba(139,92,246,.5)';
+      }
+    }
+  } catch(_) {}
+}
+
+function updateConfirmationBadge(signal) {
+  const badge = document.getElementById('signal-confirmation-badge');
+  if (!badge) return;
+  if (!signal || signal.direction === 'ESPERAR') {
+    badge.innerHTML = '';
+    return;
+  }
+  const lastSignalKey = `lastSignal_${signal.direction}`;
+  const lastTime = parseInt(localStorage.getItem(lastSignalKey) || '0');
+  const now = Date.now();
+  const minsSince = Math.round((now - lastTime) / 60000);
+  if (lastTime === 0 || now - lastTime > 30 * 60 * 1000) {
+    localStorage.setItem(lastSignalKey, now.toString());
+    badge.innerHTML = '<span style="font-size:10px;background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3);padding:2px 8px;border-radius:4px;font-weight:700">⏳ Primera detección — esperar confirmación 15 min</span>';
+  } else if (minsSince >= 15) {
+    badge.innerHTML = '<span style="font-size:10px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3);padding:2px 8px;border-radius:4px;font-weight:700">✅ Señal confirmada — ' + minsSince + ' min activa</span>';
+  } else {
+    const remaining = 15 - minsSince;
+    badge.innerHTML = '<span style="font-size:10px;background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3);padding:2px 8px;border-radius:4px;font-weight:700">⏳ ' + minsSince + ' min activa — faltan ' + remaining + ' min para confirmar</span>';
+  }
+}
+
 fetchAll();
 setInterval(fetchAll,30000);
 setTimeout(refreshML,3000);
 setInterval(refreshPaper,60000);
 setTimeout(refreshPaper,2000);
+setTimeout(checkScalpingStatus,3000);
 </script>
 </body>
 </html>
