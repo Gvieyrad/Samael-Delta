@@ -1161,21 +1161,25 @@ function renderML() {
   </div>` : ''}
 
   <!-- Rendimiento por fuente -->
-  ${d.bySource && Object.keys(d.bySource).length > 0 ? `<div style="padding:10px 14px;border-bottom:1px solid #1e2330">
-    <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rendimiento por modo</div>
-    ${Object.entries(d.bySource).map(([src, s]) => {
+  ${(()=>{
+    if (!d.bySource || Object.keys(d.bySource).length === 0) return '';
+    const rows = Object.entries(d.bySource).map(([src, s]) => {
       const srcLabel = src==='scalping'?'⚡ Scalping':src==='auto'?'🤖 Auto':src==='manual'?'👤 Manual':'📊 Backtest';
       const srcCol = src==='scalping'?'#8b5cf6':src==='auto'?'#00d68f':src==='manual'?'#f59e0b':'#4b5563';
       const wrCol = s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d';
       const pnlCol = s.totalPnl>=0?'#00d68f':'#ff4d6d';
-      return \`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)">
-        <span style="font-size:11px;font-weight:700;color:\${srcCol};min-width:90px">\${srcLabel}</span>
-        <span style="font-size:10px;color:#4b5563;min-width:50px">\${s.total} trades</span>
-        <span class="mono" style="font-size:11px;font-weight:700;color:\${wrCol};min-width:45px">\${s.winRate}%</span>
-        <span class="mono" style="font-size:11px;font-weight:700;color:\${pnlCol};margin-left:auto">\${s.totalPnl>=0?'+':''}\$\${s.totalPnl.toFixed(0)}</span>
-      </div>\`;
-    }).join('')}
-  </div>` : ''}
+      const pnlStr = (s.totalPnl>=0?'+':'') + '$' + Math.abs(s.totalPnl).toFixed(0);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)">'
+        + '<span style="font-size:11px;font-weight:700;color:'+srcCol+';min-width:90px">'+srcLabel+'</span>'
+        + '<span style="font-size:10px;color:#4b5563;min-width:50px">'+s.total+' trades</span>'
+        + '<span class="mono" style="font-size:11px;font-weight:700;color:'+wrCol+';min-width:45px">'+s.winRate+'%</span>'
+        + '<span class="mono" style="font-size:11px;font-weight:700;color:'+pnlCol+';margin-left:auto">'+pnlStr+'</span>'
+        + '</div>';
+    }).join('');
+    return '<div style="padding:10px 14px;border-bottom:1px solid #1e2330">'
+      + '<div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rendimiento por modo</div>'
+      + rows + '</div>';
+  })()}
 
   <!-- Recomendaciones -->
   ${d.recommendations?.length ? `<div style="padding:10px 14px">
