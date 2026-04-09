@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.8.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.0.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -122,7 +122,10 @@ function calcBias(klines, oiData=null, fundingRate=0) {
   if(priceVsPrev>0.3) score+=12; else if(priceVsPrev<-0.3) score-=12;
   if(hhCount>=3) score+=10; if(llCount>=3) score-=10;
   if(rsi>70) score-=25; else if(rsi>60) score+=8; else if(rsi<30) score+=25; else if(rsi<40) score-=8;
-  if(cvd.delta5>0) score+=10; else score-=10;
+  // ML: CVD es el mejor discriminador — más peso cuando es extremo
+  const cvdExtreme = Math.abs(cvd.cvdPct) > 15;
+  if(cvd.delta5>0) score += cvdExtreme ? 15 : 10;
+  else score -= cvdExtreme ? 15 : 10;
   if(aboveVwap) score+=5; else score-=5;
   if(oiTrend.trend==='rising'&&priceVsPrev>0) score+=8;
   if(oiTrend.trend==='rising'&&priceVsPrev<0) score-=8;
@@ -453,6 +456,98 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
     });
   }
 
+  // ── 15. DETECTOR DE CAMBIO DE RÉGIMEN ────────────────────────
+  // El patrón más importante: mercado caía → señales de reversión acumulándose
+  // Detecta cuando el sistema debe CAMBIAR de SHORT a LONG o viceversa
+
+  // REVERSIÓN ALCISTA: precio cayendo pero múltiples señales de agotamiento bajista
+  const priceDown5 = lastClose < closes[closes.length - 6];
+  const priceDown10 = lastClose < closes[closes.length - 11];
+
+  // Condiciones de agotamiento bajista (al menos 3 de 5)
+  const bearExhaustion = [
+    lastRSI < 35,                          // RSI sobreventa
+    cvdRising && priceDown5,               // CVD positivo mientras baja = absorción
+    oiFalling && priceDown5,               // OI cae mientras baja = shorts cerrando
+    fundingRate < -0.0005,                 // Funding negativo = shorts sobrecalentados
+    lastVol > avgVol * 2 && priceDown5,    // Volumen climax bajista
+  ].filter(Boolean).length;
+
+  if (bearExhaustion >= 3) {
+    let prob = 65 + (bearExhaustion * 6); // 65-95 según cuántas condiciones
+    if (bullishContext) prob = Math.min(95, prob + 10);
+    if (hasBidWall) prob = Math.min(95, prob + 8);
+    const nearLiq = getNearestLiqMagnet(price, 'up');
+    if (nearLiq) prob += nearLiq.bonus;
+    divergences.push({
+      type: 'regime_change_long',
+      name: 'Cambio de Régimen — LONG',
+      direction: 'LONG',
+      probability: Math.min(95, prob),
+      entry: price,
+      description: `${bearExhaustion}/5 señales de agotamiento bajista activas — mercado cambia de dirección. ${bearExhaustion >= 4 ? 'Señal MUY FUERTE.' : 'Confirmar con vela alcista.'}`,
+      action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
+      liqTarget: nearLiq?.price,
+      confluence: [
+        lastRSI < 35 && 'RSI sobreventa',
+        cvdRising && priceDown5 && 'CVD divergente alcista',
+        oiFalling && priceDown5 && 'OI cayendo (shorts cierran)',
+        fundingRate < -0.0005 && 'Funding negativo extremo',
+        lastVol > avgVol * 2 && priceDown5 && 'Volumen clímax bajista',
+      ].filter(Boolean)
+    });
+  }
+
+  // REVERSIÓN BAJISTA: precio subiendo pero múltiples señales de agotamiento alcista
+  const priceUp5 = lastClose > closes[closes.length - 6];
+
+  const bullExhaustion = [
+    lastRSI > 68,                          // RSI sobrecompra
+    cvdFalling && priceUp5,                // CVD negativo mientras sube = distribución
+    oiFalling && priceUp5,                 // OI cae mientras sube = longs cerrando
+    fundingRate > 0.001,                   // Funding positivo = longs sobrecalentados
+    lastVol > avgVol * 2 && priceUp5,      // Volumen clímax alcista
+  ].filter(Boolean).length;
+
+  if (bullExhaustion >= 3) {
+    let prob = 65 + (bullExhaustion * 6);
+    if (bearishContext) prob = Math.min(95, prob + 10);
+    if (hasAskWall) prob = Math.min(95, prob + 8);
+    const nearLiq = getNearestLiqMagnet(price, 'down');
+    if (nearLiq) prob += nearLiq.bonus;
+    divergences.push({
+      type: 'regime_change_short',
+      name: 'Cambio de Régimen — SHORT',
+      direction: 'SHORT',
+      probability: Math.min(95, prob),
+      entry: price,
+      description: `${bullExhaustion}/5 señales de agotamiento alcista activas — mercado cambia de dirección. ${bullExhaustion >= 4 ? 'Señal MUY FUERTE.' : 'Confirmar con vela bajista.'}`,
+      action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
+      liqTarget: nearLiq?.price,
+      confluence: [
+        lastRSI > 68 && 'RSI sobrecompra',
+        cvdFalling && priceUp5 && 'CVD divergente bajista',
+        oiFalling && priceUp5 && 'OI cayendo (longs cierran)',
+        fundingRate > 0.001 && 'Funding positivo extremo',
+        lastVol > avgVol * 2 && priceUp5 && 'Volumen clímax alcista',
+      ].filter(Boolean)
+    });
+  }
+
+  // Aplicar impacto de Fibonacci a todas las divergencias
+  if (fib) {
+    divergences.forEach(d => {
+      const isLong = d.direction === 'LONG';
+      const isShort = d.direction === 'SHORT';
+      if (fib.retImpact.signal === 'long_bounce' && isLong) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      if (fib.retImpact.signal === 'short_bounce' && isShort) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      if (fib.extImpact.signal === 'short_exhaustion' && isShort) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'long_exhaustion' && isLong) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'short_exhaustion' && isLong) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+      if (fib.extImpact.signal === 'long_exhaustion' && isShort) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+    });
+  }
+
   return divergences.sort((a,b)=>b.probability-a.probability);
 }
 
@@ -468,6 +563,22 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   const longScore=longs.reduce((s,d)=>s+d.probability,0)/(longs.length||1);
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
+
+  // ── BLOQUEO DE SEÑAL CONTRARIA AL RÉGIMEN ──────────────────
+  // Si hay señal de cambio de régimen, bloquear la dirección contraria
+  const regimeLong  = divergences.find(d => d.type === 'regime_change_long');
+  const regimeShort = divergences.find(d => d.type === 'regime_change_short');
+
+  if (regimeLong && direction === 'SHORT') {
+    // Mercado está cambiando a LONG — penalizar fuertemente señales SHORT
+    prob = Math.max(5, prob - 30);
+    if (regimeLong.probability >= 80) prob = 5; // bloqueo total si es fuerte
+  }
+  if (regimeShort && direction === 'LONG') {
+    // Mercado está cambiando a SHORT — penalizar fuertemente señales LONG
+    prob = Math.max(5, prob - 30);
+    if (regimeShort.probability >= 80) prob = 5; // bloqueo total si es fuerte
+  }
 
   // Bonus por contexto multi-TF — MEJORADO con datos ML
   // Ambos 4H y 1D alineados = bonus mayor
@@ -514,7 +625,24 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   // Bonus absorción doble (ML: las más ganadoras)
   if (absorcionCount >= 2) prob = Math.min(95, prob + 8);
 
-  const action=prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
+  // Bonus ML: CVD como discriminador clave
+  // BTC ganadores: CVD muy positivo en LONGs
+  // ETH/SOL ganadores: CVD muy negativo en SHORTs
+  const cvdPct = divergences[0] ? 0 : 0; // placeholder — el CVD real viene del mercado
+  // Usamos el bias cvdPct del 15m si está disponible en las divergencias
+  const topDiv = divergences[0];
+  if (topDiv) {
+    // Si la divergencia principal es de absorción y hay múltiples confirmaciones
+    if (absorcionCount >= 1 && divergences.length >= 3) {
+      prob = Math.min(95, prob + 5); // bonus por confluencia alta
+    }
+  }
+
+  // Acción especial para cambio de régimen
+  const isRegimeChange = (regimeLong && direction==='LONG') || (regimeShort && direction==='SHORT');
+  const action = isRegimeChange && prob >= 75
+    ? '⚠️ CAMBIO DE RÉGIMEN — ENTRAR'
+    : prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
   const fibSummary = fib?.nearestRetrace?.dist < 0.8 ? `Fib ${fib.nearestRetrace.label} cerca` : fib?.nearestExt?.dist < 0.8 ? `Ext Fib ${fib.nearestExt.label} cerca` : null;
   const whaleSummary = whaleData?.whaleCount > 0 ? `${whaleData.whaleCount} ballenas — ${whaleData.dominance}` : null;
   return { direction, probability:Math.round(prob), action, shortCount:shorts.length, longCount:longs.length, whaleSummary, fibSummary };
@@ -1666,6 +1794,6 @@ app.get('/api/ml/insights', async (req, res) => {
 
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
-  console.log(`Panel Futuros LO v3.8 corriendo en puerto ${PORT}`);
+  console.log(`Panel Futuros LO v4.0 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
