@@ -1451,23 +1451,38 @@ app.post('/api/backtest/run', async (req, res) => {
         source: 'backtest'
       });
 
-      // Insertar en batches de 50
-      if (batchInsert.length >= 50) {
-        await supabase.from('paper_trades').insert([...batchInsert]);
-        tradesInserted += batchInsert.length;
-        batchInsert.length = 0;
-        console.log(`📈 Progreso: ${tradesInserted} trades insertados (${tradesWon}W/${tradesLost}L)`);
-        await new Promise(r => setTimeout(r, 100));
+      // Insertar en batches de 20 (más pequeño = más estable)
+      if (batchInsert.length >= 20) {
+        const batch = batchInsert.splice(0, 20);
+        const { error: insertErr } = await supabase.from('paper_trades').insert(batch);
+        if (insertErr) {
+          console.error('Insert error:', insertErr.message);
+          // Intentar de a uno si falla el batch
+          for (const trade of batch) {
+            try { await supabase.from('paper_trades').insert([trade]); tradesInserted++; } catch(_) {}
+          }
+        } else {
+          tradesInserted += batch.length;
+        }
+        if (tradesInserted % 100 === 0) console.log(`📈 Progreso: ${tradesInserted} trades (${tradesWon}W/${tradesLost}L)`);
+        await new Promise(r => setTimeout(r, 150));
       }
 
       // Saltar 4 velas (1 hora) para evitar trades superpuestos
       i += 4;
     }
 
-    // Insertar resto
-    if (batchInsert.length > 0) {
-      await supabase.from('paper_trades').insert(batchInsert);
-      tradesInserted += batchInsert.length;
+    // Insertar resto en lotes de 20
+    while (batchInsert.length > 0) {
+      const batch = batchInsert.splice(0, 20);
+      const { error: insertErr } = await supabase.from('paper_trades').insert(batch);
+      if (!insertErr) { tradesInserted += batch.length; }
+      else {
+        for (const trade of batch) {
+          try { await supabase.from('paper_trades').insert([trade]); tradesInserted++; } catch(_) {}
+        }
+      }
+      await new Promise(r => setTimeout(r, 150));
     }
 
     const finalWinRate = tradesInserted > 0 ? ((tradesWon / (tradesWon + tradesLost)) * 100).toFixed(1) : 0;
