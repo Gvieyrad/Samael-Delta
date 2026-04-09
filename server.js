@@ -461,16 +461,15 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   // Detecta cuando el sistema debe CAMBIAR de SHORT a LONG o viceversa
 
   // REVERSIÓN ALCISTA: precio cayendo pero múltiples señales de agotamiento bajista
-  const priceDown5 = lastClose < closes[closes.length - 6];
-  const priceDown10 = lastClose < closes[closes.length - 11];
+  const priceDownRegime = lastClose < closes[closes.length - 6];
 
   // Condiciones de agotamiento bajista (al menos 3 de 5)
   const bearExhaustion = [
     lastRSI < 35,                          // RSI sobreventa
-    cvdRising && priceDown5,               // CVD positivo mientras baja = absorción
-    oiFalling && priceDown5,               // OI cae mientras baja = shorts cerrando
+    cvdRising && priceDownRegime,               // CVD positivo mientras baja = absorción
+    oiFalling && priceDownRegime,               // OI cae mientras baja = shorts cerrando
     fundingRate < -0.0005,                 // Funding negativo = shorts sobrecalentados
-    lastVol > avgVol * 2 && priceDown5,    // Volumen climax bajista
+    lastVol > avgVol * 2 && priceDownRegime,    // Volumen climax bajista
   ].filter(Boolean).length;
 
   if (bearExhaustion >= 3) {
@@ -499,14 +498,14 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   }
 
   // REVERSIÓN BAJISTA: precio subiendo pero múltiples señales de agotamiento alcista
-  const priceUp5 = lastClose > closes[closes.length - 6];
+  const priceUpRegime = lastClose > closes[closes.length - 6];
 
   const bullExhaustion = [
     lastRSI > 68,                          // RSI sobrecompra
-    cvdFalling && priceUp5,                // CVD negativo mientras sube = distribución
-    oiFalling && priceUp5,                 // OI cae mientras sube = longs cerrando
+    cvdFalling && priceUpRegime,                // CVD negativo mientras sube = distribución
+    oiFalling && priceUpRegime,                 // OI cae mientras sube = longs cerrando
     fundingRate > 0.001,                   // Funding positivo = longs sobrecalentados
-    lastVol > avgVol * 2 && priceUp5,      // Volumen clímax alcista
+    lastVol > avgVol * 2 && priceUpRegime,      // Volumen clímax alcista
   ].filter(Boolean).length;
 
   if (bullExhaustion >= 3) {
