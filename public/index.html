@@ -1020,14 +1020,26 @@ async function refreshML() {
 function renderML() {
   const el = document.getElementById('ml-panel');
   if (!el) return;
-  if (!mlData || mlData.trades < 10) {
-    el.innerHTML = `<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Necesitas al menos 10 trades cerrados</div>`;
+
+  // Debug: verificar qué llegó
+  if (!mlData) {
+    el.innerHTML = `<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Cargando...</div>`;
+    return;
+  }
+  if (mlData.message) {
+    el.innerHTML = `<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">${mlData.message} (${mlData.trades||0} trades)</div>`;
+    return;
+  }
+  if (!mlData.total || mlData.total < 10) {
+    el.innerHTML = `<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Pocos trades (${mlData.total||0}) — espera más datos</div>`;
     return;
   }
 
   const d = mlData;
-  const wrCol = parseFloat(d.winRate) >= 55 ? '#00d68f' : parseFloat(d.winRate) >= 45 ? '#f59e0b' : '#ff4d6d';
-  const pnlCol = parseFloat(d.totalPnl) >= 0 ? '#00d68f' : '#ff4d6d';
+  const wr = parseFloat(d.winRate)||0;
+  const pnl = parseFloat(d.totalPnl)||0;
+  const wrCol = wr >= 55 ? '#00d68f' : wr >= 45 ? '#f59e0b' : '#ff4d6d';
+  const pnlCol = pnl >= 0 ? '#00d68f' : '#ff4d6d';
 
   // Top divergencias ganadoras
   const topDivs = Object.entries(d.topDivergencesWon || {})
@@ -1052,23 +1064,25 @@ function renderML() {
 
   const maxDivCount = topDivs[0]?.[1] || 1;
 
+  const pf = d.profitFactor || '–';
+  const dd = parseFloat(d.maxDrawdown)||0;
   let html = `
   <!-- Stats principales -->
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:10px 14px;border-bottom:1px solid #1e2330">
     <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
       <div style="font-size:9px;color:#4b5563;margin-bottom:2px">Win Rate</div>
-      <div class="mono" style="font-size:15px;font-weight:800;color:${wrCol}">${d.winRate}%</div>
-      <div style="font-size:9px;color:#2a3040">${d.won}W / ${d.lost}L</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:${wrCol}">${wr.toFixed(1)}%</div>
+      <div style="font-size:9px;color:#2a3040">${d.won||0}W / ${d.lost||0}L</div>
     </div>
     <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
       <div style="font-size:9px;color:#4b5563;margin-bottom:2px">PnL Total</div>
-      <div class="mono" style="font-size:15px;font-weight:800;color:${pnlCol}">${parseFloat(d.totalPnl)>=0?'+':''}$${parseFloat(d.totalPnl).toFixed(0)}</div>
-      <div style="font-size:9px;color:#2a3040">${d.total} trades</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:${pnlCol}">${pnl>=0?'+':''}$${pnl.toFixed(0)}</div>
+      <div style="font-size:9px;color:#2a3040">${d.total||0} trades</div>
     </div>
     <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
       <div style="font-size:9px;color:#4b5563;margin-bottom:2px">Profit Factor</div>
-      <div class="mono" style="font-size:15px;font-weight:800;color:#f59e0b">${d.profitFactor}</div>
-      <div style="font-size:9px;color:#2a3040">Max DD -$${parseFloat(d.maxDrawdown).toFixed(0)}</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:#f59e0b">${pf}</div>
+      <div style="font-size:9px;color:#2a3040">Max DD -$${dd.toFixed(0)}</div>
     </div>
   </div>
 
@@ -1081,8 +1095,8 @@ function renderML() {
       <div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px">
         <span>Confianza promedio</span>
         <div style="display:flex;gap:8px">
-          <span style="color:#00d68f">✓ ${d.avgConfidenceWon||'–'}%</span>
-          <span style="color:#ff4d6d">✗ ${d.avgConfidenceLost||'–'}%</span>
+          <span style="color:#00d68f">✓ ${d.avgConfidenceWon||'–'}</span>
+          <span style="color:#ff4d6d">✗ ${d.avgConfidenceLost||'–'}</span>
         </div>
       </div>
     </div>
@@ -1101,19 +1115,19 @@ function renderML() {
     <!-- Fibonacci -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
       <span style="font-size:10px;color:#4b5563">Con Fibonacci activo</span>
-      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithFib)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithFib).toFixed(1)}% WR</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithFib||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithFib||0).toFixed(1)}% WR</span>
     </div>
 
     <!-- Ballenas -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
       <span style="font-size:10px;color:#4b5563">Con ballenas activas</span>
-      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithWhales)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithWhales).toFixed(1)}% WR</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithWhales||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithWhales||0).toFixed(1)}% WR</span>
     </div>
 
     <!-- 4H alineado -->
     <div style="display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:10px;color:#4b5563">4H alineado con señal</span>
-      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${d.winRateAligned4h}% WR</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h||0)>wr?'#00d68f':'#f59e0b'}">${d.winRateAligned4h||'–'}% WR</span>
     </div>
   </div>
 
