@@ -1505,11 +1505,16 @@ app.get('/api/backtest/status', async (req, res) => {
 // ─── ANÁLISIS ML — PATRONES GANADORES ────────────────────────────
 app.get('/api/ml/insights', async (req, res) => {
   try {
-    const { data: trades } = await supabase.from('paper_trades')
-      .select('*').neq('status', 'open').order('created_at', { ascending: false }).limit(500);
+    const { data: trades, error: tradesErr } = await supabase.from('paper_trades')
+      .select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci')
+      .in('status', ['won','lost','closed'])
+      .order('created_at', { ascending: false })
+      .limit(2000);
+
+    if (tradesErr) throw tradesErr;
 
     if (!trades || trades.length < 10) {
-      return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
+      return res.json({ message: `Necesitas al menos 10 trades cerrados para análisis ML`, trades: trades?.length || 0 });
     }
 
     const won = trades.filter(t => t.status === 'won');
@@ -1525,12 +1530,24 @@ app.get('/api/ml/insights', async (req, res) => {
       return arr.length > 0 ? ((matches/arr.length)*100).toFixed(1) : 0;
     }
 
+    const totalPnlCalc = trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+    const avgWinCalc = won.length > 0 ? won.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/won.length : 0;
+    const avgLossCalc = lost.length > 0 ? Math.abs(lost.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/lost.length) : 0;
+
+    // Max drawdown
+    let peak=0, maxDD=0, cumPnl=0;
+    [...trades].reverse().forEach(t=>{ cumPnl+=parseFloat(t.pnl_usd)||0; if(cumPnl>peak)peak=cumPnl; const dd=peak-cumPnl; if(dd>maxDD)maxDD=dd; });
+
     const insights = {
       total: trades.length,
       won: won.length,
       lost: lost.length,
       winRate: ((won.length/trades.length)*100).toFixed(1),
-      totalPnl: trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0).toFixed(2),
+      totalPnl: totalPnlCalc.toFixed(2),
+      avgWin: avgWinCalc.toFixed(2),
+      avgLoss: avgLossCalc.toFixed(2),
+      profitFactor: avgLossCalc > 0 ? (avgWinCalc/avgLossCalc).toFixed(2) : '∞',
+      maxDrawdown: maxDD.toFixed(2),
 
       // Confianza promedio ganadores vs perdedores
       avgConfidenceWon: avg(won, 'confidence'),
