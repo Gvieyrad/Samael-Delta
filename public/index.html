@@ -185,6 +185,14 @@ input[type=number]:focus{border-color:#f59e0b}
     <div id="paper-panel" style="padding:0"></div>
   </div>
 
+  <div class="card">
+    <div class="ch">
+      <span class="ct">ML Insights</span>
+      <button class="btn" onclick="refreshML()" style="padding:3px 8px;font-size:10px">↻</button>
+    </div>
+    <div id="ml-panel" style="padding:0"></div>
+  </div>
+
 </div>
 <div class="rcol">
 
@@ -997,8 +1005,150 @@ function renderPaper() {
   el.innerHTML = html;
 }
 
+
+// ─── ML INSIGHTS ─────────────────────────────────────────────────
+let mlData = null;
+
+async function refreshML() {
+  try {
+    const res = await fetch(`${API}/api/ml/insights`);
+    mlData = await res.json();
+    renderML();
+  } catch(e) { console.error('ML error:', e); }
+}
+
+function renderML() {
+  const el = document.getElementById('ml-panel');
+  if (!el) return;
+  if (!mlData || mlData.trades < 10) {
+    el.innerHTML = `<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Necesitas al menos 10 trades cerrados</div>`;
+    return;
+  }
+
+  const d = mlData;
+  const wrCol = parseFloat(d.winRate) >= 55 ? '#00d68f' : parseFloat(d.winRate) >= 45 ? '#f59e0b' : '#ff4d6d';
+  const pnlCol = parseFloat(d.totalPnl) >= 0 ? '#00d68f' : '#ff4d6d';
+
+  // Top divergencias ganadoras
+  const topDivs = Object.entries(d.topDivergencesWon || {})
+    .sort((a,b) => b[1]-a[1]).slice(0,5);
+
+  const divLabels = {
+    'absorcion_compras': 'Absorción Compras',
+    'absorcion_ventas': 'Absorción Ventas',
+    'rsi_bajista': 'RSI Bajista',
+    'rsi_alcista': 'RSI Alcista',
+    'cvd_precio_bajista': 'CVD/Precio Bajista',
+    'cvd_precio_alcista': 'CVD/Precio Alcista',
+    'bull_trap': 'Trampa Alcista',
+    'bear_trap': 'Trampa Bajista',
+    'short_buildup': 'Short Buildup',
+    'long_buildup': 'Long Buildup',
+    'funding_extremo': 'Funding Extremo',
+    'volumen_climax': 'Volumen Clímax',
+    'long_squeeze': 'Long Squeeze',
+    'short_squeeze': 'Short Squeeze'
+  };
+
+  const maxDivCount = topDivs[0]?.[1] || 1;
+
+  let html = `
+  <!-- Stats principales -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:10px 14px;border-bottom:1px solid #1e2330">
+    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
+      <div style="font-size:9px;color:#4b5563;margin-bottom:2px">Win Rate</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:${wrCol}">${d.winRate}%</div>
+      <div style="font-size:9px;color:#2a3040">${d.won}W / ${d.lost}L</div>
+    </div>
+    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
+      <div style="font-size:9px;color:#4b5563;margin-bottom:2px">PnL Total</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:${pnlCol}">${parseFloat(d.totalPnl)>=0?'+':''}$${parseFloat(d.totalPnl).toFixed(0)}</div>
+      <div style="font-size:9px;color:#2a3040">${d.total} trades</div>
+    </div>
+    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center">
+      <div style="font-size:9px;color:#4b5563;margin-bottom:2px">Profit Factor</div>
+      <div class="mono" style="font-size:15px;font-weight:800;color:#f59e0b">${d.profitFactor}</div>
+      <div style="font-size:9px;color:#2a3040">Max DD -$${parseFloat(d.maxDrawdown).toFixed(0)}</div>
+    </div>
+  </div>
+
+  <!-- Comparativa indicadores -->
+  <div style="padding:10px 14px;border-bottom:1px solid #1e2330">
+    <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Indicadores — ganadores vs perdedores</div>
+
+    <!-- Confianza -->
+    <div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px">
+        <span>Confianza promedio</span>
+        <div style="display:flex;gap:8px">
+          <span style="color:#00d68f">✓ ${d.avgConfidenceWon||'–'}%</span>
+          <span style="color:#ff4d6d">✗ ${d.avgConfidenceLost||'–'}%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RSI -->
+    <div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px">
+        <span>RSI 15m promedio</span>
+        <div style="display:flex;gap:8px">
+          <span style="color:#00d68f">✓ ${d.avgRsiWon||'–'}</span>
+          <span style="color:#ff4d6d">✗ ${d.avgRsiLost||'–'}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fibonacci -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+      <span style="font-size:10px;color:#4b5563">Con Fibonacci activo</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithFib)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithFib).toFixed(1)}% WR</span>
+    </div>
+
+    <!-- Ballenas -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+      <span style="font-size:10px;color:#4b5563">Con ballenas activas</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithWhales)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithWhales).toFixed(1)}% WR</span>
+    </div>
+
+    <!-- 4H alineado -->
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:10px;color:#4b5563">4H alineado con señal</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h)>parseFloat(d.winRate)?'#00d68f':'#f59e0b'}">${d.winRateAligned4h}% WR</span>
+    </div>
+  </div>
+
+  <!-- Top divergencias ganadoras -->
+  ${topDivs.length ? `<div style="padding:10px 14px;border-bottom:1px solid #1e2330">
+    <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Divergencias con más victorias</div>
+    ${topDivs.map(([type, count]) => {
+      const barW = Math.round((count / maxDivCount) * 100);
+      return `<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#e2e4ea;margin-bottom:2px">
+          <span>${divLabels[type]||type}</span>
+          <span style="color:#00d68f;font-weight:700">${count} victorias</span>
+        </div>
+        <div style="height:3px;background:#1e2330;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${barW}%;background:#00d68f;border-radius:2px"></div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>` : ''}
+
+  <!-- Recomendaciones -->
+  ${d.recommendations?.length ? `<div style="padding:10px 14px">
+    <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Recomendaciones del sistema</div>
+    ${d.recommendations.map(r => `<div style="display:flex;gap:6px;padding:5px 8px;background:rgba(245,158,11,.06);border-radius:5px;border:1px solid rgba(245,158,11,.15);margin-bottom:5px">
+      <span style="font-size:12px;flex-shrink:0">⬟</span>
+      <span style="font-size:10px;color:#f59e0b;line-height:1.5">${r}</span>
+    </div>`).join('')}
+  </div>` : `<div style="padding:10px 14px;text-align:center;font-size:11px;color:#2a3040">Acumula más trades para ver recomendaciones</div>`}`;
+
+  el.innerHTML = html;
+}
+
 fetchAll();
 setInterval(fetchAll,30000);
+setTimeout(refreshML,3000);
 setInterval(refreshPaper,60000);
 setTimeout(refreshPaper,2000);
 </script>
