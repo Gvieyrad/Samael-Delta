@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.6.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '3.7.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -465,9 +465,23 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
 
-  // Bonus por contexto multi-TF
-  if(direction==='SHORT'&&(bias4h?.bias==='short'||bias1d?.bias==='short')) prob=Math.min(95,prob+8);
-  if(direction==='LONG'&&(bias4h?.bias==='long'||bias1d?.bias==='long')) prob=Math.min(95,prob+8);
+  // Bonus por contexto multi-TF — MEJORADO con datos ML
+  // Ambos 4H y 1D alineados = bonus mayor
+  const both4hAnd1dLong  = bias4h?.bias==='long'  && bias1d?.bias==='long';
+  const both4hAnd1dShort = bias4h?.bias==='short' && bias1d?.bias==='short';
+  const only4hLong  = bias4h?.bias==='long'  && bias1d?.bias!=='short';
+  const only4hShort = bias4h?.bias==='short' && bias1d?.bias!=='long';
+
+  if(direction==='LONG'){
+    if(both4hAnd1dLong)  prob=Math.min(95,prob+15); // ambos alineados = +15%
+    else if(only4hLong)  prob=Math.min(95,prob+8);  // solo 4H = +8%
+    if(bias1d?.bias==='short') prob=Math.max(5,prob-10); // 1D en contra = penalizar
+  }
+  if(direction==='SHORT'){
+    if(both4hAnd1dShort)  prob=Math.min(95,prob+15);
+    else if(only4hShort)  prob=Math.min(95,prob+8);
+    if(bias1d?.bias==='long')  prob=Math.max(5,prob-10);
+  }
 
   // Bonus por ballenas: si las ballenas confirman la dirección
   if(whaleData && whaleData.whaleCount >= 3) {
@@ -841,7 +855,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
 
     // 2. Verificar si hay señal fuerte
     const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '80');
-    const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
+    const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '3'); // ML: subir a 3
 
     if (combinedSignal.direction === 'ESPERAR') return;
     if (combinedSignal.probability < minConfidence) return;
@@ -935,14 +949,31 @@ Responde SOLO JSON sin markdown:
     } catch(_) {}
 
     // 7. AUTO PAPER TRADING — si confianza >= umbral, abrir trade simulado
-    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '85');
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '88'); // ML: subir a 88%
     // Filtro de tendencia macro: no ir contra el 1D
     const trend1d = bias1d.bias;
     const trendOk = signal.direction === 'ESPERAR' ? false :
       signal.direction === 'LONG'  ? (trend1d !== 'short') :
       signal.direction === 'SHORT' ? (trend1d !== 'long')  : true;
 
-    if (signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk) {
+    // Filtro Fibonacci: bonus si hay nivel activo cercano
+    const fibActive = fib15m?.nearestRetrace?.dist < 0.8 || fib15m?.nearestExt?.dist < 0.8;
+    // Filtro 4H + 1D: requiere al menos 4H alineado
+    const tfAligned = signal.direction === 'LONG'  ? bias4h.bias === 'long'  :
+                      signal.direction === 'SHORT' ? bias4h.bias === 'short' : false;
+
+    // Condiciones finales para auto paper trade:
+    // 1. Confianza >= umbral
+    // 2. No contra tendencia 1D
+    // 3. 4H alineado con la señal
+    // 4. Mínimo 3 divergencias activas
+    const canAutoTrade = signal.confidence >= autoPaperThreshold
+      && signal.direction !== 'ESPERAR'
+      && trendOk
+      && tfAligned
+      && divergences.length >= 3;
+
+    if (canAutoTrade) {
       try {
         // Verificar que no hay ya un trade abierto del mismo par y dirección
         const { data: existing } = await supabase.from('paper_trades')
@@ -1360,10 +1391,13 @@ app.post('/api/backtest/run', async (req, res) => {
 
       if (combinedSignal.direction === 'ESPERAR') continue;
       if (combinedSignal.probability < minConfidence) continue;
-      if (divergences.length < 2) continue;
+      if (divergences.length < 3) continue; // ML: mínimo 3 divergencias
       // Filtro macro: no ir contra tendencia 1D
       if (combinedSignal.direction === 'LONG'  && bias1d.bias === 'short') continue;
       if (combinedSignal.direction === 'SHORT' && bias1d.bias === 'long')  continue;
+      // Filtro 4H alineado (dato ML: mejora WR significativamente)
+      if (combinedSignal.direction === 'LONG'  && bias4h.bias !== 'long')  continue;
+      if (combinedSignal.direction === 'SHORT' && bias4h.bias !== 'short') continue;
 
       // Calcular TP y SL basados en ATR (Average True Range) para realismo
       const highs = slice15m.slice(-14).map(k => parseFloat(k[2]));
@@ -1625,6 +1659,6 @@ app.get('/api/ml/insights', async (req, res) => {
 
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
-  console.log(`Panel Futuros LO v3.6 corriendo en puerto ${PORT}`);
+  console.log(`Panel Futuros LO v3.7 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
