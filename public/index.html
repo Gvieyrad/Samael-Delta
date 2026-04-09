@@ -186,8 +186,23 @@ input[type=number]:focus{border-color:#f59e0b}
   </div>
 
   <div class="card">
-    <div class="ch"><span class="ct">Imanes de liquidación</span></div>
+    <div class="ch"><span class="ct">Mapa de liquidaciones</span><span style="font-size:9px;color:#2a3040">datos reales Binance</span></div>
     <div class="cb" style="padding:7px 14px" id="liq-panel"></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Órdenes pasivas — clusters</span></div>
+    <div class="cb" style="padding:7px 14px" id="deep-ob-panel"></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Radar de ballenas</span></div>
+    <div class="cb" style="padding:7px 14px" id="whale-panel"></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Fibonacci — 15m</span><span style="font-size:9px;color:#2a3040">retrocesos y extensiones</span></div>
+    <div class="cb" style="padding:7px 14px" id="fib-panel"></div>
   </div>
 
   <div class="card">
@@ -229,7 +244,7 @@ function renderAll(){
   const cb=document.getElementById('chg');
   cb.textContent=(ch>=0?'+':'')+ch.toFixed(2)+'%';
   cb.className='chg '+(ch>1?'up':ch<-1?'dn':'nt');
-  renderTFGrid();renderDivergences();renderCombined();renderVRVP();renderOB();renderLiq();
+  renderTFGrid();renderDivergences();renderCombined();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
   setTimeout(()=>{const e=document.getElementById('c-ent');if(!e.value&&mkt.price){e.value=mkt.price.toFixed(1);calc();}},300);
 }
 
@@ -355,7 +370,7 @@ function renderCombined(){
           <span class="comb-dir" style="color:${col}">${cs.direction}</span>
           <span class="comb-prob" style="color:${col}">${cs.probability}%</span>
         </div>
-        <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas</div>
+        <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
       </div>
       <button class="${btnClass}">${btnLabel}</button>
     </div>`;
@@ -382,13 +397,79 @@ function renderOB(){
   document.getElementById('ob-panel').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:11px;color:#4b5563">${press}</span><span class="mono" style="font-size:12px;font-weight:700;color:${col}">Imb: ${imb}%</span></div><div style="height:5px;background:#111520;border-radius:3px;overflow:hidden;margin-bottom:8px"><div style="height:100%;width:${Math.min(100,Math.max(0,50+imb/2))}%;background:${col};border-radius:3px;transition:width .5s"></div></div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px"><span style="color:#00d68f">BID ${ob.bidVol} BTC</span><span class="mono" style="font-weight:700">$${fmt(p)}</span><span style="color:#ff4d6d">ASK ${ob.askVol} BTC</span></div>${wallsHtml||'<div style="font-size:10px;color:#2a3040">Sin paredes significativas</div>'}<div style="font-size:10px;color:#2a3040;margin-top:4px">Spread: $${ob.spread} (${ob.spreadPct}%)</div>`;
 }
 
+function liqProbability(z){
+  const dist=parseFloat(z.dist),size=z.size,isUp=z.direction==='up';
+  let prob=dist<1.5?85:dist<2.5?72:dist<4?58:dist<6?44:dist<8?32:22;
+  if(size>=800)prob+=15;else if(size>=500)prob+=10;else if(size>=300)prob+=5;
+  const b=mkt.bias?.tf15m?.bias||'neutral',b4h=mkt.bias?.tf4h?.bias||'neutral';
+  if(isUp&&(b==='long'||b4h==='long'))prob+=8;
+  if(!isUp&&(b==='short'||b4h==='short'))prob+=8;
+  if(isUp&&b==='short')prob-=10;
+  if(!isUp&&b==='long')prob-=10;
+  const cvdTrend=mkt.cvd15m?.trend;
+  if(isUp&&cvdTrend==='bull')prob+=5;
+  if(!isUp&&cvdTrend==='bear')prob+=5;
+  return Math.min(95,Math.max(8,Math.round(prob)));
+}
+function liqHeatColor(size,alpha=1){
+  if(size>=800)return`rgba(255,59,48,${alpha})`;
+  if(size>=600)return`rgba(255,149,0,${alpha})`;
+  if(size>=400)return`rgba(255,204,0,${alpha})`;
+  if(size>=250)return`rgba(52,199,89,${alpha})`;
+  return`rgba(90,132,255,${alpha})`;
+}
 function renderLiq(){
   const liq=mkt.liqMagnets,p=mkt.price;if(!liq||!p)return;
-  document.getElementById('liq-panel').innerHTML=liq.slice(0,8).map(z=>{
-    const col=z.direction==='up'?'#ff4d6d':'#00d68f',arrow=z.direction==='up'?'↑':'↓',isMajor=z.size>=600;
-    const priceColor=isMajor?'#f59e0b':col,sizeColor=isMajor?'#f59e0b':'#4b5563';
-    return `<div class="${isMajor?'liq-row liq-major':'liq-row'}"><div style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:${isMajor?'#f59e0b':col};display:inline-block;flex-shrink:0${isMajor?';box-shadow:0 0 6px #f59e0b':''}"></span><span class="mono" style="font-size:12px;font-weight:700;color:${priceColor}">$${parseInt(z.price).toLocaleString()}</span>${isMajor?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">MAYOR</span>':''}</div><span style="font-size:10px;color:${sizeColor}">${z.label} · $${z.size}M</span><span style="font-size:11px;font-weight:700;color:${priceColor}">${arrow}${z.dist}%</span></div>`;
-  }).join('');
+  const above=liq.filter(z=>z.direction==='up').sort((a,b)=>parseFloat(a.dist)-parseFloat(b.dist));
+  const below=liq.filter(z=>z.direction==='down').sort((a,b)=>parseFloat(a.dist)-parseFloat(b.dist));
+  const maxSize=Math.max(...liq.map(z=>z.size));
+  function zoneRow(z){
+    const prob=liqProbability(z);
+    const isUp=z.direction==='up',isMajor=z.size>=600;
+    const heatCol=liqHeatColor(z.size),heatFaint=liqHeatColor(z.size,0.12);
+    const barW=Math.round((z.size/maxSize)*100);
+    const arrow=isUp?'↑':'↓';
+    const probColor=prob>=75?'#ff4d6d':prob>=55?'#f59e0b':'#4b5563';
+    const priceCol=isMajor?'#f59e0b':isUp?'#ff4d6d':'#00d68f';
+    return`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03);position:relative">
+      <div style="position:absolute;left:0;top:0;height:100%;width:${barW}%;background:${heatFaint};border-radius:2px;pointer-events:none"></div>
+      <div style="width:4px;height:30px;border-radius:2px;background:${heatCol};flex-shrink:0;${isMajor?'box-shadow:0 0 5px '+heatCol:''}"></div>
+      <div style="flex:1;position:relative">
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
+          <span class="mono" style="font-size:12px;font-weight:700;color:${priceCol}">${arrow} $${parseInt(z.price).toLocaleString()}</span>
+          ${isMajor?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">MAYOR</span>':''}
+        </div>
+        <div style="display:flex;gap:5px">
+          <span style="font-size:10px;color:#4b5563">${z.label}</span>
+          <span style="font-size:10px;color:${heatCol};font-weight:600">$${z.size}M</span>
+          <span style="font-size:10px;color:#2a3040">${z.dist}%</span>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;position:relative">
+        <div class="mono" style="font-size:13px;font-weight:700;color:${probColor}">${prob}%</div>
+        <div style="font-size:9px;color:#2a3040">prob</div>
+      </div>
+    </div>`;
+  }
+  const aboveHtml=above.slice(0,4).reverse().map(z=>zoneRow(z)).join('');
+  const belowHtml=below.slice(0,4).map(z=>zoneRow(z)).join('');
+  document.getElementById('liq-panel').innerHTML=`<div style="padding:0 0 4px">
+    ${aboveHtml}
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #2a3040;border-bottom:1px solid #2a3040;margin:2px 0;background:rgba(245,158,11,.05)">
+      <div style="width:4px;height:18px;border-radius:2px;background:#f59e0b;box-shadow:0 0 6px #f59e0b;flex-shrink:0"></div>
+      <span style="font-size:10px;color:#4b5563">Precio actual</span>
+      <span class="mono" style="font-size:13px;font-weight:700;color:#f59e0b;margin-left:auto">$${parseInt(p).toLocaleString()}</span>
+    </div>
+    ${belowHtml}
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;padding-top:4px;border-top:1px solid rgba(255,255,255,.03)">
+      <span style="font-size:9px;color:#2a3040">Intensidad:</span>
+      <span style="font-size:9px;color:rgba(90,132,255,1)">■ baja</span>
+      <span style="font-size:9px;color:rgba(52,199,89,1)">■ media</span>
+      <span style="font-size:9px;color:rgba(255,204,0,1)">■ alta</span>
+      <span style="font-size:9px;color:rgba(255,149,0,1)">■ crítica</span>
+      <span style="font-size:9px;color:rgba(255,59,48,1)">■ extrema</span>
+    </div>
+  </div>`;
 }
 
 async function runAI(){
@@ -418,6 +499,178 @@ function calc(){
   const cap=parseFloat(document.getElementById('c-cap').value)||0,lev=parseFloat(document.getElementById('c-lev').value)||1,ent=parseFloat(document.getElementById('c-ent').value)||0,tp=parseFloat(document.getElementById('c-tp').value)||0,sl=parseFloat(document.getElementById('c-sl').value)||0,sz=cap*lev;
   document.getElementById('r-sz').textContent=sz?'$'+fmt(sz):'–';
   if(ent&&tp&&sl){const pr=sz*(tp-ent)/ent,ls=sz*(ent-sl)/ent,rr=Math.abs(pr/ls);document.getElementById('r-pr').textContent=(pr>0?'+':'')+'$'+fmt(Math.abs(pr));document.getElementById('r-ls').textContent='-$'+fmt(Math.abs(ls));document.getElementById('r-rr').textContent='1:'+rr.toFixed(2);document.getElementById('r-rr').style.color=rr>=2?'#00d68f':rr>=1?'#f59e0b':'#ff4d6d';document.getElementById('r-lq').textContent='$'+fmt(ent*(1-1/lev*0.9));}
+}
+
+
+function renderDeepOB() {
+  const dob = mkt.deepOB;
+  const el = document.getElementById('deep-ob-panel');
+  if (!dob || (!dob.bidClusters?.length && !dob.askClusters?.length)) {
+    el.innerHTML = '<div style="font-size:11px;color:#4b5563;text-align:center;padding:10px">Sin clusters significativos</div>';
+    return;
+  }
+  const imb = dob.deepImbalance || 0;
+  const imbCol = imb > 15 ? '#00d68f' : imb < -15 ? '#ff4d6d' : '#f59e0b';
+
+  function clusterRow(c) {
+    const isBid = c.side === 'bid';
+    const col = isBid ? '#00d68f' : '#ff4d6d';
+    const usd = c.usdVal >= 1000000 ? (c.usdVal/1000000).toFixed(1)+'M' : (c.usdVal/1000).toFixed(0)+'K';
+    const strengthBar = Math.min(100, Math.round((c.strength - 1) / 4 * 100));
+    // Prob de ruptura: muro grande = difícil de romper
+    const breakColor = c.breakProb > 65 ? '#00d68f' : c.breakProb > 40 ? '#f59e0b' : '#ff4d6d';
+    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03)">
+      <div style="width:3px;height:24px;border-radius:2px;background:${col};flex-shrink:0"></div>
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="mono" style="font-size:11px;font-weight:700;color:${col}">$${parseInt(c.price).toLocaleString()}</span>
+          <span style="font-size:10px;color:#4b5563">${c.qty} BTC · ${usd}</span>
+        </div>
+        <div style="height:3px;background:#1e2330;border-radius:2px;margin-top:3px;overflow:hidden">
+          <div style="height:100%;width:${strengthBar}%;background:${col};border-radius:2px"></div>
+        </div>
+      </div>
+      <div style="text-align:right;min-width:42px">
+        <div style="font-size:11px;font-weight:700;color:${breakColor}">${c.breakProb}%</div>
+        <div style="font-size:9px;color:#2a3040">rotura</div>
+      </div>
+    </div>`;
+  }
+
+  const askHtml = [...(dob.askClusters||[])].reverse().map(c => clusterRow(c)).join('');
+  const bidHtml = (dob.bidClusters||[]).map(c => clusterRow(c)).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-size:10px;color:#4b5563">Imbalance profundo 500 niveles</span>
+      <span class="mono" style="font-size:12px;font-weight:700;color:${imbCol}">${imb > 0 ? '+' : ''}${imb}%</span>
+    </div>
+    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Muros vendedores (ask)</div>
+    ${askHtml || '<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin clusters ask</div>'}
+    <div style="height:1px;background:#1e2330;margin:6px 0"></div>
+    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Muros compradores (bid)</div>
+    ${bidHtml || '<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin clusters bid</div>'}
+    <div style="font-size:9px;color:#2a3040;margin-top:6px">% rotura = probabilidad de que el precio traspase el muro</div>`;
+}
+
+function renderWhales() {
+  const w = mkt.whaleData;
+  const el = document.getElementById('whale-panel');
+  if (!w) { el.innerHTML = '<div style="font-size:11px;color:#4b5563;text-align:center;padding:10px">Sin datos</div>'; return; }
+
+  const biasCol = w.whaleBias === 'bull' ? '#00d68f' : w.whaleBias === 'bear' ? '#ff4d6d' : '#f59e0b';
+  const biasLabel = w.whaleBias === 'bull' ? '▲ Alcista' : w.whaleBias === 'bear' ? '▼ Bajista' : '◆ Neutro';
+  const domCol = w.dominance === 'buyers' ? '#00d68f' : w.dominance === 'sellers' ? '#ff4d6d' : '#f59e0b';
+
+  const recentWhales = (w.whales || []).slice(-5).reverse().map(wh => {
+    const isBuy = wh.side === 'buy';
+    const col = isBuy ? '#00d68f' : '#ff4d6d';
+    const usd = wh.usdVal >= 1000000 ? (wh.usdVal/1000000).toFixed(2)+'M' : (wh.usdVal/1000).toFixed(0)+'K';
+    const time = new Date(wh.time).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)">
+      <span style="font-size:12px">${isBuy ? '▲' : '▼'}</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${col}">${usd}</span>
+      <span class="mono" style="font-size:10px;color:#4b5563">$${parseInt(wh.price).toLocaleString()}</span>
+      <span style="font-size:10px;color:#2a3040;margin-left:auto">${time}</span>
+    </div>`;
+  }).join('');
+
+  // CVD de ballenas barra
+  const totalWhaleVol = (w.whaleBuyVol || 0) + (w.whaleSellVol || 0);
+  const buyPct = totalWhaleVol > 0 ? Math.round((w.whaleBuyVol / totalWhaleVol) * 100) : 50;
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <span style="font-size:14px;font-weight:700;color:${biasCol}">${biasLabel}</span>
+        <span style="font-size:10px;color:#4b5563;margin-left:6px">${w.whaleCount} trades detectados</span>
+      </div>
+      <span style="font-size:11px;font-weight:700;color:${domCol}">${w.dominance}</span>
+    </div>
+    <!-- CVD ballenas -->
+    <div style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px">
+        <span style="color:#00d68f">Compras $${w.whaleBuyVol}K</span>
+        <span>CVD ballenas</span>
+        <span style="color:#ff4d6d">Ventas $${w.whaleSellVol}K</span>
+      </div>
+      <div style="height:5px;background:#1e2330;border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${buyPct}%;background:#00d68f;border-radius:3px;transition:width .5s"></div>
+      </div>
+    </div>
+    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Últimas transacciones ≥$500K</div>
+    ${recentWhales || '<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin ballenas recientes</div>'}
+    <div style="font-size:9px;color:#2a3040;margin-top:5px">Ratio dominancia: ${w.whaleRatio || 0}% del volumen total</div>`;
+}
+
+
+function renderFib() {
+  const fib = mkt.fibonacci?.tf15m;
+  const el = document.getElementById('fib-panel');
+  if (!fib || !el) return;
+
+  const p = mkt.price;
+  const isUp = fib.isUptrend;
+  const trendCol = isUp ? '#00d68f' : '#ff4d6d';
+  const trendLabel = isUp ? '▲ Alcista' : '▼ Bajista';
+
+  // Combinar retrocesos y extensiones para mostrar todos los niveles
+  const allLevels = [
+    ...fib.retracements.map(r => ({ ...r, type: 'ret' })),
+    ...fib.extensions.map(r => ({ ...r, type: 'ext' }))
+  ].sort((a, b) => b.price - a.price);
+
+  function levelRow(lvl) {
+    const isCurrent = Math.abs(p - lvl.price) / p * 100 < 0.5;
+    const isAbove = lvl.price > p;
+    const isKey = lvl.isKey;
+    const isExt = lvl.type === 'ext';
+
+    // Color por tipo y relevancia
+    const col = isKey ? (isExt ? '#8b5cf6' : '#f59e0b') : isExt ? '#534AB7' : '#4b5563';
+    const bg = isCurrent ? 'rgba(245,158,11,.08)' : 'transparent';
+    const dist = Math.abs(p - lvl.price) / p * 100;
+
+    return `<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;background:${bg};${isCurrent?'border:1px solid rgba(245,158,11,.3)':'border:1px solid transparent'}">
+      <span style="width:3px;height:16px;border-radius:2px;background:${col};flex-shrink:0;${isKey?'box-shadow:0 0 4px '+col:''}"></span>
+      <span style="font-size:10px;color:${col};font-weight:${isKey?'700':'400'};width:42px">${lvl.label}${isExt?' ext':''}</span>
+      <span class="mono" style="font-size:11px;font-weight:700;color:${isCurrent?'#f59e0b':isAbove?'#ff4d6d':'#00d68f'}">$${parseInt(lvl.price).toLocaleString()}</span>
+      <span style="font-size:9px;color:#2a3040;margin-left:auto">${dist.toFixed(2)}%</span>
+      ${isCurrent ? '<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">◄ PRECIO</span>' : ''}
+    </div>`;
+  }
+
+  // Señal de Fibonacci
+  let fibSignalHtml = '';
+  if (fib.retImpact.signal !== 'none' && fib.nearestRetrace?.dist < 0.8) {
+    const sigCol = fib.retImpact.signal === 'long_bounce' ? '#00d68f' : '#ff4d6d';
+    fibSignalHtml = `<div style="padding:6px 8px;background:rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.08);border-radius:5px;border:1px solid rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.25);margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;color:${sigCol}">⬟ ${fib.retImpact.description}</div>
+      <div style="font-size:10px;color:#4b5563;margin-top:2px">Bonus aplicado: +${fib.retImpact.bonus}% a probabilidades</div>
+    </div>`;
+  } else if (fib.extImpact.signal !== 'none' && fib.nearestExt?.dist < 0.8) {
+    fibSignalHtml = `<div style="padding:6px 8px;background:rgba(139,92,246,.08);border-radius:5px;border:1px solid rgba(139,92,246,.25);margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6">⬟ ${fib.extImpact.description}</div>
+      <div style="font-size:10px;color:#4b5563;margin-top:2px">Zona de agotamiento — ${fib.extImpact.penalty > 0 ? 'penaliza continuación -'+fib.extImpact.penalty+'%' : 'confirma reversión'}</div>
+    </div>`;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <span style="font-size:12px;font-weight:700;color:${trendCol}">${trendLabel}</span>
+        <span style="font-size:10px;color:#4b5563;margin-left:6px">Rango: $${parseInt(fib.swingLow).toLocaleString()} — $${parseInt(fib.swingHigh).toLocaleString()}</span>
+      </div>
+    </div>
+    ${fibSignalHtml}
+    <div style="display:flex;flex-direction:column;gap:2px">
+      ${allLevels.map(lvl => levelRow(lvl)).join('')}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,.03)">
+      <span style="font-size:9px;color:#f59e0b">■ retroceso clave</span>
+      <span style="font-size:9px;color:#8b5cf6">■ extensión clave</span>
+      <span style="font-size:9px;color:#4b5563">■ nivel menor</span>
+    </div>`;
 }
 
 fetchAll();
