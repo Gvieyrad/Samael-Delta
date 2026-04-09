@@ -1829,6 +1829,25 @@ app.get('/api/ml/insights', async (req, res) => {
       recommendations: []
     };
 
+    // Stats por fuente (backtest, auto, scalping, manual)
+    const sources = ['backtest', 'auto', 'scalping', 'manual'];
+    insights.bySource = {};
+    for (const src of sources) {
+      const srcTrades = trades.filter(t => t.source === src);
+      const srcWon = srcTrades.filter(t => t.status === 'won');
+      const srcLost = srcTrades.filter(t => t.status === 'lost');
+      if (srcTrades.length === 0) continue;
+      const srcPnl = srcTrades.reduce((s,t) => s + (parseFloat(t.pnl_usd)||0), 0);
+      insights.bySource[src] = {
+        total: srcTrades.length,
+        won: srcWon.length,
+        lost: srcLost.length,
+        winRate: parseFloat(((srcWon.length / srcTrades.length) * 100).toFixed(1)),
+        totalPnl: parseFloat(srcPnl.toFixed(2)),
+        avgPnl: parseFloat((srcPnl / srcTrades.length).toFixed(2))
+      };
+    }
+
     // Generar recomendaciones basadas en los datos
     if (parseFloat(insights.avgConfidenceWon) > parseFloat(insights.avgConfidenceLost) + 5) {
       insights.recommendations.push(`Subir umbral mínimo a ${Math.round(parseFloat(insights.avgConfidenceWon)-2)}% (ganadores tienen ${insights.avgConfidenceWon}% vs ${insights.avgConfidenceLost}% perdedores)`);
