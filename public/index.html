@@ -39,21 +39,28 @@ body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size
 .tf-val{font-size:11px;font-weight:600;font-family:monospace}
 .tf-bar{height:3px;border-radius:2px;margin-top:5px;overflow:hidden;background:#1e2330}
 .tf-fill{height:100%;border-radius:2px;transition:width .5s}
-.div-section{display:flex;flex-direction:column;gap:8px}
-.div-card{border-radius:7px;padding:11px 13px;border:1px solid transparent;position:relative}
-.div-short{background:rgba(255,77,109,.06);border-color:rgba(255,77,109,.25)}
-.div-long{background:rgba(0,214,143,.06);border-color:rgba(0,214,143,.25)}
-.div-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+.div-section{display:flex;flex-direction:column;gap:10px}
+.div-card{border-radius:8px;padding:13px;border:1px solid transparent;position:relative}
+.div-short{background:rgba(255,77,109,.06);border-color:rgba(255,77,109,.3)}
+.div-long{background:rgba(0,214,143,.06);border-color:rgba(0,214,143,.3)}
+.div-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .div-name{font-size:12px;font-weight:700}
-.div-prob{font-family:monospace;font-size:14px;font-weight:700}
+.div-prob{font-family:monospace;font-size:15px;font-weight:700}
 .div-desc{font-size:11px;color:#6b7280;margin-bottom:7px;line-height:1.5}
-.div-confluence{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:7px}
-.div-conf-tag{font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,.1);color:#f59e0b;font-weight:600}
-.div-footer{display:flex;align-items:center;justify-content:space-between}
-.div-levels{display:flex;gap:6px}
-.div-level{background:rgba(0,0,0,.3);border-radius:4px;padding:4px 7px;text-align:center}
-.div-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px}
+.div-confluence{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.div-conf-tag{font-size:9px;padding:2px 7px;border-radius:3px;background:rgba(245,158,11,.12);color:#f59e0b;font-weight:600;letter-spacing:.3px}
+.div-body{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.div-levels{display:flex;gap:6px;flex:1}
+.div-level{background:rgba(0,0,0,.35);border-radius:5px;padding:5px 8px;text-align:center;flex:1}
+.div-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px}
 .div-level-val{font-family:monospace;font-size:11px;font-weight:700}
+.div-action-btn{border-radius:6px;padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;border:none;font-family:inherit;min-width:80px;text-align:center;flex-shrink:0;transition:opacity .15s}
+.div-action-btn:hover{opacity:.85}
+.btn-long{background:#00d68f;color:#000}
+.btn-short{background:#ff4d6d;color:#fff}
+.btn-wait-long{background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3)}
+.btn-wait-short{background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.3)}
+.btn-no{background:rgba(255,255,255,.05);color:#4b5563;border:1px solid #1e2330}
 .action-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:4px}
 .act-enter{background:rgba(0,214,143,.15);color:#00d68f}
 .act-wait{background:rgba(245,158,11,.15);color:#f59e0b}
@@ -268,9 +275,22 @@ function renderDivergences(){
     const isShort=d.direction==='SHORT',col=isShort?'#ff4d6d':'#00d68f';
     const tp1=calcTP(d.entry,d.direction,d.liqTarget),sl=calcSL(d.entry,d.direction);
     const rr=Math.abs((tp1-d.entry)/(sl-d.entry)).toFixed(1);
-    const actClass=d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
     const probClass=d.probability>=85?(isShort?'blink-red':'blink-green'):'';
     const confluenceHtml=d.confluence?.length?`<div class="div-confluence">${d.confluence.map(c=>`<span class="div-conf-tag">${c}</span>`).join('')}</div>`:'';
+
+    // Botón de acción grande según dirección y acción
+    let btnClass,btnLabel;
+    if(d.action==='ENTRAR'){
+      btnClass=isShort?'div-action-btn btn-short':'div-action-btn btn-long';
+      btnLabel=isShort?'▼ SHORT':'▲ LONG';
+    } else if(d.action?.includes('ESPERAR')){
+      btnClass=isShort?'div-action-btn btn-wait-short':'div-action-btn btn-wait-long';
+      btnLabel='ESPERAR';
+    } else {
+      btnClass='div-action-btn btn-no';
+      btnLabel='NO ENTRAR';
+    }
+
     return `<div class="div-card ${isShort?'div-short':'div-long'}">
       <div class="div-header">
         <span class="div-name" style="color:${col}">${isShort?'▼':'▲'} ${d.name}</span>
@@ -278,28 +298,67 @@ function renderDivergences(){
       </div>
       <div class="div-desc">${d.description}</div>
       ${confluenceHtml}
-      <div class="div-footer">
+      <div class="div-body">
         <div class="div-levels">
-          <div class="div-level"><div class="div-level-lbl">Entry</div><div class="div-level-val">$${parseInt(d.entry).toLocaleString()}</div></div>
-          <div class="div-level"><div class="div-level-lbl">TP</div><div class="div-level-val" style="color:#00d68f">$${parseInt(tp1).toLocaleString()}</div></div>
-          <div class="div-level"><div class="div-level-lbl">SL</div><div class="div-level-val" style="color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div></div>
-          <div class="div-level"><div class="div-level-lbl">R:R</div><div class="div-level-val">1:${rr}</div></div>
+          <div class="div-level">
+            <div class="div-level-lbl">Entry</div>
+            <div class="div-level-val">$${parseInt(d.entry).toLocaleString()}</div>
+          </div>
+          <div class="div-level">
+            <div class="div-level-lbl">TP</div>
+            <div class="div-level-val" style="color:#00d68f">$${parseInt(tp1).toLocaleString()}</div>
+          </div>
+          <div class="div-level">
+            <div class="div-level-lbl">SL</div>
+            <div class="div-level-val" style="color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div>
+          </div>
+          <div class="div-level">
+            <div class="div-level-lbl">R:R</div>
+            <div class="div-level-val">1:${rr}</div>
+          </div>
         </div>
-        <span class="action-badge ${actClass}">${d.action}</span>
+        <button class="${btnClass}" onclick="prefillCalc(${d.entry},${tp1},${sl})">${btnLabel}</button>
       </div>
     </div>`;
   }).join('');
+}
+
+function prefillCalc(entry,tp,sl){
+  document.getElementById('c-ent').value=parseFloat(entry).toFixed(1);
+  document.getElementById('c-tp').value=parseFloat(tp).toFixed(1);
+  document.getElementById('c-sl').value=parseFloat(sl).toFixed(1);
+  calc();
+  document.getElementById('c-ent').scrollIntoView({behavior:'smooth',block:'center'});
 }
 
 function renderCombined(){
   const cs=mkt.combinedSignal,box=document.getElementById('combined-box');
   if(!cs||!mkt.divergences?.length){box.style.display='none';return;}
   box.style.display='block';
-  const isShort=cs.direction==='SHORT',isLong=cs.direction==='LONG';
-  const col=isShort?'#ff4d6d':isLong?'#00d68f':'#f59e0b';
-  box.className=`combined-box ${isShort?'comb-short':isLong?'comb-long':'comb-wait'}`;
-  const actClass=cs.action==='ENTRAR'?'act-enter':cs.action?.includes('ESPERAR')?'act-wait':'act-no';
-  box.innerHTML=`<div class="comb-header"><span style="font-size:22px">${isShort?'▼':isLong?'▲':'◆'}</span><div><div style="display:flex;align-items:baseline;gap:8px"><span class="comb-dir" style="color:${col}">${cs.direction}</span><span class="comb-prob" style="color:${col}">${cs.probability}%</span><span class="action-badge ${actClass}">${cs.action}</span></div><div style="font-size:11px;color:#4b5563;margin-top:3px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas</div></div></div>`;
+  const isShort=cs.direction==='SHORT',isLong=cs.direction==='LONG',isWait=cs.direction==='ESPERAR';
+  // Color SIEMPRE consistente: verde=long, rojo=short, amarillo=esperar
+  const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
+  const bgClass=isShort?'comb-short':isLong?'comb-long':'comb-wait';
+  box.className=`combined-box ${bgClass}`;
+  // Botón de acción grande
+  let btnClass,btnLabel;
+  if(cs.action==='ENTRAR'&&isLong){btnClass='div-action-btn btn-long';btnLabel='▲ LONG';}
+  else if(cs.action==='ENTRAR'&&isShort){btnClass='div-action-btn btn-short';btnLabel='▼ SHORT';}
+  else if(cs.action?.includes('ESPERAR')&&isLong){btnClass='div-action-btn btn-wait-long';btnLabel='ESPERAR LONG';}
+  else if(cs.action?.includes('ESPERAR')&&isShort){btnClass='div-action-btn btn-wait-short';btnLabel='ESPERAR SHORT';}
+  else{btnClass='div-action-btn btn-no';btnLabel='NO ENTRAR';}
+  box.innerHTML=`
+    <div class="comb-header">
+      <span style="font-size:26px">${isShort?'▼':isLong?'▲':'◆'}</span>
+      <div style="flex:1">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span class="comb-dir" style="color:${col}">${cs.direction}</span>
+          <span class="comb-prob" style="color:${col}">${cs.probability}%</span>
+        </div>
+        <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas</div>
+      </div>
+      <button class="${btnClass}">${btnLabel}</button>
+    </div>`;
 }
 
 function renderVRVP(){
