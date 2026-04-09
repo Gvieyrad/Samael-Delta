@@ -409,13 +409,13 @@ function renderOB(){
         <span class="mono ${cvdClass}" style="font-size:16px;font-weight:800;color:${cvdCol}">${cvdTrend} ${cvdVal >= 0 ? '+' : ''}${cvdVal}%</span>
       </div>
       <div style="position:relative;height:8px;background:#1e2330;border-radius:4px;overflow:hidden;margin-bottom:4px">
-        <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#2a3040"></div>
-        <div style="height:100%;width:${cvdBarPct}%;background:${cvdCol};border-radius:4px;transition:width .5s;max-width:100%"></div>
+        <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#4b5563;z-index:2"></div>
+        ${cvdVal > 2 ? `<div style="position:absolute;left:50%;top:0;height:100%;width:${Math.min(50,cvdBarPct-50)}%;background:#00d68f;border-radius:0 4px 4px 0;transition:all .5s"></div>` : cvdVal < -2 ? `<div style="position:absolute;right:50%;top:0;height:100%;width:${Math.min(50,50-cvdBarPct)}%;background:#ff4d6d;border-radius:4px 0 0 4px;transition:all .5s"></div>` : ''}
       </div>
       <div style="display:flex;justify-content:space-between;font-size:9px;color:#2a3040">
-        <span>Ventas</span>
-        <span style="color:${cvdCol};font-weight:600">${cvdLabel}${cvdAgresivo?' — AGRESIVO':''}</span>
-        <span>Compras</span>
+        <span>Ventas agresivas</span>
+        <span style="color:${Math.abs(cvdVal)<2?'#2a3040':cvdCol};font-weight:600">${Math.abs(cvdVal)<2?'Neutro':cvdLabel}${cvdAgresivo?' ⚡ AGRESIVO':''}</span>
+        <span>Compras agresivas</span>
       </div>
     </div>
     <!-- Libro -->
