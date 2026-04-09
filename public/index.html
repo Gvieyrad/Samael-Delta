@@ -142,7 +142,10 @@ input[type=number]:focus{border-color:#f59e0b}
   <div class="card">
     <div class="ch">
       <span class="ct">Señal IA — Claude v3</span>
-      <button class="btn-ai" id="ai-btn" onclick="runAI()"><span id="ai-icon">✦</span> Analizar</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-ai" id="ai-btn" onclick="runAI()"><span id="ai-icon">✦</span> Analizar</button>
+        <button class="btn-ai" id="alert-btn" onclick="triggerAlert()" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);color:#f59e0b" title="Disparar alerta Telegram ahora"><span id="alert-icon">🔔</span></button>
+      </div>
     </div>
     <div class="cb">
       <div id="combined-box" class="combined-box comb-wait" style="display:none"></div>
@@ -661,6 +664,26 @@ function renderFib() {
       <span style="font-size:9px;color:#8b5cf6">■ extensión clave</span>
       <span style="font-size:9px;color:#4b5563">■ nivel menor</span>
     </div>`;
+}
+
+async function triggerAlert() {
+  const btn = document.getElementById('alert-btn');
+  const icon = document.getElementById('alert-icon');
+  btn.disabled = true;
+  icon.textContent = '⏳';
+  try {
+    const res = await fetch(`${API}/api/alert/trigger`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({symbol: pair})
+    });
+    const d = await res.json();
+    icon.textContent = '✅';
+    setTimeout(() => { icon.textContent = '🔔'; btn.disabled = false; }, 3000);
+  } catch(e) {
+    icon.textContent = '❌';
+    setTimeout(() => { icon.textContent = '🔔'; btn.disabled = false; }, 3000);
+  }
 }
 
 fetchAll();
