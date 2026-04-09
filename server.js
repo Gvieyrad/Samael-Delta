@@ -938,6 +938,46 @@ app.get('/api/trades', async (req, res) => {
 // ─── ALERTAS TELEGRAM AUTOMÁTICAS ────────────────────────────────
 let alertCache = {}; // evitar alertas duplicadas por señal
 
+// ─── SISTEMA DE CONFIRMACIÓN TEMPORAL ────────────────────────────
+// Una señal debe mantenerse en 2 análisis consecutivos (30min)
+// antes de considerarse válida para alertas y paper trading
+const signalHistory = {}; // { 'BTCUSDT': [{direction, prob, timestamp}] }
+
+function confirmSignal(symbol, direction, probability) {
+  if (!signalHistory[symbol]) signalHistory[symbol] = [];
+  const now = Date.now();
+  const history = signalHistory[symbol];
+
+  // Agregar señal actual
+  history.push({ direction, probability, timestamp: now });
+
+  // Mantener solo las últimas 3 señales de los últimos 45 minutos
+  signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
+
+  const recent = signalHistory[symbol];
+
+  // Necesitamos al menos 2 señales en la misma dirección en los últimos 30 min
+  const sameDirection = recent.filter(s =>
+    s.direction === direction &&
+    now - s.timestamp < 30 * 60 * 1000
+  );
+
+  // Primera señal: guardar pero no confirmar aún
+  if (sameDirection.length < 2) {
+    console.log(`⏳ Señal ${direction} ${symbol} ${probability}% — esperando confirmación (${sameDirection.length}/2)`);
+    return { confirmed: false, count: sameDirection.length };
+  }
+
+  // 2+ señales en la misma dirección = confirmada
+  const avgProb = Math.round(sameDirection.reduce((s,r) => s + r.probability, 0) / sameDirection.length);
+  console.log(`✅ Señal ${direction} ${symbol} CONFIRMADA — ${sameDirection.length} análisis consecutivos, prob promedio ${avgProb}%`);
+  return { confirmed: true, count: sameDirection.length, avgProbability: avgProb };
+}
+
+function clearSignalHistory(symbol) {
+  signalHistory[symbol] = [];
+}
+
 async function runAutoAnalysis(symbol = 'BTCUSDT') {
   try {
     // 1. Obtener datos de mercado
@@ -991,11 +1031,18 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '80');
     const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '3'); // ML: subir a 3
 
-    if (combinedSignal.direction === 'ESPERAR') return;
+    if (combinedSignal.direction === 'ESPERAR') {
+      clearSignalHistory(symbol); // Reset cuando no hay señal clara
+      return;
+    }
     if (combinedSignal.probability < minConfidence) return;
     if (divergences.length < minDivergences) return;
 
-    // 3. Evitar spam: no repetir la misma señal en 30 minutos
+    // 3. Confirmación temporal: la señal debe mantenerse en 2 análisis consecutivos
+    const confirmation = confirmSignal(symbol, combinedSignal.direction, combinedSignal.probability);
+    if (!confirmation.confirmed) return; // Esperar segunda confirmación
+
+    // Evitar spam: no repetir la misma señal confirmada en 30 minutos
     const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
     const now = Date.now();
     if (alertCache[cacheKey] && now - alertCache[cacheKey] < 30 * 60 * 1000) return;
