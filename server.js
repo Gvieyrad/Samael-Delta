@@ -967,6 +967,11 @@ function confirmSignal(symbol, direction, probability) {
     console.log(`⏳ Señal ${direction} ${symbol} ${probability}% — esperando confirmación (${sameDirection.length}/2)`);
     return { confirmed: false, count: sameDirection.length };
   }
+  // Si la probabilidad es muy alta (>=92%), confirmar en el primer análisis
+  if (probability >= 92 && sameDirection.length >= 1) {
+    console.log(`✅ Señal ${direction} ${symbol} ${probability}% — confirmada inmediatamente (prob muy alta)`);
+    return { confirmed: true, count: sameDirection.length, avgProbability: probability };
+  }
 
   // 2+ señales en la misma dirección = confirmada
   const avgProb = Math.round(sameDirection.reduce((s,r) => s + r.probability, 0) / sameDirection.length);
@@ -1029,7 +1034,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
 
     // 2. Verificar si hay señal fuerte
     const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '80');
-    const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '3'); // ML: subir a 3
+    const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
 
     if (combinedSignal.direction === 'ESPERAR') {
       clearSignalHistory(symbol); // Reset cuando no hay señal clara
@@ -1130,7 +1135,7 @@ Responde SOLO JSON sin markdown:
     } catch(_) {}
 
     // 7. AUTO PAPER TRADING — si confianza >= umbral, abrir trade simulado
-    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '88'); // ML: subir a 88%
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '85');
     // Filtro de tendencia macro: no ir contra el 1D
     const trend1d = bias1d.bias;
     const trendOk = signal.direction === 'ESPERAR' ? false :
@@ -1146,13 +1151,12 @@ Responde SOLO JSON sin markdown:
     // Condiciones finales para auto paper trade:
     // 1. Confianza >= umbral
     // 2. No contra tendencia 1D
-    // 3. 4H alineado con la señal
-    // 4. Mínimo 3 divergencias activas
+    // 3. Mínimo 2 divergencias activas
+    // (4H alineado da bonus en la probabilidad pero no es requisito obligatorio)
     const canAutoTrade = signal.confidence >= autoPaperThreshold
       && signal.direction !== 'ESPERAR'
       && trendOk
-      && tfAligned
-      && divergences.length >= 3;
+      && divergences.length >= 2;
 
     if (canAutoTrade) {
       try {
@@ -1228,7 +1232,7 @@ Responde SOLO JSON sin markdown:
             market_data: mlSnapshot
           }).select().single();
 
-          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry} (${signal.confidence}%)`);
+          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry} (${signal.confidence}%) R:R ${rrNum.toFixed(2)}`);
 
           // Notificar por Telegram que se abrió un trade automático
           if (process.env.TELEGRAM_CHAT_ID) {
