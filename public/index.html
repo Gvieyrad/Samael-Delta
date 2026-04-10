@@ -167,8 +167,8 @@ input[type=number]:focus{border-color:#f59e0b}
       <div class="calc-row"><span class="calc-lbl">Capital $</span><input type="number" id="c-cap" value="1000" oninput="calc()"></div>
       <div class="calc-row"><span class="calc-lbl">Leverage</span><input type="number" id="c-lev" value="10" oninput="calc()"></div>
       <div class="calc-row"><span class="calc-lbl">Entry $</span><input type="number" id="c-ent" placeholder="auto" oninput="calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">TP $</span><input type="number" id="c-tp" oninput="calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">SL $</span><input type="number" id="c-sl" oninput="calc()"></div>
+      <div class="calc-row"><span class="calc-lbl">TP $</span><input type="number" id="c-tp" oninput="aiRR=null;calc()"></div>
+      <div class="calc-row"><span class="calc-lbl">SL $</span><input type="number" id="c-sl" oninput="aiRR=null;calc()"></div>
       <div style="margin-top:5px">
         <div class="res-row"><span class="res-lbl">Tamaño</span><span class="res-val" id="r-sz" style="color:#f59e0b">–</span></div>
         <div class="res-row"><span class="res-lbl">Profit</span><span class="res-val" id="r-pr" style="color:#00d68f">–</span></div>
@@ -564,7 +564,7 @@ async function runAI(){
 function calc(){
   const cap=parseFloat(document.getElementById('c-cap').value)||0,lev=parseFloat(document.getElementById('c-lev').value)||1,ent=parseFloat(document.getElementById('c-ent').value)||0,tp=parseFloat(document.getElementById('c-tp').value)||0,sl=parseFloat(document.getElementById('c-sl').value)||0,sz=cap*lev;
   document.getElementById('r-sz').textContent=sz?'$'+fmt(sz):'–';
-  if(ent&&tp&&sl){const pr=sz*(tp-ent)/ent,ls=sz*(ent-sl)/ent,rr=Math.abs(pr/ls);document.getElementById('r-pr').textContent=(pr>0?'+':'')+'$'+fmt(Math.abs(pr));document.getElementById('r-ls').textContent='-$'+fmt(Math.abs(ls));document.getElementById('r-rr').textContent='1:'+rr.toFixed(2);document.getElementById('r-rr').style.color=rr>=2?'#00d68f':rr>=1?'#f59e0b':'#ff4d6d';document.getElementById('r-lq').textContent='$'+fmt(ent*(1-1/lev*0.9));}
+  if(ent&&tp&&sl){const pr=sz*(tp-ent)/ent,ls=sz*(ent-sl)/ent,rr=Math.abs(pr/ls);document.getElementById('r-pr').textContent=(pr>0?'+':'')+'$'+fmt(Math.abs(pr));document.getElementById('r-ls').textContent='-$'+fmt(Math.abs(ls));if(aiRR){document.getElementById('r-rr').textContent=aiRR;document.getElementById('r-rr').style.color='#00d68f';}else{document.getElementById('r-rr').textContent='1:'+rr.toFixed(2);document.getElementById('r-rr').style.color=rr>=2?'#00d68f':rr>=1?'#f59e0b':'#ff4d6d';}document.getElementById('r-lq').textContent='$'+fmt(ent*(1-1/lev*0.9));}
 }
 
 
@@ -888,7 +888,8 @@ function renderPaper() {
     openTrades.forEach(t => {
       const isLong = t.direction === 'LONG';
       const col = isLong ? '#00d68f' : '#ff4d6d';
-      const currentP = mkt.price || 0;
+      // Usar precio correcto para cada símbolo
+      const currentP = allPrices[t.symbol] || (t.symbol === pair ? mkt.price : 0) || parseFloat(t.entry);
       const entry = parseFloat(t.entry);
       const tp1 = parseFloat(t.tp1);
       const sl = parseFloat(t.sl);
@@ -1285,8 +1286,19 @@ function updateConfirmationBadge(signal) {
   }
 }
 
+// Precios globales de todos los pares
+let allPrices = {};
+async function fetchAllPrices() {
+  try {
+    const p = await fetch(`${API}/api/prices`).then(r=>r.json());
+    allPrices = p;
+  } catch(_) {}
+}
+
 fetchAll();
+fetchAllPrices();
 setInterval(fetchAll,30000);
+setInterval(fetchAllPrices,15000);
 setTimeout(refreshML,3000);
 setInterval(refreshPaper,60000);
 setTimeout(refreshPaper,2000);
