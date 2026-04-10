@@ -583,18 +583,17 @@ async function runAI(){
     const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
     result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
     const actClass=d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
-    result.innerHTML=`<div class="ai-hdr"><span style="font-size:18px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:14px;font-weight:700;color:${col}">${d.direction} — ${d.confidence}%</span><span class="action-badge ${actClass}">${d.action||'ESPERAR'}</span></div><div class="ai-reasoning">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1/TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()}<br><span style="font-size:10px">$${(d.tp2||0).toLocaleString()}</span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
+    result.innerHTML=`<div class="ai-hdr"><span style="font-size:18px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:14px;font-weight:700;color:${col}">${d.direction} — ${d.confidence}%</span><span class="action-badge ${actClass}">${d.action||'ESPERAR'}</span></div><div class="ai-reasoning">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1 / TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R base</span><br><span style="font-size:11px;color:#00d68f">$${(d.tp2||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R extendido</span></span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
     if(d.entry){
       // Guardar señal de IA completa
       aiSignal = d;
       aiRR = d.rr || null;
-      // Usar TP2 si existe para mejor R:R
-      const tpUse = (d.tp2 && d.tp2 !== d.tp1) ? d.tp2 : d.tp1;
+      // Siempre usar TP1 en calculadora — es el target de cierre automático
       document.getElementById('c-ent').value=d.entry.toFixed(1);
-      document.getElementById('c-tp').value=tpUse.toFixed(1);
+      document.getElementById('c-tp').value=d.tp1.toFixed(1);
       document.getElementById('c-sl').value=d.sl.toFixed(1);
       calc();
-      // Mostrar R:R de la IA directamente
+      // Mostrar R:R de la IA directamente (basado en TP1)
       if(d.rr){
         document.getElementById('r-rr').textContent=d.rr;
         document.getElementById('r-rr').style.color='#00d68f';
@@ -1376,24 +1375,27 @@ async function refreshNews() {
   try {
     const data = await fetch(`${API}/api/news/latest`).then(r => r.json());
     if (!data || !data.length) {
-      el.innerHTML = '<div style="padding:12px 14px;text-align:center;font-size:11px;color:#2a3040">Sin noticias recientes</div>';
+      el.innerHTML = '<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';
       return;
     }
-    el.innerHTML = data.map(n => {
-      const a = n.analysis;
-      if (!a) return '';
-      const col = a.sentiment === 'ALCISTA' ? '#00d68f' : a.sentiment === 'BAJISTA' ? '#ff4d6d' : '#f59e0b';
-      const impactCol = a.impact === 'ALTO' ? '#ff4d6d' : a.impact === 'MEDIO' ? '#f59e0b' : '#4b5563';
-      const emoji = a.sentiment === 'ALCISTA' ? '🟢' : a.sentiment === 'BAJISTA' ? '🔴' : '🟡';
-      return `<div style="padding:10px 14px;border-bottom:1px solid #1e2330">
+    el.innerHTML = data.slice(0,5).map(n => {
+      const title = n.title || '';
+      const src = n.source || '';
+      const ago = n.published_on ? Math.round((Date.now()/1000 - n.published_on)/60) + 'm' : '';
+      // Análisis básico de sentimiento por palabras clave
+      const t = title.toLowerCase();
+      const bull = ['surge','jump','rally','bullish','etf','approval','buy','rise','high','pump','ceasefire','adopt'].some(w=>t.includes(w));
+      const bear = ['crash','drop','fall','bearish','ban','hack','sell','low','dump','fear','war','sanction','inflation'].some(w=>t.includes(w));
+      const col = bull ? '#00d68f' : bear ? '#ff4d6d' : '#f59e0b';
+      const emoji = bull ? '🟢' : bear ? '🔴' : '🟡';
+      const sentiment = bull ? 'ALCISTA' : bear ? 'BAJISTA' : 'NEUTRO';
+      return `<div style="padding:10px 14px;border-bottom:1px solid #1a2035">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="font-size:12px">${emoji}</span>
-          <span style="font-size:10px;font-weight:700;color:${impactCol};background:rgba(${a.impact==='ALTO'?'255,77,109':a.impact==='MEDIO'?'245,158,11':'75,85,99'},.1);padding:1px 6px;border-radius:3px">${a.impact}</span>
-          <span style="font-size:10px;color:${col};font-weight:700">${a.action}</span>
-          <span style="font-size:9px;color:#2a3040;margin-left:auto">${a.confidence}%</span>
+          <span>${emoji}</span>
+          <span style="font-size:10px;color:${col};font-weight:700">${sentiment}</span>
+          <span style="font-size:9px;color:#2a3040;margin-left:auto">${src} · ${ago}</span>
         </div>
-        <div style="font-size:11px;color:#e2e4ea;line-height:1.4;margin-bottom:4px">${n.title}</div>
-        <div style="font-size:10px;color:#4b5563">${a.reasoning}</div>
+        <div style="font-size:11px;color:#e2e4ea;line-height:1.4">${title}</div>
       </div>`;
     }).join('');
   } catch(e) {
