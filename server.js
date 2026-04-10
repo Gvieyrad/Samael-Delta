@@ -576,14 +576,14 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
     // Encontrar el swing high y low más recientes (excluir las últimas 3 velas)
     for (let i = closes.length - 4; i >= closes.length - 4 - lookback; i--) {
       if (i < 0) break;
-      const h = parseFloat(klines[i]?.[2] || 0);
-      const l = parseFloat(klines[i]?.[3] || 0);
+      const h = parseFloat(klines15m[i]?.[2] || 0);
+      const l = parseFloat(klines15m[i]?.[3] || 0);
       if (h > swingHigh) { swingHigh = h; swingHighIdx = i; }
       if (l < swingLow)  { swingLow = l;  swingLowIdx = i; }
     }
 
-    const lastHigh2  = parseFloat(klines[klines.length-1]?.[2] || 0);
-    const lastLow2   = parseFloat(klines[klines.length-1]?.[3] || 0);
+    const lastHigh2  = parseFloat(klines15m[klines15m.length-1]?.[2] || 0);
+    const lastLow2   = parseFloat(klines15m[klines15m.length-1]?.[3] || 0);
     const lastClose2 = closes[closes.length-1];
     const prevClose2 = closes[closes.length-2];
 
