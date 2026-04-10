@@ -782,12 +782,24 @@ async function openPaperTrade(direction) {
   const entry = mkt.price;
   const liq = mkt.liqMagnets?.[0];
 
-  // Calcular TP y SL desde la calculadora o valores automáticos
-  const entryInput = parseFloat(document.getElementById('c-ent').value) || entry;
-  const tp1Input   = parseFloat(document.getElementById('c-tp').value)  || (direction==='LONG' ? entry*1.025 : entry*0.975);
-  const slInput    = parseFloat(document.getElementById('c-sl').value)  || (direction==='LONG' ? entry*0.988 : entry*1.012);
-  const capital    = parseFloat(document.getElementById('c-cap').value) || 1000;
-  const leverage   = parseFloat(document.getElementById('c-lev').value) || 10;
+  // Priorizar: 1. señal IA, 2. calculadora manual, 3. valores automáticos
+  const capital  = parseFloat(document.getElementById('c-cap').value) || 1000;
+  const leverage = parseFloat(document.getElementById('c-lev').value) || 10;
+  // Si hay señal de IA activa y coincide con la dirección, usarla
+  const useAI = aiSignal && aiSignal.direction === direction && aiSignal.entry && aiSignal.tp1 && aiSignal.sl;
+  const entryInput = useAI ? parseFloat(aiSignal.entry)
+    : parseFloat(document.getElementById('c-ent').value) || entry;
+  const tp1Input = useAI ? parseFloat(aiSignal.tp1)
+    : parseFloat(document.getElementById('c-tp').value) || (direction==='LONG' ? entry*1.025 : entry*0.975);
+  const slInput = useAI ? parseFloat(aiSignal.sl)
+    : parseFloat(document.getElementById('c-sl').value) || (direction==='LONG' ? entry*0.988 : entry*1.012);
+  // Si usamos IA, mostrar los valores en la calculadora
+  if(useAI){
+    document.getElementById('c-ent').value = entryInput.toFixed(1);
+    document.getElementById('c-tp').value  = tp1Input.toFixed(1);
+    document.getElementById('c-sl').value  = slInput.toFixed(1);
+    calc();
+  }
 
   const rr = Math.abs((tp1Input-entryInput)/(slInput-entryInput)).toFixed(1);
 
@@ -807,7 +819,11 @@ async function openPaperTrade(direction) {
       })
     });
     const d = await res.json();
-    if (d.ok) { await refreshPaper(); showToast(direction === 'LONG' ? '▲ Paper LONG abierto' : '▼ Paper SHORT abierto', direction==='LONG'?'#00d68f':'#ff4d6d'); }
+    if (d.ok) { 
+      await refreshPaper(); 
+      const src = useAI ? '(valores IA)' : '(valores manuales)';
+      showToast((direction === 'LONG' ? '▲ Paper LONG abierto ' : '▼ Paper SHORT abierto ') + src, direction==='LONG'?'#00d68f':'#ff4d6d'); 
+    }
   } catch(e) { showToast('Error al abrir trade', '#ff4d6d'); }
 }
 
@@ -1001,8 +1017,11 @@ function renderPaper() {
         const pnlCol = won?'#00d68f':lost?'#ff4d6d':'#f59e0b';
         const icon = won?'✓':lost?'✗':'—';
         const date = new Date(t.closed_at||t.created_at).toLocaleDateString('es-PE',{month:'2-digit',day:'2-digit'});
+        const srcIcon = t.source==='scalping'?'⚡':t.source==='auto'?'🤖':t.source==='manual'?'👤':'📊';
+        const srcCol = t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='manual'?'#f59e0b':'#4b5563';
         return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)">
           <span style="font-size:13px;color:${pnlCol};font-weight:700;width:14px">${icon}</span>
+          <span style="font-size:10px;color:${srcCol};width:16px" title="${t.source||'–'}">${srcIcon}</span>
           <span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700;width:42px">${t.direction}</span>
           <span style="font-size:10px;color:#4b5563;flex:1">${t.symbol}</span>
           <span style="font-size:10px;color:#2a3040">${date}</span>
