@@ -239,6 +239,8 @@ input[type=number]:focus{border-color:#f59e0b}
 <script>
 const API='https://panel-futuros-lo-production.up.railway.app';
 let pair='BTCUSDT',mkt={};
+let aiSignal=null; let aiRR=null;
+let allPrices={};
 
 function setPair(p,btn){pair=p;document.querySelectorAll('.pairbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');fetchAll();}
 function fmt(n,d=2){if(n===null||n===undefined||isNaN(n))return'–';return parseFloat(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
