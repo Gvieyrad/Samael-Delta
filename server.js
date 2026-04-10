@@ -1090,16 +1090,6 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
 
     const b = marketData.bias;
     const prompt = `Eres un trader experto en futuros perpetuos. Analiza y da señal precisa.
-    
-    // ✅ FIX R:R — recalcular siempre con precios reales, ignorar valor de IA
-const _rrReward = signal.direction === 'SHORT'
-  ? (signal.entry - signal.tp1)
-  : (signal.tp1 - signal.entry);
-const _rrRisk = signal.direction === 'SHORT'
-  ? (signal.sl - signal.entry)
-  : (signal.entry - signal.sl);
-const _rrVal = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
-signal.rr = `1:${_rrVal.toFixed(1)}`;
 
 MERCADO: ${symbol} — $${price} (${marketData.change24h?.toFixed(2)}%)
 RSI 15m: ${marketData.rsi15m}
