@@ -1399,7 +1399,8 @@ app.get('/api/paper/open', async (req, res) => {
 app.get('/api/paper/stats', async (req, res) => {
   try {
     const { data, error } = await supabase.from('paper_trades')
-      .select('*').neq('status', 'open')
+      .select('*')
+      .in('status', ['won', 'lost'])  // solo trades reales, no cancelados
       .order('created_at', { ascending: false }).limit(100);
     if (error) throw error;
 
@@ -1788,7 +1789,7 @@ app.get('/api/ml/insights', async (req, res) => {
   try {
     const { data: trades, error: tradesErr } = await supabase.from('paper_trades')
       .select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci')
-      .in('status', ['won','lost','closed'])
+      .in('status', ['won','lost'])  // solo trades reales, no cancelados
       .order('created_at', { ascending: false })
       .limit(2000);
 
