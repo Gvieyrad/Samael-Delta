@@ -903,6 +903,7 @@ app.get('/api/market/:symbol', async (req, res) => {
 
     const price=parseFloat(ticker.data.lastPrice);
     const fundingRate=parseFloat(funding.data.lastFundingRate);
+    if(!k15m.data||!Array.isArray(k15m.data)||k15m.data.length<20) throw new Error('Insufficient kline data');
     const closes15m=k15m.data.map(k=>parseFloat(k[4]));
 
     const cvd15m=calcCVD(k15m.data);
@@ -1099,6 +1100,13 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
 
     const price = parseFloat(ticker.data.lastPrice);
     const fundingRate = parseFloat(funding.data.lastFundingRate);
+
+    // Validar que los datos llegaron correctamente
+    if (!k15m.data || !Array.isArray(k15m.data) || k15m.data.length < 20) {
+      console.log(`⚠️ Auto-analysis: datos insuficientes para ${symbol}`);
+      return;
+    }
+
     const closes15m = k15m.data.map(k => parseFloat(k[4]));
 
     const cvd15m = calcCVD(k15m.data);
@@ -1110,12 +1118,12 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const oiTrend4h  = calcOITrend(oi4hHist);
 
     const bias15m = calcBias(k15m.data, oi15mHist, fundingRate);
-    const bias1h  = calcBias(k1h.data, oi1hHist, fundingRate);
-    const bias4h  = calcBias(k4h.data, oi4hHist, fundingRate);
-    const bias1d  = calcBias(k1d.data, null, fundingRate);
+    const bias1h  = calcBias(k1h.data?.length >= 20 ? k1h.data : k15m.data, oi1hHist, fundingRate);
+    const bias4h  = calcBias(k4h.data?.length >= 20 ? k4h.data : k15m.data, oi4hHist, fundingRate);
+    const bias1d  = calcBias(k1d.data?.length >= 20 ? k1d.data : k15m.data, null, fundingRate);
 
     const fib15m = calcFibonacci(k15m.data, price);
-    const fib4h  = calcFibonacci(k4h.data, price);
+    const fib4h  = calcFibonacci(k4h.data?.length >= 20 ? k4h.data : k15m.data, price);
 
     const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
     const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m);
