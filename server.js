@@ -2122,8 +2122,200 @@ app.get('/api/scalping/status', (req, res) => {
   });
 });
 
+
+// ─── JOB DE OPTIMIZACIÓN ML AUTOMÁTICA ───────────────────────────
+// Corre cada domingo o cuando se llama manualmente
+// Lee patrones de Supabase y ajusta pesos del sistema
+
+let mlWeights = {
+  // Pesos base de cada tipo de divergencia (probabilidad base)
+  absorcion_compras: 73,
+  absorcion_ventas: 73,
+  rsi_bajista: 64,
+  rsi_alcista: 64,
+  cvd_precio_bajista: 65,
+  cvd_precio_alcista: 65,
+  bull_trap: 68,
+  bear_trap: 68,
+  short_buildup: 65,
+  long_buildup: 65,
+  funding_extremo: 62,
+  volumen_climax: 65,
+  long_squeeze: 68,
+  short_squeeze: 68,
+  regime_change_long: 65,
+  regime_change_short: 65,
+  // Bonuses de contexto
+  bonus_4h_aligned: 15,
+  bonus_both_tf: 15,
+  bonus_fib_active: 8,
+  bonus_whale_active: 8,
+  bonus_double_absorption: 8,
+  // Umbrales
+  min_confidence_alert: 80,
+  min_confidence_auto: 85,
+  min_rr_swing: 1.3,
+  min_rr_scalp: 1.5,
+  last_optimized: null
+};
+
+async function runMLOptimization() {
+  try {
+    console.log('🧠 Iniciando optimización ML...');
+
+    // Obtener todos los trades cerrados con market_data
+    const { data: trades } = await supabase.from('paper_trades')
+      .select('*')
+      .in('status', ['won', 'lost'])
+      .not('market_data', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+
+    if (!trades || trades.length < 50) {
+      console.log(`⚠️ ML: Solo ${trades?.length || 0} trades — necesita al menos 50 para optimizar`);
+      return { optimized: false, reason: 'insufficient_data', trades: trades?.length || 0 };
+    }
+
+    const won = trades.filter(t => t.status === 'won');
+    const lost = trades.filter(t => t.status === 'lost');
+    const winRate = won.length / trades.length;
+
+    console.log(`📊 ML: ${trades.length} trades analizados | WR: ${(winRate*100).toFixed(1)}%`);
+
+    const adjustments = {};
+    const recommendations = [];
+
+    // 1. Analizar win rate por tipo de divergencia
+    const divTypes = [
+      'absorcion_compras','absorcion_ventas','rsi_bajista','rsi_alcista',
+      'cvd_precio_bajista','cvd_precio_alcista','bull_trap','bear_trap',
+      'short_buildup','long_buildup','funding_extremo','volumen_climax',
+      'long_squeeze','short_squeeze','regime_change_long','regime_change_short'
+    ];
+
+    for (const divType of divTypes) {
+      const withDiv = trades.filter(t => t.market_data?.top_divergence === divType);
+      if (withDiv.length < 5) continue;
+      const divWon = withDiv.filter(t => t.status === 'won');
+      const divWR = divWon.length / withDiv.length;
+      const currentWeight = mlWeights[divType] || 65;
+      
+      // Ajustar peso según win rate vs promedio general
+      const wrDiff = (divWR - winRate) * 100;
+      let newWeight = currentWeight;
+      
+      if (wrDiff > 10) newWeight = Math.min(85, currentWeight + 3); // mejor que promedio → subir
+      if (wrDiff > 20) newWeight = Math.min(85, currentWeight + 5);
+      if (wrDiff < -10) newWeight = Math.max(50, currentWeight - 3); // peor que promedio → bajar
+      if (wrDiff < -20) newWeight = Math.max(50, currentWeight - 5);
+
+      if (newWeight !== currentWeight) {
+        adjustments[divType] = { from: currentWeight, to: newWeight, wr: (divWR*100).toFixed(1), trades: withDiv.length };
+        mlWeights[divType] = newWeight;
+        recommendations.push(`${divType}: ${currentWeight} → ${newWeight} (WR: ${(divWR*100).toFixed(1)}% con ${withDiv.length} trades)`);
+      }
+    }
+
+    // 2. Analizar si 4H alineado mejora resultados
+    const with4h = trades.filter(t =>
+      (t.direction === 'LONG' && t.market_data?.bias_4h === 'long') ||
+      (t.direction === 'SHORT' && t.market_data?.bias_4h === 'short')
+    );
+    if (with4h.length >= 10) {
+      const wr4h = with4h.filter(t => t.status === 'won').length / with4h.length;
+      const improvement = (wr4h - winRate) * 100;
+      if (improvement > 5) {
+        const newBonus = Math.min(20, mlWeights.bonus_4h_aligned + 2);
+        adjustments.bonus_4h_aligned = { from: mlWeights.bonus_4h_aligned, to: newBonus };
+        mlWeights.bonus_4h_aligned = newBonus;
+        recommendations.push(`Bonus 4H alineado: +${mlWeights.bonus_4h_aligned} → +${newBonus} (mejora WR +${improvement.toFixed(1)}%)`);
+      }
+    }
+
+    // 3. Ajustar umbral de confianza mínima
+    const highConf = trades.filter(t => (t.market_data?.confidence || t.confidence || 0) >= 90);
+    const lowConf = trades.filter(t => (t.market_data?.confidence || t.confidence || 0) < 90);
+    if (highConf.length >= 10 && lowConf.length >= 10) {
+      const wrHigh = highConf.filter(t => t.status === 'won').length / highConf.length;
+      const wrLow = lowConf.filter(t => t.status === 'won').length / lowConf.length;
+      if (wrHigh > wrLow + 0.1) {
+        const newThreshold = Math.min(90, mlWeights.min_confidence_auto + 2);
+        adjustments.min_confidence_auto = { from: mlWeights.min_confidence_auto, to: newThreshold };
+        mlWeights.min_confidence_auto = newThreshold;
+        recommendations.push(`Umbral auto trade: ${mlWeights.min_confidence_auto-2}% → ${newThreshold}% (alta confianza WR: ${(wrHigh*100).toFixed(1)}%)`);
+      }
+    }
+
+    // 4. Guardar resultado en Supabase
+    mlWeights.last_optimized = new Date().toISOString();
+    const result = {
+      timestamp: mlWeights.last_optimized,
+      trades_analyzed: trades.length,
+      win_rate: parseFloat((winRate*100).toFixed(2)),
+      adjustments_count: Object.keys(adjustments).length,
+      adjustments,
+      recommendations,
+      weights: mlWeights
+    };
+
+    await supabase.from('signals').insert({
+      symbol: 'ML_OPTIMIZATION',
+      direction: 'AUTO',
+      confidence: Math.round(winRate * 100),
+      reasoning: `Optimización ML: ${recommendations.length} ajustes aplicados`,
+      market_data: result,
+      source: 'ml_optimizer'
+    }).catch(() => {});
+
+    // Notificar por Telegram
+    if (process.env.TELEGRAM_CHAT_ID && recommendations.length > 0) {
+      const msg = `🧠 *Optimización ML completada*
+📊 ${trades.length} trades analizados
+📈 Win Rate actual: ${(winRate*100).toFixed(1)}%
+🔧 ${recommendations.length} ajustes aplicados:
+${recommendations.slice(0,5).map(r => '• ' + r).join('\n')}
+🕐 ${new Date().toLocaleString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    } else if (recommendations.length === 0) {
+      console.log('✅ ML: Sistema ya está optimizado — sin ajustes necesarios');
+    }
+
+    console.log(`✅ ML Optimización completada: ${recommendations.length} ajustes | WR: ${(winRate*100).toFixed(1)}%`);
+    return result;
+
+  } catch(e) {
+    console.error('ML Optimization error:', e.message);
+    return { error: e.message };
+  }
+}
+
+// Endpoint para ejecutar optimización manualmente
+app.post('/api/ml/optimize', async (req, res) => {
+  const result = await runMLOptimization();
+  res.json(result);
+});
+
+// Endpoint para ver pesos actuales
+app.get('/api/ml/weights', (req, res) => {
+  res.json(mlWeights);
+});
+
+// Job automático: optimizar cada domingo a las 3am
+function startMLOptimizationJob() {
+  setInterval(async () => {
+    const now = new Date();
+    // Domingo = 0, 3am hora Lima (UTC-5 = 8am UTC)
+    if (now.getUTCDay() === 0 && now.getUTCHours() === 8 && now.getUTCMinutes() < 16) {
+      console.log('🧠 Iniciando optimización ML semanal automática...');
+      await runMLOptimization();
+    }
+  }, 15 * 60 * 1000); // verificar cada 15 minutos
+}
+
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
   console.log(`Panel Futuros LO v4.0 corriendo en puerto ${PORT}`);
   startAlertJob();
+  startMLOptimizationJob();
+  console.log('🧠 Job de optimización ML activo — corre automático cada domingo 3am');
 });
