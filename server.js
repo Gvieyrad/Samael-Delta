@@ -1955,15 +1955,24 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const highs3m = k3m.data.slice(-20).map(k => parseFloat(k[2]));
     const lows3m  = k3m.data.slice(-20).map(k => parseFloat(k[3]));
     const rawAtr  = highs3m.reduce((s, h, i) => s + (h - lows3m[i]), 0) / 20;
-    // Mínimo garantizado: 0.15% del precio (evita ATR=0 en activos de bajo precio)
-    const minAtr  = price * 0.0015;
+    // Mínimo garantizado: 0.4% del precio para todos los activos
+    const minAtr  = price * 0.004;
     const atr3m   = Math.max(rawAtr, minAtr);
+    
+    // Validación extra: TP y SL deben tener distancia mínima del 0.3% del precio
+    const minDistance = price * 0.003;
 
     const isLong = scalpDir === 'LONG';
     const tp1 = isLong ? price + atr3m * 2.0 : price - atr3m * 2.0;
     const sl  = isLong ? price - atr3m * 0.8  : price + atr3m * 0.8;
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     const rr  = rrVal.toFixed(1);
+    
+    // Validar distancias mínimas
+    if (Math.abs(tp1 - price) < minDistance || Math.abs(sl - price) < minDistance) {
+      console.log(`⚠️ Scalping ${scalpDir} ${symbol} descartado — distancia TP/SL muy pequeña (ATR: ${atr3m.toFixed(2)})`);
+      return;
+    }
     
     // Filtro R:R mínimo 1.5 — si no es rentable no enviamos señal
     if (rrVal < 1.5) {
