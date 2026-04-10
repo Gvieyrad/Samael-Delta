@@ -563,6 +563,93 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
 
+  // ── 16. SWING FAILURE PATTERN (SFP) ────────────────────────
+  // Detecta cuando el precio rompe un swing previo pero falla en mantenerlo
+  // Es la señal de trampa más confiable — usada por LuxAlgo y traders institucionales
+
+  if (closes.length >= 20) {
+    // Buscar swings altos y bajos en las últimas 20 velas
+    const lookback = 10;
+    let swingHigh = 0, swingHighIdx = 0;
+    let swingLow = Infinity, swingLowIdx = 0;
+
+    // Encontrar el swing high y low más recientes (excluir las últimas 3 velas)
+    for (let i = closes.length - 4; i >= closes.length - 4 - lookback; i--) {
+      if (i < 0) break;
+      const h = parseFloat(klines[i]?.[2] || 0);
+      const l = parseFloat(klines[i]?.[3] || 0);
+      if (h > swingHigh) { swingHigh = h; swingHighIdx = i; }
+      if (l < swingLow)  { swingLow = l;  swingLowIdx = i; }
+    }
+
+    const lastHigh2  = parseFloat(klines[klines.length-1]?.[2] || 0);
+    const lastLow2   = parseFloat(klines[klines.length-1]?.[3] || 0);
+    const lastClose2 = closes[closes.length-1];
+    const prevClose2 = closes[closes.length-2];
+
+    // SFP BAJISTA: precio rompe swing high pero cierra por debajo → trampa alcista → SHORT
+    // Condición: lastHigh > swingHigh Y lastClose < swingHigh
+    if (swingHigh > 0 && lastHigh2 > swingHigh * 1.0005 && lastClose2 < swingHigh) {
+      let prob = 72;
+      if (cvdFalling) prob += 12;           // CVD confirma presión vendedora
+      if (oiRising && priceUp) prob += 8;   // OI subiendo = longs atrapados
+      if (lastRSI > 65) prob += 8;          // RSI sobrecomprado
+      if (bearishContext) prob += 8;
+      if (hasAskWall) prob += 7;
+      const failureSize = ((lastHigh2 - swingHigh) / swingHigh * 100).toFixed(3);
+      const nearLiq = getNearestLiqMagnet(price, 'down');
+      if (nearLiq) prob += nearLiq.bonus;
+      divergences.push({
+        type: 'sfp_bajista',
+        name: 'SFP Bajista — Trampa Alcista',
+        direction: 'SHORT',
+        probability: Math.min(95, prob),
+        entry: price,
+        description: `Precio rompió swing high $${parseInt(swingHigh).toLocaleString()} (+${failureSize}%) pero cerró por debajo — trampa alcista confirmada.`,
+        action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
+        liqTarget: nearLiq?.price,
+        confluence: [
+          cvdFalling && 'CVD divergente bajista',
+          oiRising && priceUp && 'OI + precio = longs atrapados',
+          lastRSI > 65 && 'RSI sobrecomprado',
+          bearishContext && 'Contexto bajista',
+          hasAskWall && 'Muro ASK sobre el swing'
+        ].filter(Boolean)
+      });
+    }
+
+    // SFP ALCISTA: precio rompe swing low pero cierra por encima → trampa bajista → LONG
+    // Condición: lastLow < swingLow Y lastClose > swingLow
+    if (swingLow < Infinity && lastLow2 < swingLow * 0.9995 && lastClose2 > swingLow) {
+      let prob = 72;
+      if (cvdRising) prob += 12;            // CVD confirma presión compradora
+      if (oiFalling && priceDown) prob += 8; // OI cayendo = shorts cerrando
+      if (lastRSI < 35) prob += 8;          // RSI sobrevendido
+      if (bullishContext) prob += 8;
+      if (hasBidWall) prob += 7;
+      const failureSize = ((swingLow - lastLow2) / swingLow * 100).toFixed(3);
+      const nearLiq = getNearestLiqMagnet(price, 'up');
+      if (nearLiq) prob += nearLiq.bonus;
+      divergences.push({
+        type: 'sfp_alcista',
+        name: 'SFP Alcista — Trampa Bajista',
+        direction: 'LONG',
+        probability: Math.min(95, prob),
+        entry: price,
+        description: `Precio rompió swing low $${parseInt(swingLow).toLocaleString()} (-${failureSize}%) pero cerró por encima — trampa bajista confirmada. Shorts atrapados.`,
+        action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
+        liqTarget: nearLiq?.price,
+        confluence: [
+          cvdRising && 'CVD positivo en la trampa',
+          oiFalling && priceDown && 'OI cayendo = shorts cierran',
+          lastRSI < 35 && 'RSI sobrevendido',
+          bullishContext && 'Contexto alcista',
+          hasBidWall && 'Muro BID bajo el swing'
+        ].filter(Boolean)
+      });
+    }
+  }
+
   // ── BLOQUEO DE SEÑAL CONTRARIA AL RÉGIMEN ──────────────────
   // Si hay señal de cambio de régimen, bloquear la dirección contraria
   const regimeLong  = divergences.find(d => d.type === 'regime_change_long');
