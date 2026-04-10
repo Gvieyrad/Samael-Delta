@@ -570,93 +570,6 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
 
-  // ── 16. SWING FAILURE PATTERN (SFP) ────────────────────────
-  // Detecta cuando el precio rompe un swing previo pero falla en mantenerlo
-  // Es la señal de trampa más confiable — usada por LuxAlgo y traders institucionales
-
-  if (closes && closes.length >= 20 && klines15m && klines15m.length >= 20) {
-    // Buscar swings altos y bajos en las últimas 20 velas
-    const lookback = 10;
-    let swingHigh = 0, swingHighIdx = 0;
-    let swingLow = Infinity, swingLowIdx = 0;
-
-    // Encontrar el swing high y low más recientes (excluir las últimas 3 velas)
-    for (let i = closes.length - 4; i >= closes.length - 4 - lookback; i--) {
-      if (i < 0) break;
-      const h = parseFloat(klines15m[i]?.[2] || 0);
-      const l = parseFloat(klines15m[i]?.[3] || 0);
-      if (h > swingHigh) { swingHigh = h; swingHighIdx = i; }
-      if (l < swingLow)  { swingLow = l;  swingLowIdx = i; }
-    }
-
-    const lastHigh2  = parseFloat(klines15m[klines15m.length-1]?.[2] || 0);
-    const lastLow2   = parseFloat(klines15m[klines15m.length-1]?.[3] || 0);
-    const lastClose2 = closes[closes.length-1];
-    const prevClose2 = closes[closes.length-2];
-
-    // SFP BAJISTA: precio rompe swing high pero cierra por debajo → trampa alcista → SHORT
-    // Condición: lastHigh > swingHigh Y lastClose < swingHigh
-    if (swingHigh > 0 && lastHigh2 > swingHigh * 1.0005 && lastClose2 < swingHigh) {
-      let prob = 72;
-      if (cvdFalling) prob += 12;           // CVD confirma presión vendedora
-      if (oiRising && priceUp) prob += 8;   // OI subiendo = longs atrapados
-      if (lastRSI > 65) prob += 8;          // RSI sobrecomprado
-      if (bearishContext) prob += 8;
-      if (hasAskWall) prob += 7;
-      const failureSize = ((lastHigh2 - swingHigh) / swingHigh * 100).toFixed(3);
-      const nearLiq = getNearestLiqMagnet(price, 'down');
-      if (nearLiq) prob += nearLiq.bonus;
-      divergences.push({
-        type: 'sfp_bajista',
-        name: 'SFP Bajista — Trampa Alcista',
-        direction: 'SHORT',
-        probability: Math.min(95, prob),
-        entry: price,
-        description: `Precio rompió swing high $${parseInt(swingHigh).toLocaleString()} (+${failureSize}%) pero cerró por debajo — trampa alcista confirmada.`,
-        action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
-        liqTarget: nearLiq?.price,
-        confluence: [
-          cvdFalling && 'CVD divergente bajista',
-          oiRising && priceUp && 'OI + precio = longs atrapados',
-          lastRSI > 65 && 'RSI sobrecomprado',
-          bearishContext && 'Contexto bajista',
-          hasAskWall && 'Muro ASK sobre el swing'
-        ].filter(Boolean)
-      });
-    }
-
-    // SFP ALCISTA: precio rompe swing low pero cierra por encima → trampa bajista → LONG
-    // Condición: lastLow < swingLow Y lastClose > swingLow
-    if (swingLow < Infinity && lastLow2 < swingLow * 0.9995 && lastClose2 > swingLow) {
-      let prob = 72;
-      if (cvdRising) prob += 12;            // CVD confirma presión compradora
-      if (oiFalling && priceDown) prob += 8; // OI cayendo = shorts cerrando
-      if (lastRSI < 35) prob += 8;          // RSI sobrevendido
-      if (bullishContext) prob += 8;
-      if (hasBidWall) prob += 7;
-      const failureSize = ((swingLow - lastLow2) / swingLow * 100).toFixed(3);
-      const nearLiq = getNearestLiqMagnet(price, 'up');
-      if (nearLiq) prob += nearLiq.bonus;
-      divergences.push({
-        type: 'sfp_alcista',
-        name: 'SFP Alcista — Trampa Bajista',
-        direction: 'LONG',
-        probability: Math.min(95, prob),
-        entry: price,
-        description: `Precio rompió swing low $${parseInt(swingLow).toLocaleString()} (-${failureSize}%) pero cerró por encima — trampa bajista confirmada. Shorts atrapados.`,
-        action: prob >= 82 ? 'ENTRAR' : prob >= 68 ? 'ESPERAR' : 'NO ENTRAR',
-        liqTarget: nearLiq?.price,
-        confluence: [
-          cvdRising && 'CVD positivo en la trampa',
-          oiFalling && priceDown && 'OI cayendo = shorts cierran',
-          lastRSI < 35 && 'RSI sobrevendido',
-          bullishContext && 'Contexto alcista',
-          hasBidWall && 'Muro BID bajo el swing'
-        ].filter(Boolean)
-      });
-    }
-  }
-
   // ── BLOQUEO DE SEÑAL CONTRARIA AL RÉGIMEN ──────────────────
   // Si hay señal de cambio de régimen, bloquear la dirección contraria
   const regimeLong  = divergences.find(d => d.type === 'regime_change_long');
@@ -2417,187 +2330,6 @@ function startMLOptimizationJob() {
 }
 
 
-// ─── SISTEMA DE NOTICIAS AUTOMÁTICAS CON IA ──────────────────────
-// Monitorea CryptoPanic cada 5 minutos
-// Si hay noticia de alto impacto → Claude analiza automáticamente
-
-let lastNewsCheck = 0;
-let processedNews = new Set(); // evitar procesar la misma noticia dos veces
-
-async function fetchCryptoNews() {
-  // Fuentes 100% gratuitas sin API key
-  const sources = [
-    // CryptoCompare — completamente gratuito
-    async () => {
-      const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
-        params: { lang: 'EN', sortOrder: 'latest', limit: 15 },
-        timeout: 8000
-      });
-      return (res.data?.Data || []).map(n => ({
-        id: n.id?.toString(),
-        title: n.title,
-        url: n.url,
-        source: { title: n.source },
-        currencies: n.categories?.split('|').map(c => ({ code: c })) || [],
-        created_at: new Date(n.published_on * 1000).toISOString()
-      }));
-    },
-    // Messari — gratuito
-    async () => {
-      const res = await axios.get('https://data.messari.io/api/v1/news', {
-        params: { limit: 10 },
-        timeout: 8000
-      });
-      return (res.data?.data || []).map(n => ({
-        id: n.id,
-        title: n.title,
-        url: n.url,
-        source: { title: n.author?.name || 'Messari' },
-        currencies: [],
-        created_at: n.published_at
-      }));
-    }
-  ];
-
-  for (const source of sources) {
-    try {
-      const results = await source();
-      if (results.length > 0) return results;
-    } catch(_) {}
-  }
-  return [];
-}
-
-async function analyzeNewsWithClaude(news, symbol) {
-  try {
-    const prompt = `Eres un analista de trading experto. Analiza esta noticia y su impacto en ${symbol}:
-
-NOTICIA: "${news.title}"
-FUENTE: ${news.source?.title || 'Desconocida'}
-HORA: ${news.created_at}
-
-Responde SOLO en JSON sin markdown:
-{
-  "sentiment": "ALCISTA|BAJISTA|NEUTRO",
-  "impact": "ALTO|MEDIO|BAJO",
-  "confidence": 0-100,
-  "reasoning": "1-2 oraciones en español",
-  "action": "COMPRAR|VENDER|ESPERAR|PRECAUCIÓN",
-  "price_direction": "SUBE|BAJA|LATERAL",
-  "urgency": true/false
-}`;
-
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const text = response.content[0].text;
-    return JSON.parse(text.replace(/\`\`\`json|\`\`\`/g, '').trim());
-  } catch(e) {
-    console.error('News Claude analysis error:', e.message);
-    return null;
-  }
-}
-
-async function processNewsItem(news) {
-  const newsId = news.id || news.url || news.title;
-  if (processedNews.has(newsId)) return;
-  processedNews.add(newsId);
-
-  // Determinar qué símbolos afecta
-  const title = (news.title || '').toLowerCase();
-  const affectedSymbols = [];
-  
-  if (title.includes('bitcoin') || title.includes('btc') || title.includes('crypto') || title.includes('sec') || title.includes('etf')) affectedSymbols.push('BTCUSDT');
-  if (title.includes('ethereum') || title.includes('eth')) affectedSymbols.push('ETHUSDT');
-  if (title.includes('solana') || title.includes('sol')) affectedSymbols.push('SOLUSDT');
-  if (title.includes('gold') || title.includes('oro') || title.includes('xau') || title.includes('fed') || title.includes('inflation') || title.includes('war') || title.includes('guerra')) affectedSymbols.push('XAUUSDT');
-  
-  // Si afecta crypto en general, agregar todos
-  if (title.includes('crypto') || title.includes('market') || title.includes('ceasefire') || title.includes('trump') || title.includes('iran')) {
-    ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].forEach(s => { if (!affectedSymbols.includes(s)) affectedSymbols.push(s); });
-  }
-
-  if (affectedSymbols.length === 0) return;
-
-  // Analizar con Claude
-  const analysis = await analyzeNewsWithClaude(news, affectedSymbols.join(', '));
-  if (!analysis) return;
-
-  // Solo procesar si impacto es ALTO o MEDIO con urgencia
-  if (analysis.impact === 'BAJO' && !analysis.urgency) return;
-
-  console.log(`📰 Noticia ${analysis.impact}: "${news.title}" → ${analysis.sentiment} ${analysis.action}`);
-
-  // Notificar en Telegram
-  if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
-    const emoji = analysis.sentiment === 'ALCISTA' ? '🟢' : analysis.sentiment === 'BAJISTA' ? '🔴' : '🟡';
-    const impactEmoji = analysis.impact === 'ALTO' ? '🚨' : analysis.impact === 'MEDIO' ? '⚠️' : 'ℹ️';
-    
-    const msg = `${impactEmoji} *Noticia ${analysis.impact} impacto*
-${emoji} ${analysis.sentiment} — ${analysis.action}
-━━━━━━━━━━━━━━
-📰 ${news.title}
-🔗 Fuente: ${news.source?.title || 'Crypto News'}
-━━━━━━━━━━━━━━
-💬 ${analysis.reasoning}
-📊 Confianza: ${analysis.confidence}%
-📈 Dirección esperada: ${analysis.price_direction}
-━━━━━━━━━━━━━━
-🎯 Activos afectados: ${affectedSymbols.join(', ')}
-🕐 ${new Date().toLocaleTimeString('es-PE')}`;
-
-    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
-  }
-
-  // Si impacto ALTO → disparar análisis automático de todos los símbolos afectados
-  if (analysis.impact === 'ALTO' || analysis.urgency) {
-    console.log(`🤖 Análisis automático disparado por noticia de alto impacto`);
-    for (const symbol of affectedSymbols.slice(0, 3)) { // máximo 3 para no sobrecargar
-      await new Promise(r => setTimeout(r, 3000));
-      await runAutoAnalysis(symbol).catch(e => console.error('Auto analysis error:', e.message));
-    }
-  }
-
-  // Limpiar set de noticias procesadas (mantener solo últimas 100)
-  if (processedNews.size > 100) {
-    const arr = [...processedNews];
-    processedNews = new Set(arr.slice(-50));
-  }
-}
-
-async function runNewsMonitor() {
-  try {
-    const news = await fetchCryptoNews();
-    if (!news.length) return;
-    
-    // Procesar cada noticia (solo las últimas 5 para no sobrecargar)
-    for (const item of news.slice(0, 5)) {
-      await processNewsItem(item);
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  } catch(e) {
-    console.error('News monitor error:', e.message);
-  }
-}
-
-// Endpoint para ver últimas noticias analizadas
-app.get('/api/news/latest', async (req, res) => {
-  try {
-    const news = await fetchCryptoNews();
-    const analyzed = [];
-    for (const item of news.slice(0, 5)) {
-      const analysis = await analyzeNewsWithClaude(item, 'BTC,ETH,SOL,XAU');
-      if (analysis) analyzed.push({ ...item, analysis });
-      await new Promise(r => setTimeout(r, 500));
-    }
-    res.json(analyzed);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-
 // ─── SOPORTE PARA ORO (XAUUSDT) ──────────────────────────────────
 // Binance tiene XAUUSDT como par de futuros perpetuos
 // El análisis es igual que crypto pero con parámetros ajustados
@@ -2613,14 +2345,89 @@ function getAssetConfig(symbol) {
   return ASSET_CONFIG[symbol] || { decimals: 2, minATR: 0.003, name: symbol };
 }
 
+
+// ─── NOTICIAS AUTOMÁTICAS ────────────────────────────────────────
+let _processedNews = new Set();
+
+async function fetchAndAnalyzeNews() {
+  try {
+    const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
+      params: { lang: 'EN', sortOrder: 'latest', limit: 10 },
+      timeout: 8000
+    });
+    const items = res.data?.Data || [];
+    
+    for (const item of items.slice(0, 5)) {
+      const newsId = item.id?.toString();
+      if (!newsId || _processedNews.has(newsId)) continue;
+      _processedNews.add(newsId);
+      
+      const title = (item.title || '').toLowerCase();
+      const isCrypto = title.includes('bitcoin') || title.includes('btc') || 
+                       title.includes('ethereum') || title.includes('eth') ||
+                       title.includes('crypto') || title.includes('solana') ||
+                       title.includes('fed') || title.includes('sec') ||
+                       title.includes('gold') || title.includes('war');
+      if (!isCrypto) continue;
+      
+      // Analizar con Claude solo si es relevante
+      try {
+        const analysis = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 200,
+          messages: [{ role: 'user', content: `Analiza esta noticia cripto en JSON sin markdown:
+{"sentiment":"ALCISTA|BAJISTA|NEUTRO","impact":"ALTO|MEDIO|BAJO","action":"COMPRAR|VENDER|ESPERAR","reasoning":"1 oración"}
+Noticia: "${item.title}"` }]
+        });
+        
+        const text = analysis.content[0].text;
+        const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+        
+        if (parsed.impact === 'BAJO') continue;
+        
+        // Notificar por Telegram
+        if (process.env.TELEGRAM_CHAT_ID) {
+          const emoji = parsed.sentiment === 'ALCISTA' ? '🟢' : parsed.sentiment === 'BAJISTA' ? '🔴' : '🟡';
+          const msg = `${parsed.impact === 'ALTO' ? '🚨' : '⚠️'} *Noticia ${parsed.impact}*\n${emoji} ${parsed.sentiment} — ${parsed.action}\n━━━━━━━━━━━━━━\n📰 ${item.title}\n💬 ${parsed.reasoning}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+        }
+        
+        // Si impacto ALTO → análisis automático
+        if (parsed.impact === 'ALTO') {
+          const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
+          for (const sym of symbols.slice(0, 2)) {
+            await new Promise(r => setTimeout(r, 3000));
+            runAutoAnalysis(sym).catch(() => {});
+          }
+        }
+      } catch(_) {}
+      
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    
+    if (_processedNews.size > 100) _processedNews = new Set([..._processedNews].slice(-50));
+  } catch(e) {
+    // Silencioso — no crashear el servidor por noticias
+  }
+}
+
+app.get('/api/news/latest', async (req, res) => {
+  try {
+    const res2 = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
+      params: { lang: 'EN', sortOrder: 'latest', limit: 8 },
+      timeout: 8000
+    });
+    res.json(res2.data?.Data?.slice(0, 8) || []);
+  } catch(e) { res.json([]); }
+});
+
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
   console.log(`Panel Futuros LO v4.1 corriendo en puerto ${PORT}`);
   startAlertJob();
   startMLOptimizationJob();
   console.log('🧠 Job de optimización ML activo — corre automático cada domingo 3am');
-  // Monitor de noticias cada 5 minutos
-  setInterval(runNewsMonitor, 5 * 60 * 1000);
-  setTimeout(runNewsMonitor, 30000); // primera corrida a los 30s
+  setInterval(fetchAndAnalyzeNews, 5 * 60 * 1000);
+  setTimeout(fetchAndAnalyzeNews, 30000);
   console.log('📰 Monitor de noticias activo — cada 5 min');
 });
