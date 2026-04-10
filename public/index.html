@@ -122,6 +122,7 @@ input[type=number]:focus{border-color:#f59e0b}
       <button class="pairbtn on" onclick="setPair('BTCUSDT',this)">BTC</button>
       <button class="pairbtn" onclick="setPair('ETHUSDT',this)">ETH</button>
       <button class="pairbtn" onclick="setPair('SOLUSDT',this)">SOL</button>
+      <button class="pairbtn" onclick="setPair('XAUUSDT',this)" style="color:#f59e0b">XAU</button>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:10px">
@@ -176,6 +177,16 @@ input[type=number]:focus{border-color:#f59e0b}
         <div class="res-row"><span class="res-lbl">R:R</span><span class="res-val" id="r-rr">–</span></div>
         <div class="res-row"><span class="res-lbl">Liquidación</span><span class="res-val" id="r-lq" style="color:#ff4d6d">–</span></div>
       </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch">
+      <span class="ct">📰 Noticias — Impacto en tiempo real</span>
+      <button class="btn" onclick="refreshNews()" style="padding:3px 8px;font-size:10px">↻</button>
+    </div>
+    <div id="news-panel" style="padding:0">
+      <div style="padding:12px 14px;text-align:center;font-size:11px;color:#2a3040">Cargando noticias...</div>
     </div>
   </div>
 
@@ -242,7 +253,7 @@ input[type=number]:focus{border-color:#f59e0b}
 <script>
 // ─── AUTENTICACIÓN BÁSICA ────────────────────────────────────
 (function() {
-  const PASS = 'LO2024&78';  // Cambia esto por tu contraseña
+  const PASS = 'LO2024$';  // Cambia esto por tu contraseña
   const saved = sessionStorage.getItem('panel_auth');
   if (saved !== PASS) {
     const input = prompt('Panel Futuros LO — Contraseña:');
@@ -1356,10 +1367,45 @@ async function fetchAllPrices() {
   } catch(_) {}
 }
 
+
+// ─── NOTICIAS EN TIEMPO REAL ──────────────────────────────────────
+async function refreshNews() {
+  const el = document.getElementById('news-panel');
+  if (!el) return;
+  try {
+    const data = await fetch(`${API}/api/news/latest`).then(r => r.json());
+    if (!data || !data.length) {
+      el.innerHTML = '<div style="padding:12px 14px;text-align:center;font-size:11px;color:#2a3040">Sin noticias recientes</div>';
+      return;
+    }
+    el.innerHTML = data.map(n => {
+      const a = n.analysis;
+      if (!a) return '';
+      const col = a.sentiment === 'ALCISTA' ? '#00d68f' : a.sentiment === 'BAJISTA' ? '#ff4d6d' : '#f59e0b';
+      const impactCol = a.impact === 'ALTO' ? '#ff4d6d' : a.impact === 'MEDIO' ? '#f59e0b' : '#4b5563';
+      const emoji = a.sentiment === 'ALCISTA' ? '🟢' : a.sentiment === 'BAJISTA' ? '🔴' : '🟡';
+      return `<div style="padding:10px 14px;border-bottom:1px solid #1e2330">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="font-size:12px">${emoji}</span>
+          <span style="font-size:10px;font-weight:700;color:${impactCol};background:rgba(${a.impact==='ALTO'?'255,77,109':a.impact==='MEDIO'?'245,158,11':'75,85,99'},.1);padding:1px 6px;border-radius:3px">${a.impact}</span>
+          <span style="font-size:10px;color:${col};font-weight:700">${a.action}</span>
+          <span style="font-size:9px;color:#2a3040;margin-left:auto">${a.confidence}%</span>
+        </div>
+        <div style="font-size:11px;color:#e2e4ea;line-height:1.4;margin-bottom:4px">${n.title}</div>
+        <div style="font-size:10px;color:#4b5563">${a.reasoning}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="padding:12px 14px;text-align:center;font-size:11px;color:#ff4d6d">Error cargando noticias</div>';
+  }
+}
+
 fetchAll();
 fetchAllPrices();
 setInterval(fetchAll,30000);
 setInterval(fetchAllPrices,15000);
+setTimeout(refreshNews, 5000);
+setInterval(refreshNews, 5 * 60 * 1000);
 setTimeout(refreshML,3000);
 setInterval(refreshPaper,60000);
 setTimeout(refreshPaper,2000);
