@@ -848,7 +848,10 @@ app.get('/api/market/:symbol', async (req, res) => {
     const fib15m = calcFibonacci(k15m.data, price);
     const fib4h  = calcFibonacci(k4h.data, price);
     const divergences=detectDivergences(k15m.data,ob,price,fundingRate,bias4h,bias1d,oiTrend15m,fib15m);
-    const combinedSignal=calcCombinedSignal(divergences,bias4h,bias1d,whaleData,deepOB,fib15m);
+    const doublePatterns=detectDoublePatterns(k15m.data,price);
+    const allDivs=[...divergences,...doublePatterns];
+    const combinedSignal=calcCombinedSignal(allDivs,bias4h,bias1d,whaleData,deepOB,fib15m);
+    const scalpSignal=calcScalpSignal(allDivs,calcBias(k15m.data,oi15mHist,fundingRate),calcBias(k1h.data,oi1hHist,fundingRate),bias4h);
 
     const vols=k15m.data.slice(-5).map(k=>parseFloat(k[5]));
     const avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4;
@@ -2420,6 +2423,144 @@ app.get('/api/news/latest', async (req, res) => {
     res.json(res2.data?.Data?.slice(0, 8) || []);
   } catch(e) { res.json([]); }
 });
+
+
+// ─── DETECTOR DE DOUBLE TOP / DOUBLE BOTTOM (SCALPING) ──────────
+function detectDoublePatterns(klines15m, price) {
+  try {
+    if (!klines15m || klines15m.length < 30) return [];
+    const patterns = [];
+    const highs = klines15m.map(k => parseFloat(k[2]));
+    const lows  = klines15m.map(k => parseFloat(k[3]));
+    const closes = klines15m.map(k => parseFloat(k[4]));
+    const volumes = klines15m.map(k => parseFloat(k[5]));
+    const n = closes.length;
+
+    // Buscar Double Top en las últimas 20 velas
+    const lookback = 20;
+    let peaks = [];
+    for (let i = n - lookback; i < n - 1; i++) {
+      if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) {
+        peaks.push({ idx: i, price: highs[i], vol: volumes[i] });
+      }
+    }
+
+    // Double Top: dos picos similares (diferencia < 0.4%)
+    if (peaks.length >= 2) {
+      const p1 = peaks[peaks.length - 2];
+      const p2 = peaks[peaks.length - 1];
+      const priceDiff = Math.abs(p1.price - p2.price) / p1.price * 100;
+      const volDivergence = p2.vol < p1.vol * 0.85; // segundo pico con menos volumen
+      const rsi1 = calcRSI(closes.slice(0, p1.idx + 1));
+      const rsi2 = calcRSI(closes.slice(0, p2.idx + 1));
+      const rsiDivergence = rsi2 < rsi1 - 3; // RSI más bajo en segundo pico
+
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74;
+        if (volDivergence) prob += 10;
+        if (rsiDivergence) prob += 8;
+        if (price < p2.price * 0.999) prob += 7; // precio ya cayó del segundo pico
+        const neckline = Math.min(...lows.slice(p1.idx, p2.idx + 1));
+        patterns.push({
+          type: 'double_top',
+          name: '🔻 Double Top — Scalping Bajista',
+          direction: 'SHORT',
+          probability: Math.min(92, prob),
+          entry: price,
+          tp: neckline - (p2.price - neckline) * 0.8,
+          sl: p2.price * 1.002,
+          description: `Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} — señal de reversión bajista.`,
+          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
+          scalpMode: true
+        });
+      }
+    }
+
+    // Buscar Double Bottom en las últimas 20 velas
+    let troughs = [];
+    for (let i = n - lookback; i < n - 1; i++) {
+      if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) {
+        troughs.push({ idx: i, price: lows[i], vol: volumes[i] });
+      }
+    }
+
+    if (troughs.length >= 2) {
+      const t1 = troughs[troughs.length - 2];
+      const t2 = troughs[troughs.length - 1];
+      const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100;
+      const volDivergence = t2.vol < t1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, t1.idx + 1));
+      const rsi2 = calcRSI(closes.slice(0, t2.idx + 1));
+      const rsiDivergence = rsi2 > rsi1 + 3; // RSI más alto en segundo suelo
+
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74;
+        if (volDivergence) prob += 10;
+        if (rsiDivergence) prob += 8;
+        if (price > t2.price * 1.001) prob += 7;
+        const neckline = Math.max(...highs.slice(t1.idx, t2.idx + 1));
+        patterns.push({
+          type: 'double_bottom',
+          name: '🔺 Double Bottom — Scalping Alcista',
+          direction: 'LONG',
+          probability: Math.min(92, prob),
+          entry: price,
+          tp: neckline + (neckline - t2.price) * 0.8,
+          sl: t2.price * 0.998,
+          description: `Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} — señal de reversión alcista.`,
+          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
+          scalpMode: true
+        });
+      }
+    }
+
+    return patterns;
+  } catch(e) {
+    return [];
+  }
+}
+
+// ─── SEÑAL COMBINADA PARA SCALPING (PESOS DIFERENTES) ────────────
+function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
+  try {
+    if (!divergences.length) return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+
+    const longs  = divergences.filter(d => d.direction === 'LONG');
+    const shorts = divergences.filter(d => d.direction === 'SHORT');
+
+    // Para scalping: 15m y 1H pesan más, 4H solo como filtro suave
+    let longScore  = longs.reduce((s, d)  => s + d.probability, 0) / Math.max(longs.length, 1);
+    let shortScore = shorts.reduce((s, d) => s + d.probability, 0) / Math.max(shorts.length, 1);
+
+    // Bonus por bias 15m y 1H (más peso que en swing)
+    if (bias15m?.bias === 'long')  longScore  += 12;
+    if (bias15m?.bias === 'short') shortScore += 12;
+    if (bias1h?.bias  === 'long')  longScore  += 8;
+    if (bias1h?.bias  === 'short') shortScore += 8;
+
+    // 4H solo da bonus leve, no bloquea
+    if (bias4h?.bias === 'long')   longScore  += 4;
+    if (bias4h?.bias === 'short')  shortScore += 4;
+
+    // Double Top/Bottom tienen peso extra en scalping
+    const hasDoubleTop    = divergences.some(d => d.type === 'double_top');
+    const hasDoubleBottom = divergences.some(d => d.type === 'double_bottom');
+    if (hasDoubleTop)    shortScore += 15;
+    if (hasDoubleBottom) longScore  += 15;
+
+    const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
+    const prob = direction === 'SHORT' ? shortScore : direction === 'LONG' ? longScore : 30;
+
+    return {
+      direction,
+      probability: Math.min(95, Math.round(prob)),
+      action: prob >= 78 ? 'ENTRAR' : prob >= 65 ? 'ESPERAR' : 'NO ENTRAR',
+      mode: 'scalping'
+    };
+  } catch(e) {
+    return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+  }
+}
 
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
