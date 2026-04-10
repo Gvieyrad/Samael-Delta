@@ -193,7 +193,10 @@ input[type=number]:focus{border-color:#f59e0b}
   <div class="card">
     <div class="ch">
       <span class="ct">ML Insights</span>
-      <button class="btn" onclick="refreshML()" style="padding:3px 8px;font-size:10px">↻</button>
+      <div style="display:flex;gap:5px">
+        <button class="btn" onclick="runMLOptimize()" id="ml-opt-btn" style="padding:3px 8px;font-size:10px;background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.3);color:#8b5cf6" title="Optimizar pesos automáticamente">🧠 Optimizar</button>
+        <button class="btn" onclick="refreshML()" style="padding:3px 8px;font-size:10px">↻</button>
+      </div>
     </div>
     <div id="ml-panel" style="padding:0"></div>
   </div>
@@ -1061,6 +1064,30 @@ function renderPaper() {
 
 // ─── ML INSIGHTS ─────────────────────────────────────────────────
 let mlData = null;
+
+async function runMLOptimize() {
+  const btn = document.getElementById('ml-opt-btn');
+  btn.textContent = '⏳ Optimizando...';
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/ml/optimize`, { method: 'POST' }).then(r => r.json());
+    if (res.error) {
+      showToast('Error: ' + res.error, '#ff4d6d');
+    } else if (res.optimized === false) {
+      showToast(res.reason === 'insufficient_data' 
+        ? `Necesitas más trades (${res.trades}/50)` 
+        : 'Sistema ya optimizado', '#f59e0b');
+    } else {
+      showToast(`🧠 ${res.adjustments_count} ajustes aplicados`, '#8b5cf6');
+      await refreshML();
+    }
+  } catch(e) {
+    showToast('Error de conexión', '#ff4d6d');
+  } finally {
+    btn.textContent = '🧠 Optimizar';
+    btn.disabled = false;
+  }
+}
 
 async function refreshML() {
   try {
