@@ -1033,6 +1033,8 @@ function renderPaper() {
       </div>
       <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
       ${s.recentTrades.slice(0,8).map(t => {
+        // Ocultar trades cancelados (status=closed con pnl=0)
+        if (t.status === 'closed' && (t.pnl_usd === 0 || t.pnl_usd === null)) return '';
         const won = t.status==='won', lost = t.status==='lost';
         const pnlCol = won?'#00d68f':lost?'#ff4d6d':'#f59e0b';
         const icon = won?'✓':lost?'✗':'—';
