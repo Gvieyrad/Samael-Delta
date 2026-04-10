@@ -2421,7 +2421,10 @@ app.get('/api/news/latest', async (req, res) => {
   try {
     // Intentar múltiples fuentes
     const sources = [
-      () => axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=8', { timeout: 6000 })
+      () => axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=8', { 
+          timeout: 6000,
+          headers: { 'User-Agent': 'PanelFuturosLO/4.1', 'Accept': 'application/json' }
+        })
         .then(r => (r.data?.Data || []).map(n => ({
           id: n.id, title: n.title, url: n.url,
           source: n.source, published_on: n.published_on,
