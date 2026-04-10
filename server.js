@@ -285,6 +285,7 @@ function calcFibonacci(klines, price) {
 }
 
 function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib=null) {
+  if (!klines15m || klines15m.length < 20) return [];
   const divergences=[];
   const closes=klines15m.map(k=>parseFloat(k[4]));
   const highs=klines15m.map(k=>parseFloat(k[2]));
@@ -567,7 +568,7 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   // Detecta cuando el precio rompe un swing previo pero falla en mantenerlo
   // Es la señal de trampa más confiable — usada por LuxAlgo y traders institucionales
 
-  if (closes.length >= 20) {
+  if (closes && closes.length >= 20 && klines15m && klines15m.length >= 20) {
     // Buscar swings altos y bajos en las últimas 20 velas
     const lookback = 10;
     let swingHigh = 0, swingHighIdx = 0;
