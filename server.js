@@ -1286,6 +1286,22 @@ function startAlertJob() {
   }, 10000); // 10 segundos después de arrancar
 }
 
+// Endpoint precios de todos los pares
+app.get('/api/prices', async (req, res) => {
+  try {
+    const [btc, eth, sol] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=BTCUSDT`),
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=ETHUSDT`),
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=SOLUSDT`),
+    ]);
+    res.json({
+      BTCUSDT: parseFloat(btc.data.price),
+      ETHUSDT: parseFloat(eth.data.price),
+      SOLUSDT: parseFloat(sol.data.price),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Endpoint manual para disparar análisis ahora
 app.post('/api/alert/trigger', async (req, res) => {
   const symbol = req.body.symbol || 'BTCUSDT';
