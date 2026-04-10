@@ -292,6 +292,17 @@ function renderAll(){
   cb.textContent=(ch>=0?'+':'')+ch.toFixed(2)+'%';
   cb.className='chg '+(ch>1?'up':ch<-1?'dn':'nt');
   renderTFGrid();renderDivergences();renderCombined();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
+  // Badge señal scalping
+  const sb=document.getElementById('scalp-signal-badge');
+  if(sb&&mkt.scalpSignal&&mkt.scalpSignal.direction&&mkt.scalpSignal.direction!=='ESPERAR'){
+    const sc=mkt.scalpSignal;
+    const col=sc.direction==='LONG'?'#00d68f':'#ff4d6d';
+    sb.style.display='inline';
+    sb.style.background=col+'22';
+    sb.style.color=col;
+    sb.style.border='1px solid '+col+'55';
+    sb.textContent='⚡'+sc.direction+' '+sc.probability+'%';
+  } else if(sb){sb.style.display='none';}
   setTimeout(()=>{const e=document.getElementById('c-ent');if(!e.value&&mkt.price){e.value=mkt.price.toFixed(1);calc();}},300);
 }
 
