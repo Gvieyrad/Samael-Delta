@@ -101,7 +101,7 @@ function calcOITrend(oiHistory) {
 }
 
 function calcBias(klines, oiData=null, fundingRate=0) {
-  if(!klines||klines.length<20) return { bias:'neutral', score:50, rsi:50, cvdPct:0, volPct:0, oiTrend:'flat', oiDeltaPct:'0.000', fundingRate:0 };
+  if(!klines||!Array.isArray(klines)||klines.length<20) return { bias:'neutral', score:50, rsi:50, cvdPct:0, volPct:0, oiTrend:'flat', oiDeltaPct:'0.000', fundingRate:0 };
   const closes=klines.map(k=>parseFloat(k[4]));
   const highs=klines.map(k=>parseFloat(k[2]));
   const lows=klines.map(k=>parseFloat(k[3]));
@@ -310,8 +310,8 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const prevLow2=Math.min(...lows.slice(-14,-8));
 
   const lastClose=closes[closes.length-1];
-  const prevClose5=closes[closes.length-6];
-  const prevClose10=closes[closes.length-11];
+  const prevClose5=closes.length>=6?closes[closes.length-6]:closes[0]||0;
+  const prevClose10=closes.length>=11?closes[closes.length-11]:closes[0]||0;
   const priceUp=lastClose>prevClose5, priceDown=lastClose<prevClose5;
   const priceUp10=lastClose>prevClose10, priceDown10=lastClose<prevClose10;
 
@@ -464,7 +464,7 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   // Detecta cuando el sistema debe CAMBIAR de SHORT a LONG o viceversa
 
   // REVERSIÓN ALCISTA: precio cayendo pero múltiples señales de agotamiento bajista
-  const priceDownRegime = lastClose < closes[closes.length - 6];
+  const priceDownRegime = closes.length >= 6 ? lastClose < closes[closes.length - 6] : false;
 
   // Condiciones de agotamiento bajista (al menos 3 de 5)
   const bearExhaustion = [
@@ -501,7 +501,7 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   }
 
   // REVERSIÓN BAJISTA: precio subiendo pero múltiples señales de agotamiento alcista
-  const priceUpRegime = lastClose > closes[closes.length - 6];
+  const priceUpRegime = closes.length >= 6 ? lastClose > closes[closes.length - 6] : false;
 
   const bullExhaustion = [
     lastRSI > 68,                          // RSI sobrecompra
@@ -1356,7 +1356,7 @@ ${tradeEmoji} ${signal.direction} ${symbol}
     }
 
   } catch(e) {
-    console.error('Auto-analysis error:', e.message);
+    console.error('Auto-analysis error:', e.message, e.stack?.split('\n')[1]);
   }
 }
 
