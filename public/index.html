@@ -1289,8 +1289,7 @@ function updateConfirmationBadge(signal) {
 }
 
 // Precios globales de todos los pares
-let allPrices = {};
-async function async function fetchAllPrices() {
+async function fetchAllPrices() {
   try {
     const p = await fetch(`${API}/api/prices`).then(r=>r.json());
     if(p && !p.error) allPrices = p;
