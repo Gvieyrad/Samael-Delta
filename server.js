@@ -285,9 +285,11 @@ function calcFibonacci(klines, price) {
 }
 
 function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib=null) {
-  if (!klines15m || klines15m.length < 20) return [];
+  try {
+  if (!klines15m || !Array.isArray(klines15m) || klines15m.length < 20) return [];
   const divergences=[];
-  const closes=klines15m.map(k=>parseFloat(k[4]));
+  const closes=klines15m.map(k=>parseFloat(k[4]||0));
+  if (!closes || closes.length < 20 || closes.every(c => isNaN(c) || c === 0)) return [];
   const highs=klines15m.map(k=>parseFloat(k[2]));
   const lows=klines15m.map(k=>parseFloat(k[3]));
   const volumes=klines15m.map(k=>parseFloat(k[5]));
@@ -549,6 +551,10 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   }
 
   return divergences.sort((a,b)=>b.probability-a.probability);
+  } catch(e) {
+    console.error('detectDivergences error:', e.message);
+    return [];
+  }
 }
 
 function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null) {
