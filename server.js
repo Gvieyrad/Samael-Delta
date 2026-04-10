@@ -1467,6 +1467,17 @@ async function monitorPaperTrades() {
           const pnl_pct = parseFloat((priceDiff * 100 * trade.leverage).toFixed(2));
           const pnl_usd = parseFloat((trade.size_usd * priceDiff * trade.leverage).toFixed(2));
 
+          // Validar que el PnL no sea absurdo (max 500% del capital)
+          const maxPnl = parseFloat(trade.size_usd) * 5;
+          if (Math.abs(pnl_usd) > maxPnl) {
+            console.log(`⚠️ PnL absurdo detectado para ${trade.symbol} ${trade.id}: $${pnl_usd} — cerrando con pnl=0`);
+            await supabase.from('paper_trades').update({
+              status: 'closed', close_price: currentPrice,
+              close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0,
+              closed_at: new Date().toISOString()
+            }).eq('id', trade.id);
+            continue;
+          }
           await supabase.from('paper_trades').update({
             status: closeReason === 'tp1' ? 'won' : 'lost',
             close_price: currentPrice,
@@ -2025,8 +2036,10 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (scalpProb >= scalpThreshold) {
       try {
         const { data: existing } = await supabase.from('paper_trades')
-          .select('id').eq('symbol', symbol).eq('status', 'open').eq('direction', scalpDir);
-        if (!existing || existing.length === 0) {
+          .select('id, direction').eq('symbol', symbol).eq('status', 'open');
+        const hasConflict = existing?.some(t => t.direction !== scalpDir);
+        const hasSame = existing?.some(t => t.direction === scalpDir);
+        if (!hasConflict && !hasSame) {
           await supabase.from('paper_trades').insert({
             symbol, direction: scalpDir,
             entry: price, tp1, tp2: tp1, sl,
