@@ -555,7 +555,22 @@ async function runAI(){
     result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
     const actClass=d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
     result.innerHTML=`<div class="ai-hdr"><span style="font-size:18px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:14px;font-weight:700;color:${col}">${d.direction} — ${d.confidence}%</span><span class="action-badge ${actClass}">${d.action||'ESPERAR'}</span></div><div class="ai-reasoning">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1/TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()}<br><span style="font-size:10px">$${(d.tp2||0).toLocaleString()}</span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
-    if(d.entry){document.getElementById('c-ent').value=d.entry.toFixed(1);document.getElementById('c-tp').value=d.tp1.toFixed(1);document.getElementById('c-sl').value=d.sl.toFixed(1);calc();}
+    if(d.entry){
+      // Guardar señal de IA completa
+      aiSignal = d;
+      aiRR = d.rr || null;
+      // Usar TP2 si existe para mejor R:R
+      const tpUse = (d.tp2 && d.tp2 !== d.tp1) ? d.tp2 : d.tp1;
+      document.getElementById('c-ent').value=d.entry.toFixed(1);
+      document.getElementById('c-tp').value=tpUse.toFixed(1);
+      document.getElementById('c-sl').value=d.sl.toFixed(1);
+      calc();
+      // Mostrar R:R de la IA directamente
+      if(d.rr){
+        document.getElementById('r-rr').textContent=d.rr;
+        document.getElementById('r-rr').style.color='#00d68f';
+      }
+    }
   }catch(e){
     result.className='ai-box ai-error';
     result.innerHTML=`<div class="ai-hdr"><span>⚠</span><span style="font-size:13px;font-weight:700;color:#ff4d6d">Error</span></div><div class="ai-reasoning" style="color:#ff4d6d">${e.message}</div>`;
