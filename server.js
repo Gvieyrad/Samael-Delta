@@ -1482,14 +1482,17 @@ async function monitorPaperTrades() {
           continue;
         }
         const tp1 = parseFloat(trade.tp1);
+        const tp2 = parseFloat(trade.tp2) || tp1;
         const sl  = parseFloat(trade.sl);
 
         let closeReason = null;
         if (trade.direction === 'LONG') {
-          if (currentPrice >= tp1) closeReason = 'tp1';
+          if (currentPrice >= tp2 && tp2 > tp1) closeReason = 'tp2';      // TP extendido primero
+          else if (currentPrice >= tp1) closeReason = 'tp1';              // TP conservador
           else if (currentPrice <= sl) closeReason = 'sl';
         } else {
-          if (currentPrice <= tp1) closeReason = 'tp1';
+          if (currentPrice <= tp2 && tp2 < tp1) closeReason = 'tp2';      // TP extendido primero
+          else if (currentPrice <= tp1) closeReason = 'tp1';              // TP conservador
           else if (currentPrice >= sl) closeReason = 'sl';
         }
 
@@ -1513,7 +1516,7 @@ async function monitorPaperTrades() {
             continue;
           }
           await supabase.from('paper_trades').update({
-            status: closeReason === 'tp1' ? 'won' : 'lost',
+            status: closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost',
             close_price: currentPrice,
             close_reason: closeReason,
             pnl_usd, pnl_pct,
@@ -1524,7 +1527,7 @@ async function monitorPaperTrades() {
 
           // Notificar por Telegram
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
-            const emoji = closeReason === 'tp1' ? '✅' : '❌';
+            const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
             const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${entry.toLocaleString()} → Cierre: $${currentPrice.toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd} (${pnl_pct}%)`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
           }
@@ -2416,11 +2419,31 @@ Noticia: "${item.title}"` }]
 
 app.get('/api/news/latest', async (req, res) => {
   try {
-    const res2 = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
-      params: { lang: 'EN', sortOrder: 'latest', limit: 8 },
-      timeout: 8000
-    });
-    res.json(res2.data?.Data?.slice(0, 8) || []);
+    // Intentar múltiples fuentes
+    const sources = [
+      () => axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=8', { timeout: 6000 })
+        .then(r => (r.data?.Data || []).map(n => ({
+          id: n.id, title: n.title, url: n.url,
+          source: n.source, published_on: n.published_on,
+          body: n.body?.substring(0, 200)
+        }))),
+      () => axios.get('https://data.messari.io/api/v1/news?limit=8', { timeout: 6000 })
+        .then(r => (r.data?.data || []).map(n => ({
+          id: n.id, title: n.title, url: n.url,
+          source: n.author?.name || 'Messari',
+          published_on: new Date(n.published_at).getTime() / 1000
+        })))
+    ];
+
+    for (const src of sources) {
+      try {
+        const data = await src();
+        if (data && data.length > 0) {
+          return res.json(data);
+        }
+      } catch(_) {}
+    }
+    res.json([]);
   } catch(e) { res.json([]); }
 });
 
