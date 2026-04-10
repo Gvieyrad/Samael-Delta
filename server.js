@@ -1451,6 +1451,15 @@ async function monitorPaperTrades() {
           `${BINANCE}/fapi/v1/ticker/price?symbol=${trade.symbol}`
         );
         const currentPrice = parseFloat(priceRes.data.price);
+        const entryPrice = parseFloat(trade.entry);
+        
+        // Validar que el precio es coherente con el entry (máximo 50% de diferencia)
+        // Esto evita que el precio de BTC se use para calcular PnL de ETH o SOL
+        const priceDiffPct = Math.abs(currentPrice - entryPrice) / entryPrice * 100;
+        if (priceDiffPct > 50) {
+          console.log(`⚠️ Precio incoherente para ${trade.symbol}: entry=$${entryPrice}, current=$${currentPrice} (${priceDiffPct.toFixed(1)}% diferencia) — omitiendo`);
+          continue;
+        }
         const tp1 = parseFloat(trade.tp1);
         const sl  = parseFloat(trade.sl);
 
