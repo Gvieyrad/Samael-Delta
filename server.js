@@ -16,7 +16,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.0.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.1.0' }));
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -1381,15 +1381,17 @@ function startAlertJob() {
 // Endpoint precios de todos los pares
 app.get('/api/prices', async (req, res) => {
   try {
-    const [btc, eth, sol] = await Promise.all([
+    const [btc, eth, sol, xau] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=BTCUSDT`),
       axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=ETHUSDT`),
       axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=SOLUSDT`),
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=XAUUSDT`).catch(() => ({ data: { price: '0' } })),
     ]);
     res.json({
       BTCUSDT: parseFloat(btc.data.price),
       ETHUSDT: parseFloat(eth.data.price),
       SOLUSDT: parseFloat(sol.data.price),
+      XAUUSDT: parseFloat(xau.data.price),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2400,10 +2402,211 @@ function startMLOptimizationJob() {
   }, 15 * 60 * 1000); // verificar cada 15 minutos
 }
 
+
+// ─── SISTEMA DE NOTICIAS AUTOMÁTICAS CON IA ──────────────────────
+// Monitorea CryptoPanic cada 5 minutos
+// Si hay noticia de alto impacto → Claude analiza automáticamente
+
+let lastNewsCheck = 0;
+let processedNews = new Set(); // evitar procesar la misma noticia dos veces
+
+async function fetchCryptoNews() {
+  // Fuentes 100% gratuitas sin API key
+  const sources = [
+    // CryptoCompare — completamente gratuito
+    async () => {
+      const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
+        params: { lang: 'EN', sortOrder: 'latest', limit: 15 },
+        timeout: 8000
+      });
+      return (res.data?.Data || []).map(n => ({
+        id: n.id?.toString(),
+        title: n.title,
+        url: n.url,
+        source: { title: n.source },
+        currencies: n.categories?.split('|').map(c => ({ code: c })) || [],
+        created_at: new Date(n.published_on * 1000).toISOString()
+      }));
+    },
+    // Messari — gratuito
+    async () => {
+      const res = await axios.get('https://data.messari.io/api/v1/news', {
+        params: { limit: 10 },
+        timeout: 8000
+      });
+      return (res.data?.data || []).map(n => ({
+        id: n.id,
+        title: n.title,
+        url: n.url,
+        source: { title: n.author?.name || 'Messari' },
+        currencies: [],
+        created_at: n.published_at
+      }));
+    }
+  ];
+
+  for (const source of sources) {
+    try {
+      const results = await source();
+      if (results.length > 0) return results;
+    } catch(_) {}
+  }
+  return [];
+}
+
+async function analyzeNewsWithClaude(news, symbol) {
+  try {
+    const prompt = `Eres un analista de trading experto. Analiza esta noticia y su impacto en ${symbol}:
+
+NOTICIA: "${news.title}"
+FUENTE: ${news.source?.title || 'Desconocida'}
+HORA: ${news.created_at}
+
+Responde SOLO en JSON sin markdown:
+{
+  "sentiment": "ALCISTA|BAJISTA|NEUTRO",
+  "impact": "ALTO|MEDIO|BAJO",
+  "confidence": 0-100,
+  "reasoning": "1-2 oraciones en español",
+  "action": "COMPRAR|VENDER|ESPERAR|PRECAUCIÓN",
+  "price_direction": "SUBE|BAJA|LATERAL",
+  "urgency": true/false
+}`;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const text = response.content[0].text;
+    return JSON.parse(text.replace(/\`\`\`json|\`\`\`/g, '').trim());
+  } catch(e) {
+    console.error('News Claude analysis error:', e.message);
+    return null;
+  }
+}
+
+async function processNewsItem(news) {
+  const newsId = news.id || news.url || news.title;
+  if (processedNews.has(newsId)) return;
+  processedNews.add(newsId);
+
+  // Determinar qué símbolos afecta
+  const title = (news.title || '').toLowerCase();
+  const affectedSymbols = [];
+  
+  if (title.includes('bitcoin') || title.includes('btc') || title.includes('crypto') || title.includes('sec') || title.includes('etf')) affectedSymbols.push('BTCUSDT');
+  if (title.includes('ethereum') || title.includes('eth')) affectedSymbols.push('ETHUSDT');
+  if (title.includes('solana') || title.includes('sol')) affectedSymbols.push('SOLUSDT');
+  if (title.includes('gold') || title.includes('oro') || title.includes('xau') || title.includes('fed') || title.includes('inflation') || title.includes('war') || title.includes('guerra')) affectedSymbols.push('XAUUSDT');
+  
+  // Si afecta crypto en general, agregar todos
+  if (title.includes('crypto') || title.includes('market') || title.includes('ceasefire') || title.includes('trump') || title.includes('iran')) {
+    ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].forEach(s => { if (!affectedSymbols.includes(s)) affectedSymbols.push(s); });
+  }
+
+  if (affectedSymbols.length === 0) return;
+
+  // Analizar con Claude
+  const analysis = await analyzeNewsWithClaude(news, affectedSymbols.join(', '));
+  if (!analysis) return;
+
+  // Solo procesar si impacto es ALTO o MEDIO con urgencia
+  if (analysis.impact === 'BAJO' && !analysis.urgency) return;
+
+  console.log(`📰 Noticia ${analysis.impact}: "${news.title}" → ${analysis.sentiment} ${analysis.action}`);
+
+  // Notificar en Telegram
+  if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
+    const emoji = analysis.sentiment === 'ALCISTA' ? '🟢' : analysis.sentiment === 'BAJISTA' ? '🔴' : '🟡';
+    const impactEmoji = analysis.impact === 'ALTO' ? '🚨' : analysis.impact === 'MEDIO' ? '⚠️' : 'ℹ️';
+    
+    const msg = `${impactEmoji} *Noticia ${analysis.impact} impacto*
+${emoji} ${analysis.sentiment} — ${analysis.action}
+━━━━━━━━━━━━━━
+📰 ${news.title}
+🔗 Fuente: ${news.source?.title || 'Crypto News'}
+━━━━━━━━━━━━━━
+💬 ${analysis.reasoning}
+📊 Confianza: ${analysis.confidence}%
+📈 Dirección esperada: ${analysis.price_direction}
+━━━━━━━━━━━━━━
+🎯 Activos afectados: ${affectedSymbols.join(', ')}
+🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+
+    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+  }
+
+  // Si impacto ALTO → disparar análisis automático de todos los símbolos afectados
+  if (analysis.impact === 'ALTO' || analysis.urgency) {
+    console.log(`🤖 Análisis automático disparado por noticia de alto impacto`);
+    for (const symbol of affectedSymbols.slice(0, 3)) { // máximo 3 para no sobrecargar
+      await new Promise(r => setTimeout(r, 3000));
+      await runAutoAnalysis(symbol).catch(e => console.error('Auto analysis error:', e.message));
+    }
+  }
+
+  // Limpiar set de noticias procesadas (mantener solo últimas 100)
+  if (processedNews.size > 100) {
+    const arr = [...processedNews];
+    processedNews = new Set(arr.slice(-50));
+  }
+}
+
+async function runNewsMonitor() {
+  try {
+    const news = await fetchCryptoNews();
+    if (!news.length) return;
+    
+    // Procesar cada noticia (solo las últimas 5 para no sobrecargar)
+    for (const item of news.slice(0, 5)) {
+      await processNewsItem(item);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  } catch(e) {
+    console.error('News monitor error:', e.message);
+  }
+}
+
+// Endpoint para ver últimas noticias analizadas
+app.get('/api/news/latest', async (req, res) => {
+  try {
+    const news = await fetchCryptoNews();
+    const analyzed = [];
+    for (const item of news.slice(0, 5)) {
+      const analysis = await analyzeNewsWithClaude(item, 'BTC,ETH,SOL,XAU');
+      if (analysis) analyzed.push({ ...item, analysis });
+      await new Promise(r => setTimeout(r, 500));
+    }
+    res.json(analyzed);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ─── SOPORTE PARA ORO (XAUUSDT) ──────────────────────────────────
+// Binance tiene XAUUSDT como par de futuros perpetuos
+// El análisis es igual que crypto pero con parámetros ajustados
+
+const ASSET_CONFIG = {
+  'BTCUSDT':  { decimals: 0, minATR: 0.004, name: 'Bitcoin' },
+  'ETHUSDT':  { decimals: 0, minATR: 0.004, name: 'Ethereum' },
+  'SOLUSDT':  { decimals: 2, minATR: 0.004, name: 'Solana' },
+  'XAUUSDT':  { decimals: 2, minATR: 0.002, name: 'Oro (Gold)' }
+};
+
+function getAssetConfig(symbol) {
+  return ASSET_CONFIG[symbol] || { decimals: 2, minATR: 0.003, name: symbol };
+}
+
 const PORT=process.env.PORT||3001;
 app.listen(PORT,()=>{
-  console.log(`Panel Futuros LO v4.0 corriendo en puerto ${PORT}`);
+  console.log(`Panel Futuros LO v4.1 corriendo en puerto ${PORT}`);
   startAlertJob();
   startMLOptimizationJob();
   console.log('🧠 Job de optimización ML activo — corre automático cada domingo 3am');
+  // Monitor de noticias cada 5 minutos
+  setInterval(runNewsMonitor, 5 * 60 * 1000);
+  setTimeout(runNewsMonitor, 30000); // primera corrida a los 30s
+  console.log('📰 Monitor de noticias activo — cada 5 min');
 });
