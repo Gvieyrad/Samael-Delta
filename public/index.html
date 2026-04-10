@@ -240,6 +240,20 @@ input[type=number]:focus{border-color:#f59e0b}
 </div>
 
 <script>
+// ─── AUTENTICACIÓN BÁSICA ────────────────────────────────────
+(function() {
+  const PASS = 'Zapatero&78';  // Cambia esto por tu contraseña
+  const saved = sessionStorage.getItem('panel_auth');
+  if (saved !== PASS) {
+    const input = prompt('Panel Futuros LO — Contraseña:');
+    if (input !== PASS) {
+      document.body.innerHTML = '<div style="background:#080a0d;color:#ff4d6d;height:100vh;display:flex;align-items:center;justify-content:center;font-size:18px;font-family:monospace">⛔ Acceso denegado</div>';
+      throw new Error('Unauthorized');
+    }
+    sessionStorage.setItem('panel_auth', PASS);
+  }
+})();
+
 const API='https://panel-futuros-lo-production.up.railway.app';
 let pair='BTCUSDT',mkt={};
 let aiSignal=null; let aiRR=null;
