@@ -834,8 +834,8 @@ async function openPaperTrade(direction) {
   const useAI = aiSignal && aiSignal.direction === direction && aiSignal.entry && aiSignal.tp1 && aiSignal.sl;
   const entryInput = useAI ? parseFloat(aiSignal.entry)
     : parseFloat(document.getElementById('c-ent').value) || entry;
-  // Usar TP2 si existe (mejor R:R) sino TP1
-  const aiTP = useAI ? (aiSignal.tp2 && aiSignal.tp2 !== aiSignal.tp1 ? parseFloat(aiSignal.tp2) : parseFloat(aiSignal.tp1)) : null;
+  // Siempre usar TP1 — target de cierre automático garantizado
+  const aiTP = useAI ? parseFloat(aiSignal.tp1) : null;
   const tp1Input = useAI ? aiTP
     : parseFloat(document.getElementById('c-tp').value) || (direction==='LONG' ? entry*1.025 : entry*0.975);
   const slInput = useAI ? parseFloat(aiSignal.sl)
@@ -856,7 +856,8 @@ async function openPaperTrade(direction) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         symbol: pair, direction,
-        entry: entryInput, tp1: tp1Input, tp2: tp1Input,
+        entry: entryInput, tp1: tp1Input, 
+        tp2: useAI && aiSignal.tp2 ? parseFloat(aiSignal.tp2) : tp1Input,
         sl: slInput, rr: `1:${rr}`,
         confidence: cs?.probability || 0,
         size_usd: capital, leverage,
