@@ -1113,6 +1113,15 @@ Responde SOLO JSON sin markdown:
 
     const text = response.content[0].text;
     const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
+    // ✅ FIX R:R — recalcular siempre con precios reales, ignorar valor de IA
+    const _rrReward = signal.direction === 'SHORT'
+      ? (signal.entry - signal.tp1)
+      : (signal.tp1 - signal.entry);
+    const _rrRisk = signal.direction === 'SHORT'
+      ? (signal.sl - signal.entry)
+      : (signal.entry - signal.sl);
+    const _rrVal = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
+    signal.rr = `1:${_rrVal.toFixed(1)}`;
 
     if (signal.confidence < minConfidence) return;
 
