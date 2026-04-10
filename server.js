@@ -2358,11 +2358,26 @@ let _processedNews = new Set();
 
 async function fetchAndAnalyzeNews() {
   try {
-    const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
-      params: { lang: 'EN', sortOrder: 'latest', limit: 10 },
-      timeout: 8000
-    });
-    const items = res.data?.Data || [];
+    // Usar RSS — nunca bloquea
+    let items = [];
+    const rssFeeds = ['https://cointelegraph.com/rss', 'https://coindesk.com/arc/outboundfeeds/rss/'];
+    for (const feed of rssFeeds) {
+      if (items.length >= 5) break;
+      try {
+        const r = await axios.get(feed, { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const xml = r.data;
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let match;
+        while ((match = itemRegex.exec(xml)) !== null && items.length < 10) {
+          const it = match[1];
+          const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>(.*?)<\/title>/))?.[1] || '';
+          const url = (it.match(/<link>(.*?)<\/link>/))?.[1] || '';
+          const pubDate = (it.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+          const src = feed.includes('cointelegraph') ? 'CoinTelegraph' : 'CoinDesk';
+          if (title) items.push({ id: url || title, title: title.trim(), url, source: { title: src }, created_at: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString() });
+        }
+      } catch(_) {}
+    }
     
     for (const item of items.slice(0, 5)) {
       const newsId = item.id?.toString();
@@ -2420,31 +2435,37 @@ Noticia: "${item.title}"` }]
 
 app.get('/api/news/latest', async (req, res) => {
   try {
-    // Intentar múltiples fuentes
-    const sources = [
-      () => axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=8', { 
-          timeout: 6000,
-          headers: { 'User-Agent': 'PanelFuturosLO/4.1', 'Accept': 'application/json' }
-        })
-        .then(r => (r.data?.Data || []).map(n => ({
-          id: n.id, title: n.title, url: n.url,
-          source: n.source, published_on: n.published_on,
-          body: n.body?.substring(0, 200)
-        }))),
-      () => axios.get('https://data.messari.io/api/v1/news?limit=8', { timeout: 6000 })
-        .then(r => (r.data?.data || []).map(n => ({
-          id: n.id, title: n.title, url: n.url,
-          source: n.author?.name || 'Messari',
-          published_on: new Date(n.published_at).getTime() / 1000
-        })))
+    // Usar RSS feeds — nunca bloquean
+    const rssFeeds = [
+      'https://cointelegraph.com/rss',
+      'https://coindesk.com/arc/outboundfeeds/rss/',
+      'https://decrypt.co/feed',
     ];
-
-    for (const src of sources) {
+    
+    for (const feed of rssFeeds) {
       try {
-        const data = await src();
-        if (data && data.length > 0) {
-          return res.json(data);
+        const r = await axios.get(feed, { 
+          timeout: 6000,
+          headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/rss+xml, text/xml' }
+        });
+        const xml = r.data;
+        // Parsear RSS manualmente
+        const items = [];
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let match;
+        while ((match = itemRegex.exec(xml)) !== null && items.length < 8) {
+          const item = match[1];
+          const title = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || item.match(/<title>(.*?)<\/title>/))?.[1] || '';
+          const url = (item.match(/<link>(.*?)<\/link>/) || item.match(/<guid>(.*?)<\/guid>/))?.[1] || '';
+          const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+          const source = feed.includes('cointelegraph') ? 'CoinTelegraph' : 
+                        feed.includes('coindesk') ? 'CoinDesk' : 'Decrypt';
+          if (title) items.push({
+            id: url, title: title.trim(), url, source,
+            published_on: pubDate ? Math.floor(new Date(pubDate).getTime() / 1000) : Math.floor(Date.now() / 1000)
+          });
         }
+        if (items.length > 0) return res.json(items);
       } catch(_) {}
     }
     res.json([]);
