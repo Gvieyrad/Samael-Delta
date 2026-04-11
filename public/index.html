@@ -13,6 +13,11 @@ body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size
 @keyframes glow-red{0%,100%{box-shadow:0 0 6px rgba(255,77,109,.4)}50%{box-shadow:0 0 14px rgba(255,77,109,.9)}}
 @keyframes glow-green{0%,100%{box-shadow:0 0 6px rgba(0,214,143,.4)}50%{box-shadow:0 0 14px rgba(0,214,143,.9)}}
 .blink-red{animation:blink .6s infinite,glow-red 1s infinite}
+@keyframes blink-urgent{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.2;transform:scale(1.04)}}
+@keyframes glow-urgent-green{0%,100%{box-shadow:0 0 12px rgba(0,214,143,.6)}50%{box-shadow:0 0 28px rgba(0,214,143,1),0 0 50px rgba(0,214,143,.4)}}
+@keyframes glow-urgent-red{0%,100%{box-shadow:0 0 12px rgba(255,77,109,.6)}50%{box-shadow:0 0 28px rgba(255,77,109,1),0 0 50px rgba(255,77,109,.4)}}
+.blink-urgent-long{animation:blink-urgent .4s infinite,glow-urgent-green .6s infinite}
+.blink-urgent-short{animation:blink-urgent .4s infinite,glow-urgent-red .6s infinite}
 .blink-green{animation:blink .6s infinite,glow-green 1s infinite}
 .hdr{background:#0d1017;border-bottom:1px solid #1e2330;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:100}
 .logo{font-family:monospace;font-size:13px;font-weight:700;letter-spacing:2px;color:#f59e0b}
@@ -291,6 +296,8 @@ let aiSignal=null; let aiRR=null;
 let allPrices={};
 // ✅ NUEVO: estado del candado — false = bloqueado (solo ≥85%), true = desbloqueado (modo prueba)
 let lockUnlocked = false;
+let autoAiTriggered = false; // evitar múltiples disparos automáticos
+let lastAutoAiTime = 0;      // timestamp del último disparo
 
 function setPair(p,btn){pair=p;document.querySelectorAll('.pairbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');fetchAll();}
 function fmt(n,d=2){if(n===null||n===undefined||isNaN(n))return'–';return parseFloat(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
@@ -374,6 +381,23 @@ async function openPaperTradeFromAI(directionOverride) {
   await openPaperTrade(direction);
 }
 
+// ✅ AUTO-ANÁLISIS: dispara runAI si 2+ divergencias ≥90%
+function checkAutoAI() {
+  if (!mkt.divergences || mkt.divergences.length < 2) return;
+  const highProb = mkt.divergences.filter(d => d.probability >= 90);
+  if (highProb.length < 2) return;
+  const now = Date.now();
+  // No disparar más de una vez cada 5 minutos
+  if (now - lastAutoAiTime < 5 * 60 * 1000) return;
+  // No disparar si ya hay un análisis en curso
+  const btn = document.getElementById('ai-btn');
+  if (btn && btn.disabled) return;
+  lastAutoAiTime = now;
+  console.log('⚡ Auto-análisis: ' + highProb.length + ' divergencias ≥90%');
+  showToast('⚡ ' + highProb.length + ' divergencias ≥90% — analizando automáticamente...', '#f59e0b');
+  runAI(true); // true = modo automático
+}
+
 async function fetchAll(){
   document.getElementById('upd').textContent='actualizando...';
   try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());renderAll();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
@@ -387,7 +411,8 @@ function renderAll(){
   const cb=document.getElementById('chg');
   cb.textContent=(ch>=0?'+':'')+ch.toFixed(2)+'%';
   cb.className='chg '+(ch>1?'up':ch<-1?'dn':'nt');
-  renderTFGrid();renderDivergences();renderCombined();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
+  renderTFGrid();renderDivergences();renderCombined();
+  checkAutoAI();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
   const sb=document.getElementById('scalp-signal-badge');
   if(sb&&mkt.scalpSignal&&mkt.scalpSignal.direction&&mkt.scalpSignal.direction!=='ESPERAR'){
     const sc=mkt.scalpSignal;
@@ -453,6 +478,7 @@ function renderDivergences(){
     return `<div class="div-card ${isShort?'div-short':'div-long'}">
       <div class="div-header">
         <span class="div-name" style="color:${col}">${arrow} ${d.name}</span>
+        <span class="div-prob ${probClass}" style="color:${col};font-size:17px;font-weight:800">${d.probability}%</span>
       </div>
       <div class="div-desc">${d.description}</div>
       ${confluenceHtml}
@@ -475,10 +501,9 @@ function renderDivergences(){
             <div class="div-level-val" style="color:${parseFloat(rr)>=1.5?'#00d68f':parseFloat(rr)>=1?'#f59e0b':'#ff4d6d'}">1:${rr}</div>
           </div>
         </div>
-        <!-- ✅ INDICADOR VISUAL — sin botón de ejecución -->
+        <!-- ✅ INDICADOR VISUAL — solo flecha, % está en el header -->
         <div class="div-dir-indicator">
           <span class="div-dir-arrow ${probClass}" style="color:${col}">${arrow}</span>
-          <span class="div-dir-prob" style="color:${probColor}">${d.probability}%</span>
         </div>
       </div>
     </div>`;
@@ -638,7 +663,7 @@ function renderLiq(){
   </div>`;
 }
 
-async function runAI(){
+async function runAI(autoMode=false){
   const btn=document.getElementById('ai-btn'),icon=document.getElementById('ai-icon'),result=document.getElementById('ai-result');
   btn.disabled=true;icon.innerHTML='<span class="thinking">●</span>';
   result.className='ai-box ai-loading';
@@ -652,15 +677,56 @@ async function runAI(){
     const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
     result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
     const actClass=d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
-    result.innerHTML=`<div class="ai-hdr"><span style="font-size:18px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:14px;font-weight:700;color:${col}">${d.direction} — ${d.confidence}%</span><span class="action-badge ${actClass}">${d.action||'ESPERAR'}</span></div><div class="ai-reasoning">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1 / TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R base</span><br><span style="font-size:11px;color:#00d68f">$${(d.tp2||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R extendido</span></span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
+    // Blink urgente si ≥95%
+    const isUrgent = d.confidence >= 95;
+    const urgentClass = isUrgent ? (isLong ? 'blink-urgent-long' : 'blink-urgent-short') : '';
+    result.innerHTML=`<div class="ai-hdr" style="margin-bottom:10px"><span style="font-size:22px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:22px;font-weight:800;color:${col};margin-left:4px">${d.direction} — ${d.confidence}%</span></div>
+    <div style="margin-bottom:9px"><span class="action-badge ${actClass} ${urgentClass}" style="font-size:14px;padding:7px 18px;border-radius:6px;display:inline-block">${d.action||'ESPERAR'}</span>${isUrgent?'<span style="font-size:11px;color:'+col+';margin-left:8px;font-weight:700;animation:blink-urgent .4s infinite">⚡ SEÑAL CRÍTICA ≥95%</span>':''}</div><div class="ai-reasoning" style="font-size:12px;line-height:1.7">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1 / TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R base</span><br><span style="font-size:11px;color:#00d68f">$${(d.tp2||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R extendido</span></span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
     if(d.entry){
       aiSignal=d; aiRR=d.rr||null;
       document.getElementById('c-ent').value=d.entry.toFixed(1);
       document.getElementById('c-tp').value=d.tp1.toFixed(1);
       document.getElementById('c-sl').value=d.sl.toFixed(1);
       calc();
-      if(d.rr){document.getElementById('r-rr').textContent=d.rr;document.getElementById('r-rr').style.color='#00d68f';}
+      // Recalcular R:R real y mostrar
+    const _realRr = d.entry && d.tp1 && d.sl ?
+      Math.abs(d.tp1 - d.entry) / Math.abs(d.entry - d.sl) : 0;
+    const _realRrStr = '1:' + _realRr.toFixed(1);
+    aiRR = _realRrStr;
+    document.getElementById('r-rr').textContent = _realRrStr;
+    document.getElementById('r-rr').style.color = _realRr >= 1.5 ? '#00d68f' : _realRr >= 1 ? '#f59e0b' : '#ff4d6d';
       updateExecButtons();
+      // ✅ AUTO PAPER TRADE: si confianza ≥95% Y R:R ≥1.5 Y modo auto → ejecutar
+      if (autoMode && d.confidence >= 95 && d.direction !== 'ESPERAR') {
+        const _autoRr = d.entry && d.tp1 && d.sl ?
+          Math.abs(d.tp1 - d.entry) / Math.abs(d.entry - d.sl) : 0;
+        if (_autoRr >= 1.5) {
+          // Alerta urgente Telegram via backend
+          fetch(`${API}/api/alert/trigger`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({symbol: pair, urgent: true, confidence: d.confidence})
+          }).catch(() => {});
+          showToast(`🚨 SEÑAL CRÍTICA ${d.confidence}% — abriendo paper trade automático`, d.direction==='LONG'?'#00d68f':'#ff4d6d');
+          setTimeout(() => openPaperTrade(d.direction), 1500);
+        } else {
+          // Solo alerta, no ejecuta por R:R insuficiente
+          fetch(`${API}/api/alert/trigger`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({symbol: pair, urgent: true, confidence: d.confidence})
+          }).catch(() => {});
+          showToast(`⚠️ Señal ${d.confidence}% — alerta enviada, R:R insuficiente (${_autoRr.toFixed(1)})`, '#f59e0b');
+        }
+      } else if (autoMode && d.confidence >= 90) {
+        // ≥90% pero no ≥95%: solo alerta
+        fetch(`${API}/api/alert/trigger`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({symbol: pair, urgent: false, confidence: d.confidence})
+        }).catch(() => {});
+        showToast(`🔔 Señal ${d.confidence}% detectada — alerta enviada`, '#f59e0b');
+      }
     }
   }catch(e){
     result.className='ai-box ai-error';
