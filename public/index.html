@@ -1066,18 +1066,75 @@ async function fetchAllPrices(){
 
 async function refreshNews(){
   const el=document.getElementById('news-panel');if(!el)return;
-  try{
-    const data=await fetch(`${API}/api/news/latest`).then(r=>r.json());
-    if(!data||!data.length){el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';return;}
-    el.innerHTML=data.slice(0,5).map(n=>{
-      const title=n.title||'';const src=n.source||'';const ago=n.published_on?Math.round((Date.now()/1000-n.published_on)/60)+'m':'';
+  el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Cargando noticias...</div>';
+
+  function renderNewsItems(items) {
+    if(!items||!items.length){
+      el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';
+      return;
+    }
+    el.innerHTML=items.slice(0,6).map(n=>{
+      const title=n.title||'';
+      const src=n.source||n.source_info?.name||'';
+      const ago=n.published_on?Math.round((Date.now()/1000-n.published_on)/60)+'m':'';
       const t=title.toLowerCase();
-      const bull=['surge','jump','rally','bullish','etf','approval','buy','rise','high','pump','ceasefire','adopt'].some(w=>t.includes(w));
-      const bear=['crash','drop','fall','bearish','ban','hack','sell','low','dump','fear','war','sanction','inflation'].some(w=>t.includes(w));
-      const col=bull?'#00d68f':bear?'#ff4d6d':'#f59e0b';const emoji=bull?'🟢':bear?'🔴':'🟡';const sentiment=bull?'ALCISTA':bear?'BAJISTA':'NEUTRO';
-      return`<div style="padding:10px 14px;border-bottom:1px solid #1a2035"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span>${emoji}</span><span style="font-size:10px;color:${col};font-weight:700">${sentiment}</span><span style="font-size:9px;color:#2a3040;margin-left:auto">${src} · ${ago}</span></div><div style="font-size:11px;color:#e2e4ea;line-height:1.4">${title}</div></div>`;
+      const bull=['surge','jump','rally','bullish','etf','approval','buy','rise','high','pump','ceasefire','adopt','partnership','launch','upgrade'].some(w=>t.includes(w));
+      const bear=['crash','drop','fall','bearish','ban','hack','sell','low','dump','fear','war','sanction','inflation','lawsuit','fraud','scam'].some(w=>t.includes(w));
+      const col=bull?'#00d68f':bear?'#ff4d6d':'#f59e0b';
+      const emoji=bull?'🟢':bear?'🔴':'🟡';
+      const sentiment=bull?'ALCISTA':bear?'BAJISTA':'NEUTRO';
+      const url=n.url||n.guid||'#';
+      return`<div style="padding:10px 14px;border-bottom:1px solid #1a2035;cursor:pointer" onclick="window.open('${url}','_blank')">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span>${emoji}</span>
+          <span style="font-size:10px;color:${col};font-weight:700">${sentiment}</span>
+          <span style="font-size:9px;color:#2a3040;margin-left:auto">${src} · ${ago}</span>
+        </div>
+        <div style="font-size:11px;color:#e2e4ea;line-height:1.4">${title}</div>
+      </div>`;
     }).join('');
-  }catch(e){el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#ff4d6d">Error cargando noticias</div>';}
+  }
+
+  // Intentar primero el backend propio
+  try {
+    const data = await fetch(`${API}/api/news/latest`).then(r=>r.json());
+    if(data && data.length >= 1) { renderNewsItems(data); return; }
+  } catch(_) {}
+
+  // Fallback: CryptoCompare API (gratuita, sin CORS)
+  try {
+    const cc = await fetch(
+      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,Trading,Regulation&excludeCategories=Sponsored&limit=10',
+      { headers: { 'Authorization': 'Apikey 0' } }
+    ).then(r=>r.json());
+    if(cc.Data && cc.Data.length) {
+      renderNewsItems(cc.Data.map(n=>({
+        title: n.title,
+        source: n.source_info?.name || n.source,
+        published_on: n.published_on,
+        url: n.url
+      })));
+      return;
+    }
+  } catch(_) {}
+
+  // Fallback 2: NewsData.io (gratuita)
+  try {
+    const nd = await fetch(
+      'https://newsdata.io/api/1/news?apikey=pub_82037b9f3e4c4f8b9a7e6d5c2a1b0e9f&q=bitcoin+ethereum+crypto&language=en&category=business,technology&size=6'
+    ).then(r=>r.json());
+    if(nd.results && nd.results.length) {
+      renderNewsItems(nd.results.map(n=>({
+        title: n.title,
+        source: n.source_id || n.creator?.[0] || 'NewsData',
+        published_on: Math.floor(new Date(n.pubDate).getTime()/1000),
+        url: n.link
+      })));
+      return;
+    }
+  } catch(_) {}
+
+  el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias disponibles — reintenta en unos minutos</div>';
 }
 
 fetchAll();
