@@ -440,7 +440,6 @@ function renderDivergences(){
     return `<div class="div-card ${isShort?'div-short':'div-long'}">
       <div class="div-header">
         <span class="div-name" style="color:${col}">${arrow} ${d.name}</span>
-        <span class="div-prob ${probClass}" style="color:${col}">${d.probability}%</span>
       </div>
       <div class="div-desc">${d.description}</div>
       ${confluenceHtml}
@@ -859,7 +858,7 @@ function renderPaper(){
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
           <div style="background:rgba(0,214,143,.06);border:1px solid rgba(0,214,143,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">TP</div><div class="mono" style="font-size:12px;font-weight:700;color:#00d68f">$${parseInt(tp1).toLocaleString()}</div></div>
           <div style="background:rgba(255,77,109,.06);border:1px solid rgba(255,77,109,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">SL</div><div class="mono" style="font-size:12px;font-weight:700;color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div></div>
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">R:R</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">${t.rr||'–'}</div></div>
+          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">R:R</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">${(()=>{const r=Math.abs(parseFloat(t.tp1)-parseFloat(t.entry));const k=Math.abs(parseFloat(t.entry)-parseFloat(t.sl));return k>0?'1:'+(r/k).toFixed(1):'–';})()}</div></div>
         </div>
         <div style="margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;font-size:9px;color:#4b5563;margin-bottom:3px">
