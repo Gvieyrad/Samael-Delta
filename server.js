@@ -1143,6 +1143,226 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
   }
 }
 
+
+// ─── NOTICIAS — CryptoCompare API ───────────────────────────────
+app.get('/api/news/latest', async (req, res) => {
+  try {
+    // CryptoCompare: gratuita, confiable, sin bloqueo de CORS en servidor
+    const r = await axios.get(
+      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,Trading,Regulation&excludeCategories=Sponsored&limit=10',
+      { timeout: 8000, headers: { 'User-Agent': 'PanelFuturesLO/4.1' } }
+    );
+    if (r.data && r.data.Data && r.data.Data.length) {
+      return res.json(r.data.Data.map(n => ({
+        id: n.id,
+        title: n.title,
+        source: n.source_info?.name || n.source,
+        published_on: n.published_on,
+        url: n.url,
+        body: n.body?.slice(0, 200)
+      })));
+    }
+    res.json([]);
+  } catch(e) {
+    // Fallback: RSS CoinTelegraph parseado manualmente
+    try {
+      const rss = await axios.get('https://cointelegraph.com/rss', {
+        timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PanelFuturos/1.0)' }
+      });
+      const xml = rss.data;
+      const items = [];
+      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+      let match;
+      while ((match = itemRegex.exec(xml)) !== null && items.length < 8) {
+        const it = match[1];
+        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>(.*?)<\/title>/))?.[1] || '';
+        const url   = (it.match(/<link>(.*?)<\/link>/))?.[1] || '';
+        const pub   = (it.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+        if (title) items.push({
+          title: title.trim(),
+          source: 'CoinTelegraph',
+          published_on: pub ? Math.floor(new Date(pub).getTime() / 1000) : Math.floor(Date.now() / 1000),
+          url
+        });
+      }
+      return res.json(items);
+    } catch(_) {
+      res.json([]);
+    }
+  }
+});
+
+// ─── ML INSIGHTS ────────────────────────────────────────────────
+app.get('/api/ml/insights', async (req, res) => {
+  try {
+    const { data: trades, error } = await supabase.from('paper_trades')
+      .select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci')
+      .in('status', ['won','lost'])
+      .order('created_at', { ascending: false })
+      .limit(2000);
+    if (error) throw error;
+    if (!trades || trades.length < 10) {
+      return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
+    }
+    const won = trades.filter(t => t.status === 'won');
+    const lost = trades.filter(t => t.status === 'lost');
+    function avg(arr, key) {
+      const vals = arr.map(t => parseFloat(t.market_data?.[key])).filter(v => !isNaN(v));
+      return vals.length > 0 ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : null;
+    }
+    const totalPnl = trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+    const avgWin = won.length > 0 ? won.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/won.length : 0;
+    const avgLoss = lost.length > 0 ? Math.abs(lost.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/lost.length) : 0;
+    let peak=0,maxDD=0,cumPnl=0;
+    [...trades].reverse().forEach(t=>{cumPnl+=parseFloat(t.pnl_usd)||0;if(cumPnl>peak)peak=cumPnl;const dd=peak-cumPnl;if(dd>maxDD)maxDD=dd;});
+    const wr = (won.length/trades.length)*100;
+    const withFib = trades.filter(t=>t.market_data?.fib_bonus>0);
+    const withWhales = trades.filter(t=>t.market_data?.whale_count>=3);
+    const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
+    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost','closed']);
+    const sources = ['scalping','auto','manual','backtest'];
+    const bySource = {};
+    for (const src of sources) {
+      const st = (allTrades||[]).filter(t=>t.source===src);
+      const sw = st.filter(t=>t.status==='won');
+      const closed = st.filter(t=>t.status!=='open');
+      if (!closed.length) continue;
+      const sp = closed.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+      bySource[src] = { total:closed.length, won:sw.length, lost:closed.length-sw.length, winRate:parseFloat(((sw.length/Math.max(closed.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(closed.length,1)).toFixed(2)) };
+    }
+    const topDivs = won.reduce((acc,t)=>{const d=t.market_data?.top_divergence;if(d)acc[d]=(acc[d]||0)+1;return acc;},{});
+    const recs = [];
+    const avgConfW = parseFloat(avg(won,'confidence'));
+    const avgConfL = parseFloat(avg(lost,'confidence'));
+    if (!isNaN(avgConfW) && !isNaN(avgConfL) && avgConfW > avgConfL+5) recs.push(`Subir umbral mínimo a ${Math.round(avgConfW-2)}% (ganadores: ${avgConfW.toFixed(0)}% vs perdedores: ${avgConfL.toFixed(0)}%)`);
+    const wrFib = withFib.length > 0 ? (withFib.filter(t=>t.status==='won').length/withFib.length*100) : 0;
+    if (wrFib > wr+10) recs.push(`Fibonacci activo mejora WR en ${(wrFib-wr).toFixed(1)}% — priorizar señales con nivel Fib cercano`);
+    res.json({
+      total:trades.length, won:won.length, lost:lost.length,
+      winRate: wr.toFixed(1), totalPnl: totalPnl.toFixed(2),
+      avgWin: avgWin.toFixed(2), avgLoss: avgLoss.toFixed(2),
+      profitFactor: avgLoss>0?(avgWin/avgLoss).toFixed(2):'∞',
+      maxDrawdown: maxDD.toFixed(2),
+      avgConfidenceWon: avg(won,'confidence'), avgConfidenceLost: avg(lost,'confidence'),
+      avgRsiWon: avg(won,'rsi_15m'), avgRsiLost: avg(lost,'rsi_15m'),
+      winRateWithFib: wrFib.toFixed(1),
+      winRateWithWhales: withWhales.length>0?(withWhales.filter(t=>t.status==='won').length/withWhales.length*100).toFixed(1):'0',
+      winRateAligned4h: aligned4h.length>0?(aligned4h.filter(t=>t.status==='won').length/aligned4h.length*100).toFixed(1):'n/a',
+      topDivergencesWon: topDivs, bySource, recommendations: recs
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ml/optimize', async (req, res) => {
+  try {
+    const { data: trades } = await supabase.from('paper_trades').select('*').in('status',['won','lost']).not('market_data','is',null).limit(1000);
+    if (!trades || trades.length < 50) return res.json({ optimized:false, reason:'insufficient_data', trades:trades?.length||0 });
+    const won = trades.filter(t=>t.status==='won');
+    const winRate = won.length/trades.length;
+    const adjustments = {};
+    const recommendations = [];
+    // Simple optimization: check if high confidence trades win more
+    const highConf = trades.filter(t=>(t.market_data?.confidence||0)>=90);
+    const lowConf  = trades.filter(t=>(t.market_data?.confidence||0)<90);
+    if (highConf.length>=10&&lowConf.length>=10) {
+      const wrH = highConf.filter(t=>t.status==='won').length/highConf.length;
+      const wrL = lowConf.filter(t=>t.status==='won').length/lowConf.length;
+      if (wrH>wrL+0.1) { adjustments.min_confidence={from:85,to:88}; recommendations.push(`Alta confianza (≥90%) WR: ${(wrH*100).toFixed(1)}% vs baja: ${(wrL*100).toFixed(1)}%`); }
+    }
+    res.json({ optimized:true, trades:trades.length, winRate:(winRate*100).toFixed(1), adjustments_count:Object.keys(adjustments).length, adjustments, recommendations });
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ─── SCALPING ENDPOINTS ──────────────────────────────────────────
+let scalpingActive = false;
+let scalpingInterval = null;
+
+app.post('/api/scalping/start', (req, res) => {
+  if (scalpingActive) return res.json({ ok: false, message: 'Scalping ya activo' });
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
+  const intervalMin = parseFloat(process.env.SCALP_INTERVAL_MIN || '3');
+  scalpingActive = true;
+  scalpingInterval = setInterval(async () => {
+    for (const sym of symbols) {
+      try { await runScalpingAnalysis(sym.trim()); } catch(_) {}
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }, intervalMin * 60 * 1000);
+  setTimeout(async () => { for (const sym of symbols) { try { await runScalpingAnalysis(sym.trim()); } catch(_) {} } }, 5000);
+  res.json({ ok: true, message: `Scalping activado cada ${intervalMin} min` });
+});
+
+app.post('/api/scalping/stop', (req, res) => {
+  if (!scalpingActive) return res.json({ ok: false, message: 'Scalping no estaba activo' });
+  clearInterval(scalpingInterval);
+  scalpingActive = false;
+  scalpingInterval = null;
+  res.json({ ok: true, message: 'Scalping desactivado' });
+});
+
+app.get('/api/scalping/status', (req, res) => {
+  res.json({ active: scalpingActive, intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'), threshold: parseInt(process.env.SCALP_THRESHOLD || '88'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',') });
+});
+
+async function runScalpingAnalysis(symbol = 'BTCUSDT') {
+  try {
+    const [tickerRes, k3m, obRes, fundingRes] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=50`),
+      axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+    ]);
+    const price = parseFloat(tickerRes.data.lastPrice);
+    const fundingRate = parseFloat(fundingRes.data.lastFundingRate);
+    const ob = analyzeOB(obRes.data.bids, obRes.data.asks);
+    const cvd3m = calcCVD(k3m.data);
+    const rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
+    const fib3m = calcFibonacci(k3m.data, price);
+    let longScore = 0, shortScore = 0;
+    const imb = parseFloat(ob.imbalance||0);
+    if (imb > 20) longScore += 30; if (imb < -20) shortScore += 30;
+    if (cvd3m.trend==='bull'&&cvd3m.cvdPct>5) longScore += 25;
+    if (cvd3m.trend==='bear'&&cvd3m.cvdPct<-5) shortScore += 25;
+    if (rsi3m < 35) longScore += 15; if (rsi3m > 65) shortScore += 15;
+    if (fib3m?.retImpact?.signal==='long_bounce') longScore += 15;
+    if (fib3m?.retImpact?.signal==='short_bounce') shortScore += 15;
+    if (ob.bidWalls?.length>0) longScore += 10;
+    if (ob.askWalls?.length>0) shortScore += 10;
+    const totalScore = longScore + shortScore;
+    if (!totalScore) return;
+    const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
+    const scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
+    if (scalpProb < 65) return;
+    const scalpThreshold = parseInt(process.env.SCALP_THRESHOLD || '88');
+    if (scalpProb < scalpThreshold) return;
+    const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2]));
+    const lows3m  = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
+    const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20;
+    const atr3m = Math.max(rawAtr, price*0.004);
+    const isLong = scalpDir==='LONG';
+    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2;
+    const sl  = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
+    const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
+    if (rrVal < 1.5) return;
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
+    if (existing?.length) return;
+    await supabase.from('paper_trades').insert({
+      symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl,
+      rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb,
+      size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'),
+      leverage:parseInt(process.env.PAPER_LEVERAGE||'10'),
+      source:'scalping', status:'open',
+      market_data:{ confidence:scalpProb, direction:scalpDir, rsi_3m:rsi3m, cvd_3m:cvd3m.cvdPct, ob_imbalance:imb, price, timestamp:new Date().toISOString(), mode:'scalping' }
+    });
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
+    }
+    console.log(`⚡ Scalp paper trade: ${scalpDir} ${symbol} @ $${price}`);
+  } catch(e) { console.error('Scalping error:', e.message); }
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Panel Futuros LO v4.1.1 corriendo en puerto ${PORT}`);
