@@ -1012,6 +1012,137 @@ app.post('/api/backtest/run', async (req, res) => {
   }
 });
 
+
+// ─── DETECTOR DE DOUBLE TOP / DOUBLE BOTTOM (SCALPING) ──────────
+function detectDoublePatterns(klines15m, price) {
+  try {
+    if (!klines15m || klines15m.length < 30) return [];
+    const patterns = [];
+    const highs = klines15m.map(k => parseFloat(k[2]));
+    const lows  = klines15m.map(k => parseFloat(k[3]));
+    const closes = klines15m.map(k => parseFloat(k[4]));
+    const volumes = klines15m.map(k => parseFloat(k[5]));
+    const n = closes.length;
+
+    const lookback = 20;
+    let peaks = [];
+    for (let i = n - lookback; i < n - 1; i++) {
+      if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) {
+        peaks.push({ idx: i, price: highs[i], vol: volumes[i] });
+      }
+    }
+
+    if (peaks.length >= 2) {
+      const p1 = peaks[peaks.length - 2];
+      const p2 = peaks[peaks.length - 1];
+      const priceDiff = Math.abs(p1.price - p2.price) / p1.price * 100;
+      const volDivergence = p2.vol < p1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, p1.idx + 1));
+      const rsi2 = calcRSI(closes.slice(0, p2.idx + 1));
+      const rsiDivergence = rsi2 < rsi1 - 3;
+
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74;
+        if (volDivergence) prob += 10;
+        if (rsiDivergence) prob += 8;
+        if (price < p2.price * 0.999) prob += 7;
+        const neckline = Math.min(...lows.slice(p1.idx, p2.idx + 1));
+        patterns.push({
+          type: 'double_top',
+          name: '\u2533 Double Top \u2014 Scalping Bajista',
+          direction: 'SHORT',
+          probability: Math.min(92, prob),
+          entry: price,
+          tp: neckline - (p2.price - neckline) * 0.8,
+          sl: p2.price * 1.002,
+          description: `Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} \u2014 se\u00f1al de reversi\u00f3n bajista.`,
+          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
+          scalpMode: true
+        });
+      }
+    }
+
+    let troughs = [];
+    for (let i = n - lookback; i < n - 1; i++) {
+      if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) {
+        troughs.push({ idx: i, price: lows[i], vol: volumes[i] });
+      }
+    }
+
+    if (troughs.length >= 2) {
+      const t1 = troughs[troughs.length - 2];
+      const t2 = troughs[troughs.length - 1];
+      const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100;
+      const volDivergence = t2.vol < t1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, t1.idx + 1));
+      const rsi2 = calcRSI(closes.slice(0, t2.idx + 1));
+      const rsiDivergence = rsi2 > rsi1 + 3;
+
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74;
+        if (volDivergence) prob += 10;
+        if (rsiDivergence) prob += 8;
+        if (price > t2.price * 1.001) prob += 7;
+        const neckline = Math.max(...highs.slice(t1.idx, t2.idx + 1));
+        patterns.push({
+          type: 'double_bottom',
+          name: '\u25b2 Double Bottom \u2014 Scalping Alcista',
+          direction: 'LONG',
+          probability: Math.min(92, prob),
+          entry: price,
+          tp: neckline + (neckline - t2.price) * 0.8,
+          sl: t2.price * 0.998,
+          description: `Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} \u2014 se\u00f1al de reversi\u00f3n alcista.`,
+          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
+          scalpMode: true
+        });
+      }
+    }
+
+    return patterns;
+  } catch(e) {
+    return [];
+  }
+}
+
+
+// ─── SEÑAL COMBINADA PARA SCALPING (PESOS DIFERENTES) ────────────
+function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
+  try {
+    if (!divergences.length) return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+
+    const longs  = divergences.filter(d => d.direction === 'LONG');
+    const shorts = divergences.filter(d => d.direction === 'SHORT');
+
+    let longScore  = longs.reduce((s, d)  => s + d.probability, 0) / Math.max(longs.length, 1);
+    let shortScore = shorts.reduce((s, d) => s + d.probability, 0) / Math.max(shorts.length, 1);
+
+    if (bias15m?.bias === 'long')  longScore  += 12;
+    if (bias15m?.bias === 'short') shortScore += 12;
+    if (bias1h?.bias  === 'long')  longScore  += 8;
+    if (bias1h?.bias  === 'short') shortScore += 8;
+    if (bias4h?.bias  === 'long')  longScore  += 4;
+    if (bias4h?.bias  === 'short') shortScore += 4;
+
+    const hasDoubleTop    = divergences.some(d => d.type === 'double_top');
+    const hasDoubleBottom = divergences.some(d => d.type === 'double_bottom');
+    if (hasDoubleTop)    shortScore += 15;
+    if (hasDoubleBottom) longScore  += 15;
+
+    const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
+    const prob = direction === 'SHORT' ? shortScore : direction === 'LONG' ? longScore : 30;
+
+    return {
+      direction,
+      probability: Math.min(95, Math.round(prob)),
+      action: prob >= 78 ? 'ENTRAR' : prob >= 65 ? 'ESPERAR' : 'NO ENTRAR',
+      mode: 'scalping'
+    };
+  } catch(e) {
+    return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Panel Futuros LO v4.1.1 corriendo en puerto ${PORT}`);
