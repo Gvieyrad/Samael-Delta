@@ -327,7 +327,14 @@ function updateExecButtons() {
   row.style.display = 'flex';
   const conf = aiSignal.confidence || 0;
   const dir = aiSignal.direction;
-  const canExec = lockUnlocked || conf >= 85;
+  // Calcular R:R de la señal IA
+  const _aiRrVal = (()=>{
+    if(!aiSignal||!aiSignal.entry||!aiSignal.tp1||!aiSignal.sl) return 0;
+    const _r=Math.abs(aiSignal.tp1-aiSignal.entry);
+    const _k=Math.abs(aiSignal.entry-aiSignal.sl);
+    return _k>0?_r/_k:0;
+  })();
+  const canExec = lockUnlocked || (conf >= 85 && _aiRrVal >= 1.5);
   // Activar solo el botón que coincide con la dirección de la señal, o ambos si desbloqueado
   if (dir === 'LONG') {
     longBtn.disabled = !canExec;
@@ -345,7 +352,13 @@ function updateExecButtons() {
     status.textContent = '🔓 Modo prueba — ejecución desbloqueada';
     status.style.color = '#f59e0b';
   } else if (conf >= 85) {
-    status.textContent = `✅ ${conf}% confianza — ejecución habilitada`;
+    if (_aiRrVal < 1.5) {
+      status.textContent = `⛔ R:R 1:${_aiRrVal.toFixed(1)} insuficiente — mínimo 1:1.5 (desbloquea con 🔓)`;
+      status.style.color = '#ff4d6d';
+    } else {
+      status.textContent = `✅ ${conf}% confianza · R:R 1:${_aiRrVal.toFixed(1)} — ejecución habilitada`;
+      status.style.color = '#00d68f';
+    }
     status.style.color = '#00d68f';
   } else {
     status.textContent = `🔒 ${conf}% confianza — se requiere ≥85% para ejecutar`;
@@ -393,7 +406,7 @@ function renderTFGrid(){
     const bColor=d.bias==='long'?'#00d68f':d.bias==='short'?'#ff4d6d':'#f59e0b';
     const bLabel=d.bias==='long'?'LONG':d.bias==='short'?'SHORT':'NEUTRO';
     const rsiColor=d.rsi>70?'#ff4d6d':d.rsi<30?'#00d68f':d.rsi>60?'#34d399':'#e2e4ea';
-    const rsiClass=(d.rsi>70||d.rsi<30)?'blink-red':'';
+    const rsiClass=(d.rsi>75||d.rsi<25)?'blink-red':'';
     const cvdColor=pctColor(d.cvdPct),cvdClass=pctClass(d.cvdPct);
     const volColor=pctColor(d.volPct),volClass=pctClass(d.volPct);
     const pct=d.bias==='long'?d.score:d.bias==='short'?(100-d.score):50;
@@ -430,12 +443,12 @@ function renderDivergences(){
     const risk   = Math.abs(d.entry - sl);
     const rr     = risk > 0 ? (reward / risk).toFixed(1) : '0';
 
-    const probClass=d.probability>=85?(isShort?'blink-red':'blink-green'):'';
+    const probClass=d.probability>=90?(isShort?'blink-red':'blink-green'):'';
     const confluenceHtml=d.confluence?.length?`<div class="div-confluence">${d.confluence.map(c=>`<span class="div-conf-tag">${c}</span>`).join('')}</div>`:'';
 
     // ✅ NUEVO: indicador visual en lugar de botón
     const arrow = isShort ? '▼' : '▲';
-    const probColor = d.probability >= 85 ? col : '#4b5563';
+    const probColor = d.probability >= 90 ? col : '#4b5563';
 
     return `<div class="div-card ${isShort?'div-short':'div-long'}">
       <div class="div-header">
@@ -793,6 +806,14 @@ async function openPaperTrade(direction){
   const reward=Math.abs(tp1Input-entryInput);const risk=Math.abs(entryInput-slInput);
   const rr=risk>0?(reward/risk).toFixed(1):'0';
 
+  // ✅ FIX: validar R:R mínimo 1.5 antes de ejecutar (salvo candado abierto)
+  const _rrNum = parseFloat(rr);
+  if (!lockUnlocked && _rrNum < 1.5) {
+    showToast(`⛔ R:R 1:${rr} insuficiente — mínimo 1:1.5 requerido`, '#ff4d6d');
+    const rrEl = document.getElementById('r-rr');
+    if (rrEl) { rrEl.style.color='#ff4d6d'; rrEl.textContent='1:'+rr+' ⛔'; }
+    return;
+  }
   try{
     const res=await fetch(`${API}/api/paper/open`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,direction,entry:entryInput,tp1:tp1Input,tp2:useAI&&aiSignal.tp2?parseFloat(aiSignal.tp2):tp1Input,sl:slInput,rr:`1:${rr}`,confidence:cs?.probability||0,size_usd:capital,leverage,divergences:mkt.divergences?.slice(0,3),fibonacci:mkt.fibonacci?.tf15m,source:'manual'})});
     const d=await res.json();
