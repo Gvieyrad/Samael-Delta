@@ -60,8 +60,8 @@ body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size
 .div-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px}
 .div-level-val{font-family:monospace;font-size:11px;font-weight:700}
 /* ✅ NUEVO: indicador de dirección visual (reemplaza botones en divergencias) */
-.div-dir-indicator{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:64px;gap:2px}
-.div-dir-arrow{font-size:28px;line-height:1}
+.div-dir-indicator{display:flex;align-items:center;justify-content:center;min-width:48px;padding-left:8px;border-left:1px solid rgba(255,255,255,.06)}
+.div-dir-arrow{font-size:32px;line-height:1}
 .div-dir-prob{font-size:11px;font-weight:700}
 /* Botones solo en Señal IA */
 .div-action-btn{border-radius:7px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;border:none;font-family:inherit;min-width:100px;text-align:center;flex-shrink:0;transition:all .15s;letter-spacing:.5px}
@@ -409,8 +409,10 @@ function renderAll(){
   const p=mkt.price,ch=mkt.change24h||0;
   document.getElementById('price').textContent='$'+fmt(p);
   const cb=document.getElementById('chg');
-  cb.textContent=(ch>=0?'+':'')+ch.toFixed(2)+'%';
-  cb.className='chg '+(ch>1?'up':ch<-1?'dn':'nt');
+  const chVal = parseFloat(ch)||0;
+  cb.textContent=(chVal>=0?'+':'')+chVal.toFixed(2)+'%';
+  cb.className='chg '+(chVal>1?'up':chVal<-1?'dn':'nt');
+  cb.style.display='inline-block'; // siempre visible
   renderTFGrid();renderDivergences();renderCombined();
   checkAutoAI();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
   const sb=document.getElementById('scalp-signal-badge');
@@ -1101,11 +1103,11 @@ async function refreshNews(){
     if(data && data.length >= 1) { renderNewsItems(data); return; }
   } catch(_) {}
 
-  // Fallback: CryptoCompare API (gratuita, sin CORS)
+  // Fallback 1: CryptoCompare sin auth key (funciona para datos públicos)
   try {
     const cc = await fetch(
-      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,Trading,Regulation&excludeCategories=Sponsored&limit=10',
-      { headers: { 'Authorization': 'Apikey 0' } }
+      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=10',
+      { headers: { 'accept': 'application/json' } }
     ).then(r=>r.json());
     if(cc.Data && cc.Data.length) {
       renderNewsItems(cc.Data.map(n=>({
@@ -1118,17 +1120,17 @@ async function refreshNews(){
     }
   } catch(_) {}
 
-  // Fallback 2: NewsData.io (gratuita)
+  // Fallback 2: CryptoPanic (RSS público, no requiere auth)
   try {
-    const nd = await fetch(
-      'https://newsdata.io/api/1/news?apikey=pub_82037b9f3e4c4f8b9a7e6d5c2a1b0e9f&q=bitcoin+ethereum+crypto&language=en&category=business,technology&size=6'
+    const cp = await fetch(
+      'https://cryptopanic.com/api/v1/posts/?auth_token=&public=true&kind=news&currencies=BTC,ETH',
     ).then(r=>r.json());
-    if(nd.results && nd.results.length) {
-      renderNewsItems(nd.results.map(n=>({
+    if(cp.results && cp.results.length) {
+      renderNewsItems(cp.results.slice(0,8).map(n=>({
         title: n.title,
-        source: n.source_id || n.creator?.[0] || 'NewsData',
-        published_on: Math.floor(new Date(n.pubDate).getTime()/1000),
-        url: n.link
+        source: n.source?.title || 'CryptoPanic',
+        published_on: Math.floor(new Date(n.published_at).getTime()/1000),
+        url: n.url
       })));
       return;
     }
