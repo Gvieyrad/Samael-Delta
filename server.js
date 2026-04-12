@@ -1145,53 +1145,96 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
 }
 
 
-// ─── NOTICIAS — CryptoCompare API ───────────────────────────────
+// ─── NOTICIAS — múltiples fuentes con fallback ───────────────────
 app.get('/api/news/latest', async (req, res) => {
-  try {
-    // CryptoCompare: gratuita, confiable, sin bloqueo de CORS en servidor
-    const r = await axios.get(
-      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,Trading,Regulation&excludeCategories=Sponsored&limit=10',
-      { timeout: 8000, headers: { 'User-Agent': 'PanelFuturesLO/4.1' } }
-    );
-    if (r.data && r.data.Data && r.data.Data.length) {
-      return res.json(r.data.Data.map(n => ({
-        id: n.id,
+  const sources = [
+    // Fuente 1: CryptoCompare
+    async () => {
+      const r = await axios.get(
+        'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=12',
+        { timeout: 7000, headers: { 'User-Agent': 'Mozilla/5.0' } }
+      );
+      if (!r.data?.Data?.length) throw new Error('empty');
+      return r.data.Data.map(n => ({
         title: n.title,
-        source: n.source_info?.name || n.source,
+        source: n.source_info?.name || n.source || 'CryptoCompare',
         published_on: n.published_on,
-        url: n.url,
-        body: n.body?.slice(0, 200)
-      })));
-    }
-    res.json([]);
-  } catch(e) {
-    // Fallback: RSS CoinTelegraph parseado manualmente
-    try {
-      const rss = await axios.get('https://cointelegraph.com/rss', {
+        url: n.url
+      }));
+    },
+    // Fuente 2: RSS CoinTelegraph
+    async () => {
+      const r = await axios.get('https://cointelegraph.com/rss', {
         timeout: 6000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PanelFuturos/1.0)' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
       });
-      const xml = rss.data;
       const items = [];
-      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-      let match;
-      while ((match = itemRegex.exec(xml)) !== null && items.length < 8) {
-        const it = match[1];
-        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>(.*?)<\/title>/))?.[1] || '';
-        const url   = (it.match(/<link>(.*?)<\/link>/))?.[1] || '';
-        const pub   = (it.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
-        if (title) items.push({
-          title: title.trim(),
-          source: 'CoinTelegraph',
-          published_on: pub ? Math.floor(new Date(pub).getTime() / 1000) : Math.floor(Date.now() / 1000),
-          url
-        });
+      const rx = /<item>([\s\S]*?)<\/item>/g;
+      let m;
+      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
+        const it = m[1];
+        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
+        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || '';
+        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
+        if (title) items.push({ title, source: 'CoinTelegraph', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
       }
-      return res.json(items);
-    } catch(_) {
-      res.json([]);
+      if (!items.length) throw new Error('empty');
+      return items;
+    },
+    // Fuente 3: RSS Decrypt
+    async () => {
+      const r = await axios.get('https://decrypt.co/feed', {
+        timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
+      });
+      const items = [];
+      const rx = /<item>([\s\S]*?)<\/item>/g;
+      let m;
+      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
+        const it = m[1];
+        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
+        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || '';
+        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
+        if (title) items.push({ title, source: 'Decrypt', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
+      }
+      if (!items.length) throw new Error('empty');
+      return items;
+    },
+    // Fuente 4: RSS CoinDesk
+    async () => {
+      const r = await axios.get('https://www.coindesk.com/arc/outboundfeeds/rss/', {
+        timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
+      });
+      const items = [];
+      const rx = /<item>([\s\S]*?)<\/item>/g;
+      let m;
+      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
+        const it = m[1];
+        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
+        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || it.match(/<guid[^>]*>([^<]+)<\/guid>/)?.[1]?.trim() || '';
+        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
+        if (title) items.push({ title, source: 'CoinDesk', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
+      }
+      if (!items.length) throw new Error('empty');
+      return items;
+    }
+  ];
+
+  for (const source of sources) {
+    try {
+      const items = await source();
+      if (items && items.length) {
+        console.log(`✅ Noticias: ${items.length} items cargados`);
+        return res.json(items);
+      }
+    } catch(e) {
+      console.log(`⚠️ Fuente de noticias falló: ${e.message}`);
+      continue;
     }
   }
+  console.log('❌ Todas las fuentes de noticias fallaron');
+  res.json([]);
 });
 
 // ─── ML INSIGHTS ────────────────────────────────────────────────
