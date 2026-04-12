@@ -137,6 +137,7 @@ function calcBias(klines, oiData=null, fundingRate=0) {
     bias: score>60?'long':score<40?'short':'neutral',
     score, rsi, cvdPct:cvd.cvdPct, volPct:cvd.volPct,
     aboveVwap, vwap:vwap.toFixed(1),
+    priceVsPrev: parseFloat(priceVsPrev.toFixed(2)),
     oiTrend:oiTrend.trend, oiDeltaPct:oiTrend.deltaPct, oiCurrent:oiTrend.current,
     fundingRate, frBias:fundingRate>0.001?'longs_hot':fundingRate<-0.001?'shorts_hot':'neutral'
   };
