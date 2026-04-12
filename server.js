@@ -687,7 +687,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const fib4h  = calcFibonacci(k4h.data?.length >= 20 ? k4h.data : k15m.data, price);
     const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
     const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m);
-    const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '80');
+    const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
     const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
     if (combinedSignal.direction === 'ESPERAR') { clearSignalHistory(symbol); return; }
     if (combinedSignal.probability < minConfidence) return;
@@ -754,7 +754,7 @@ Responde SOLO JSON sin markdown:
     try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
 
     // 7. AUTO PAPER TRADING
-    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '85');
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90');
     const trend1d = bias1d.bias;
     const trendOk = signal.direction === 'ESPERAR' ? false : signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : true;
 
