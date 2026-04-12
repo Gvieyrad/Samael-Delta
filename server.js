@@ -14,9 +14,285 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || proce
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
+const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.1.1' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.0' }));
+
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
+// ══════════════════════════════════════════════════════════════════
+// Estado en memoria por símbolo
+const wsState = {};
+const wsConnections = {};
+const killSwitchCooldown = {}; // evitar múltiples kill switches seguidos
+
+function initWsState(symbol) {
+  if (wsState[symbol]) return;
+  wsState[symbol] = {
+    trades: [],          // últimos 120s de trades
+    volumes: [],         // volúmenes por minuto (últimos 10 min)
+    avgVolume1m: 0,      // promedio de volumen por minuto
+    lastOI: 0,           // último OI conocido
+    oiHistory: [],       // historial OI (últimos 10 min)
+    lastPrice: 0,
+    lastUpdate: 0,
+    anomaly: null,       // última anomalía detectada
+    liqZones: [],        // zonas de liquidación calculadas
+  };
+}
+
+function connectWebSocket(symbol) {
+  if (wsConnections[symbol]) return;
+  initWsState(symbol);
+  const stream = `${symbol.toLowerCase()}@aggTrade`;
+  const url = `${BINANCE_WS}/ws/${stream}`;
+  console.log(`🔌 WebSocket conectando: ${symbol}`);
+
+  const ws = new (require('ws'))(url);
+  wsConnections[symbol] = ws;
+
+  ws.on('open', () => console.log(`✅ WS conectado: ${symbol}`));
+
+  ws.on('message', (data) => {
+    try {
+      const t = JSON.parse(data);
+      const price = parseFloat(t.p);
+      const qty = parseFloat(t.q);
+      const usdVal = price * qty;
+      const isBuy = !t.m; // m=true significa maker = sell agresivo
+      const now = Date.now();
+
+      wsState[symbol].lastPrice = price;
+      wsState[symbol].lastUpdate = now;
+
+      // Acumular trades en ventana de 120 segundos
+      wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
+      wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
+
+      // Evaluar anomalía cada 500ms (throttle)
+      if (!wsState[symbol]._evalTimer) {
+        wsState[symbol]._evalTimer = setTimeout(() => {
+          wsState[symbol]._evalTimer = null;
+          evaluateAnomaly(symbol);
+        }, 500);
+      }
+    } catch(e) {}
+  });
+
+  ws.on('close', () => {
+    console.log(`⚠️ WS desconectado: ${symbol} — reconectando en 5s`);
+    delete wsConnections[symbol];
+    setTimeout(() => connectWebSocket(symbol), 5000);
+  });
+
+  ws.on('error', (e) => {
+    console.log(`❌ WS error ${symbol}: ${e.message}`);
+    ws.terminate();
+  });
+}
+
+function getWsMetrics(symbol) {
+  const state = wsState[symbol];
+  if (!state || !state.trades.length) return null;
+  const now = Date.now();
+  const last60s = state.trades.filter(t => now - t.time < 60000);
+  const last10s = state.trades.filter(t => now - t.time < 10000);
+  if (!last60s.length) return null;
+
+  const totalVol60s = last60s.reduce((s, t) => s + t.usdVal, 0);
+  const buyVol60s = last60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const sellVol60s = last60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const cvdLive = (buyVol60s - sellVol60s) / Math.max(totalVol60s, 1) * 100;
+
+  const totalVol10s = last10s.reduce((s, t) => s + t.usdVal, 0);
+  const buyVol10s = last10s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const sellVol10s = last10s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+
+  // Ballenas en los últimos 60s
+  const whaleThreshold = symbol.includes('BTC') ? 500000 : symbol.includes('ETH') ? 100000 : 50000;
+  const whales60s = last60s.filter(t => t.usdVal >= whaleThreshold);
+  const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+
+  return {
+    totalVol60s, buyVol60s, sellVol60s, cvdLive,
+    totalVol10s, buyVol10s, sellVol10s,
+    whaleCount: whales60s.length, whaleBuyVol, whaleSellVol,
+    avgVolume1m: state.avgVolume1m,
+    volumeMultiplier: state.avgVolume1m > 0 ? totalVol60s / state.avgVolume1m : 1,
+    lastPrice: state.lastPrice,
+    anomaly: state.anomaly
+  };
+}
+
+async function evaluateAnomaly(symbol) {
+  const state = wsState[symbol];
+  if (!state) return;
+  const metrics = getWsMetrics(symbol);
+  if (!metrics) return;
+
+  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '5');
+  const whaleThresholdUsd = parseFloat(process.env.WS_WHALE_THRESHOLD || '2000000');
+  const now = Date.now();
+
+  // ── DETECCIÓN 1: Volumen anómalo (>5x promedio) ──────────────
+  const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
+
+  // ── DETECCIÓN 2: CVD extremo en 60s ─────────────────────────
+  const isBearishSweep = metrics.cvdLive < -30 && isVolumeAnomaly; // venta agresiva masiva
+  const isBullishSweep = metrics.cvdLive > 30 && isVolumeAnomaly;  // compra agresiva masiva
+
+  // ── DETECCIÓN 3: Ballena única >$2M ─────────────────────────
+  const bigWhale = state.trades.find(t => t.usdVal >= whaleThresholdUsd && now - t.time < 30000);
+
+  // ── DETECCIÓN 4: Zona de liquidación cercana ─────────────────
+  const liqZoneBonus = calcLiqZoneBonus(symbol, metrics.lastPrice);
+
+  if (!isBearishSweep && !isBullishSweep && !bigWhale) return;
+
+  const direction = isBearishSweep ? 'SHORT' : isBullishSweep ? 'LONG' : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
+  const reason = isBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x` :
+                 isBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x` :
+                 `Ballena $${(bigWhale.usdVal/1e6).toFixed(2)}M ${bigWhale.isBuy ? 'comprando' : 'vendiendo'}`;
+
+  // Evitar spam — cooldown de 3 minutos por símbolo+dirección
+  const cooldownKey = `${symbol}_${direction}`;
+  if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) return;
+  killSwitchCooldown[cooldownKey] = now;
+
+  state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus };
+
+  console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
+
+  // ── ACCIÓN 1: Cerrar posiciones contrarias automáticamente ──
+  await killSwitchOpposite(symbol, direction, reason);
+
+  // ── ACCIÓN 2: Alerta Telegram urgente ───────────────────────
+  if (process.env.TELEGRAM_CHAT_ID) {
+    const emoji = direction === 'SHORT' ? '🔴' : '🟢';
+    const msg = `${emoji} *ALERTA TIEMPO REAL — ${symbol}*\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Zona liquidación cercana — imán activo +' + liqZoneBonus + '%' : ''}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+  }
+}
+
+async function killSwitchOpposite(symbol, sweepDirection, reason) {
+  try {
+    // Buscar trades abiertos en dirección contraria al sweep
+    const oppositeDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
+    const { data: openTrades } = await supabase.from('paper_trades')
+      .select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+    if (!openTrades?.length) return;
+
+    for (const trade of openTrades) {
+      const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
+      const entry = parseFloat(trade.entry);
+      const priceDiff = trade.direction === 'LONG'
+        ? (currentPrice - entry) / entry
+        : (entry - currentPrice) / entry;
+      const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff).toFixed(2));
+      const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
+
+      await supabase.from('paper_trades').update({
+        status: pnl_usd >= 0 ? 'won' : 'lost',
+        close_price: currentPrice,
+        close_reason: 'kill_switch',
+        pnl_usd, pnl_pct,
+        closed_at: new Date().toISOString()
+      }).eq('id', trade.id);
+
+      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} — ${reason}`);
+
+      if (process.env.TELEGRAM_CHAT_ID) {
+        const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
+        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      }
+    }
+  } catch(e) { console.error('Kill switch error:', e.message); }
+}
+
+// ── LIQUIDEZ COMO SEÑAL ACTIVA ────────────────────────────────────
+// Calcula bonus/penalty según cercanía a zonas de liquidación
+function calcLiqZoneBonus(symbol, price) {
+  if (!price) return 0;
+  // Zonas estáticas calibradas para BTC (ajustables por ML en el futuro)
+  const zones = [
+    { dist: -0.018, size: 240 }, { dist: -0.025, size: 380 },
+    { dist: -0.042, size: 490 }, { dist: -0.055, size: 620 },
+    { dist: -0.075, size: 830 }, { dist: 0.015, size: 210 },
+    { dist: 0.028, size: 320 }, { dist: 0.045, size: 480 },
+    { dist: 0.068, size: 740 }, { dist: 0.095, size: 950 }
+  ];
+  let maxBonus = 0;
+  for (const z of zones) {
+    const zonePrice = price * (1 + z.dist);
+    const distPct = Math.abs(price - zonePrice) / price * 100;
+    if (distPct < 1.0) { // dentro del 1% de distancia
+      const bonus = z.size > 700 ? 20 : z.size > 500 ? 15 : z.size > 300 ? 10 : 5;
+      if (bonus > maxBonus) maxBonus = bonus;
+    }
+  }
+  return maxBonus;
+}
+
+// Suma bonus de liquidez a las probabilidades de divergencias
+function applyLiqZoneProbBonus(divergences, price) {
+  if (!price || !divergences.length) return divergences;
+  const zones = [
+    { dist: -0.018, size: 240, direction: 'down' }, { dist: -0.025, size: 380, direction: 'down' },
+    { dist: -0.042, size: 490, direction: 'down' }, { dist: -0.055, size: 620, direction: 'down' },
+    { dist: -0.075, size: 830, direction: 'down' }, { dist: 0.015, size: 210, direction: 'up' },
+    { dist: 0.028, size: 320, direction: 'up' }, { dist: 0.045, size: 480, direction: 'up' },
+    { dist: 0.068, size: 740, direction: 'up' }, { dist: 0.095, size: 950, direction: 'up' }
+  ];
+
+  return divergences.map(d => {
+    let liqBonus = 0;
+    for (const z of zones) {
+      const zonePrice = price * (1 + z.dist);
+      const distPct = Math.abs(price - zonePrice) / price * 100;
+      if (distPct < 1.5) {
+        // Zona de liq ABAJO del precio → atrae SHORT (precio va a barrer stops de longs)
+        // Zona de liq ARRIBA del precio → atrae LONG (precio va a barrer stops de shorts)
+        const liqDirection = z.dist < 0 ? 'SHORT' : 'LONG';
+        if (d.direction === liqDirection) {
+          const bonus = z.size > 700 ? 12 : z.size > 500 ? 8 : z.size > 300 ? 5 : 3;
+          liqBonus = Math.max(liqBonus, bonus);
+        }
+      }
+    }
+    if (liqBonus > 0) {
+      return {
+        ...d,
+        probability: Math.min(95, d.probability + liqBonus),
+        confluence: [...(d.confluence || []), `🧲 Imán liq +${liqBonus}%`]
+      };
+    }
+    return d;
+  });
+}
+
+// Endpoint para estado del WebSocket
+app.get('/api/ws/status', (req, res) => {
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
+  const status = {};
+  for (const sym of symbols) {
+    const metrics = getWsMetrics(sym.trim());
+    status[sym.trim()] = {
+      connected: !!wsConnections[sym.trim()],
+      lastUpdate: wsState[sym.trim()]?.lastUpdate || 0,
+      lastPrice: wsState[sym.trim()]?.lastPrice || 0,
+      metrics: metrics ? {
+        cvdLive: metrics.cvdLive?.toFixed(1),
+        volumeMultiplier: metrics.volumeMultiplier?.toFixed(2),
+        whaleCount: metrics.whaleCount,
+        anomaly: metrics.anomaly
+      } : null
+    };
+  }
+  res.json(status);
+});
+
 
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
@@ -116,22 +392,18 @@ function calcBias(klines, oiData=null, fundingRate=0) {
   const llCount=recentLows.filter((l,i)=>i>0&&l<recentLows[i-1]).length;
   const aboveVwap=last>vwap;
   const oiTrend=oiData?calcOITrend(oiData):{trend:'flat',deltaPct:'0.000',current:0};
-
   let score=50;
   if(priceVsPrev>0.3) score+=12; else if(priceVsPrev<-0.3) score-=12;
   if(hhCount>=3) score+=10; if(llCount>=3) score-=10;
   if(rsi>70) score-=25; else if(rsi>60) score+=8; else if(rsi<30) score+=25; else if(rsi<40) score-=8;
   const cvdExtreme = Math.abs(cvd.cvdPct) > 15;
-  if(cvd.delta5>0) score += cvdExtreme ? 15 : 10;
-  else score -= cvdExtreme ? 15 : 10;
+  if(cvd.delta5>0) score += cvdExtreme ? 15 : 10; else score -= cvdExtreme ? 15 : 10;
   if(aboveVwap) score+=5; else score-=5;
   if(oiTrend.trend==='rising'&&priceVsPrev>0) score+=8;
   if(oiTrend.trend==='rising'&&priceVsPrev<0) score-=8;
   if(oiTrend.trend==='falling'&&priceVsPrev<0) score-=5;
   if(oiTrend.trend==='falling'&&priceVsPrev>0) score+=3;
-  if(fundingRate>0.001) score-=5;
-  if(fundingRate<-0.001) score+=5;
-
+  if(fundingRate>0.001) score-=5; if(fundingRate<-0.001) score+=5;
   score=Math.min(95,Math.max(5,Math.round(score)));
   return {
     bias: score>60?'long':score<40?'short':'neutral',
@@ -168,14 +440,12 @@ function calcLiqMagnets(price) {
   return zones.map(z=>({price:parseFloat((price*(1+z.dist)).toFixed(0)),size:z.size,label:z.label,dist:Math.abs(z.dist*100).toFixed(1),direction:z.dist>0?'up':'down',isMajor:z.size>=600})).sort((a,b)=>Math.abs(parseFloat(a.dist))-Math.abs(parseFloat(b.dist)));
 }
 
-// ─── FIBONACCI AUTOMÁTICO ─────────────────────────────────────────
 function calcFibonacci(klines, price) {
   if (!klines || klines.length < 20) return null;
   const highs = klines.map(k => parseFloat(k[2]));
   const lows  = klines.map(k => parseFloat(k[3]));
   const n = klines.length;
-  let swingHigh = -Infinity, swingLow = Infinity;
-  let swingHighIdx = 0, swingLowIdx = 0;
+  let swingHigh = -Infinity, swingLow = Infinity, swingHighIdx = 0, swingLowIdx = 0;
   for (let i = 2; i < n - 2; i++) {
     if (highs[i] > highs[i-1] && highs[i] > highs[i-2] && highs[i] > highs[i+1] && highs[i] > highs[i+2]) {
       if (highs[i] > swingHigh) { swingHigh = highs[i]; swingHighIdx = i; }
@@ -190,36 +460,17 @@ function calcFibonacci(klines, price) {
   const isUptrend = swingLowIdx < swingHighIdx;
   const retLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
   const extLevels = [1.272, 1.414, 1.618, 2.0, 2.618];
-  const retracements = retLevels.map(r => ({
-    level: r, price: isUptrend ? swingHigh - range * r : swingLow + range * r,
-    label: r === 0 ? '0%' : r === 1 ? '100%' : `${(r*100).toFixed(1)}%`, isKey: [0.382, 0.5, 0.618].includes(r)
-  }));
-  const extensions = extLevels.map(r => ({
-    level: r, price: isUptrend ? swingHigh + range * (r - 1) : swingLow - range * (r - 1),
-    label: `${(r*100).toFixed(1)}%`, isKey: [1.618, 2.618].includes(r)
-  }));
-  let nearestRetrace = null, nearestExt = null;
-  let minRetDist = Infinity, minExtDist = Infinity;
-  retracements.forEach(lvl => {
-    const dist = Math.abs(price - lvl.price) / price * 100;
-    if (dist < minRetDist) { minRetDist = dist; nearestRetrace = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; }
-  });
-  extensions.forEach(lvl => {
-    const dist = Math.abs(price - lvl.price) / price * 100;
-    if (dist < minExtDist) { minExtDist = dist; nearestExt = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; }
-  });
+  const retracements = retLevels.map(r => ({ level: r, price: isUptrend ? swingHigh - range * r : swingLow + range * r, label: r === 0 ? '0%' : r === 1 ? '100%' : `${(r*100).toFixed(1)}%`, isKey: [0.382, 0.5, 0.618].includes(r) }));
+  const extensions = extLevels.map(r => ({ level: r, price: isUptrend ? swingHigh + range * (r - 1) : swingLow - range * (r - 1), label: `${(r*100).toFixed(1)}%`, isKey: [1.618, 2.618].includes(r) }));
+  let nearestRetrace = null, nearestExt = null, minRetDist = Infinity, minExtDist = Infinity;
+  retracements.forEach(lvl => { const dist = Math.abs(price - lvl.price) / price * 100; if (dist < minRetDist) { minRetDist = dist; nearestRetrace = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; } });
+  extensions.forEach(lvl => { const dist = Math.abs(price - lvl.price) / price * 100; if (dist < minExtDist) { minExtDist = dist; nearestExt = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; } });
   function fibImpact(nearest, isRetracement) {
     if (!nearest) return { bonus: 0, penalty: 0, signal: 'none' };
-    const isKey = nearest.isKey;
-    const isVeryClose = nearest.dist < 0.3;
-    const isClose = nearest.dist < 0.8;
+    const isVeryClose = nearest.dist < 0.3, isClose = nearest.dist < 0.8;
     if (!isClose) return { bonus: 0, penalty: 0, signal: 'none', description: '' };
-    if (isRetracement && isKey) {
-      return { bonus: isVeryClose ? 15 : 8, penalty: 0, signal: isUptrend ? 'long_bounce' : 'short_bounce', description: `Precio en retroceso Fib ${nearest.label} — zona de rebote clave` };
-    }
-    if (!isRetracement && isKey) {
-      return { bonus: 0, penalty: isVeryClose ? 12 : 6, signal: isUptrend ? 'short_exhaustion' : 'long_exhaustion', description: `Precio en extensión Fib ${nearest.label} — zona de agotamiento` };
-    }
+    if (isRetracement && nearest.isKey) return { bonus: isVeryClose ? 15 : 8, penalty: 0, signal: isUptrend ? 'long_bounce' : 'short_bounce', description: `Precio en retroceso Fib ${nearest.label} — zona de rebote clave` };
+    if (!isRetracement && nearest.isKey) return { bonus: 0, penalty: isVeryClose ? 12 : 6, signal: isUptrend ? 'short_exhaustion' : 'long_exhaustion', description: `Precio en extensión Fib ${nearest.label} — zona de agotamiento` };
     return { bonus: isVeryClose ? 5 : 3, penalty: 0, signal: 'weak', description: `Nivel Fib ${nearest.label} cercano` };
   }
   const retImpact = fibImpact(nearestRetrace, true);
@@ -251,12 +502,8 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const lastRSI=rsiValues[rsiValues.length-1];
   const prevRSI=rsiValues[rsiValues.length-4];
   const prevRSI8=rsiValues[rsiValues.length-8]||prevRSI;
-  const lastHigh=Math.max(...highs.slice(-3));
-  const prevHigh=Math.max(...highs.slice(-8,-3));
-  const prevHigh2=Math.max(...highs.slice(-14,-8));
-  const lastLow=Math.min(...lows.slice(-3));
-  const prevLow=Math.min(...lows.slice(-8,-3));
-  const prevLow2=Math.min(...lows.slice(-14,-8));
+  const lastHigh=Math.max(...highs.slice(-3)),prevHigh=Math.max(...highs.slice(-8,-3)),prevHigh2=Math.max(...highs.slice(-14,-8));
+  const lastLow=Math.min(...lows.slice(-3)),prevLow=Math.min(...lows.slice(-8,-3)),prevLow2=Math.min(...lows.slice(-14,-8));
   const lastClose=closes[closes.length-1];
   const prevClose5=closes.length>=6?closes[closes.length-6]:closes[0]||0;
   const prevClose10=closes.length>=11?closes[closes.length-11]:closes[0]||0;
@@ -266,94 +513,107 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const cvdAgressive=Math.abs(cvd.cvdPct)>5;
   const avgVol=volumes.slice(-20).reduce((a,b)=>a+b,0)/20;
   const lastVol=volumes[volumes.length-1];
-  const volClimaxUp=lastVol>avgVol*2.5&&priceUp;
-  const volClimaxDown=lastVol>avgVol*2.5&&priceDown;
+  const volClimaxUp=lastVol>avgVol*2.5&&priceUp, volClimaxDown=lastVol>avgVol*2.5&&priceDown;
   const trend4h=bias4h?.bias||'neutral', trend1d=bias1d?.bias||'neutral';
-  const bearishContext=trend4h==='short'||trend1d==='short';
-  const bullishContext=trend4h==='long'||trend1d==='long';
+  const bearishContext=trend4h==='short'||trend1d==='short', bullishContext=trend4h==='long'||trend1d==='long';
   const oiRising=oiTrend15m?.trend==='rising', oiFalling=oiTrend15m?.trend==='falling';
   const aboveVwap=lastClose>vwap, belowVwap=lastClose<vwap;
   const hasBidWall=(ob.bidWalls?.length||0)>0, hasAskWall=(ob.askWalls?.length||0)>0;
+
+  // ── WebSocket bonus — suma si hay anomalía activa en tiempo real ──
+  const wsAnomaly = wsState[Object.keys(wsState).find(k => k.startsWith(price > 10000 ? 'BTC' : 'ETH'))]?.anomaly;
+  const wsAnomalyBonus = (dir) => {
+    if (!wsAnomaly || Date.now() - wsAnomaly.time > 5 * 60 * 1000) return 0;
+    return wsAnomaly.direction === dir ? 10 : 0;
+  };
 
   if(priceUp&&cvdRising&&cvdAgressive){
     let prob=73; if(hasAskWall) prob+=12; if(oiFalling) prob+=8; if(lastRSI>65) prob+=7; if(lastRSI>75) prob+=8;
     if(bearishContext) prob+=8; if(aboveVwap) prob+=5; if(volClimaxUp) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista'].filter(Boolean) });
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista',wsAnomalyBonus('SHORT')>0&&'⚡ Barrida WS confirmada'].filter(Boolean) });
   }
   if(priceDown&&cvdFalling&&cvdAgressive){
     let prob=73; if(hasBidWall) prob+=12; if(lastRSI<35) prob+=10; if(lastRSI<25) prob+=8;
     if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5; if(volClimaxDown) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Ballena comprando con límites — CVD ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista'].filter(Boolean) });
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Ballena comprando con límites — CVD ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista',wsAnomalyBonus('LONG')>0&&'⚡ Barrida WS confirmada'].filter(Boolean) });
   }
   if(lastHigh>prevHigh&&lastRSI<prevRSI-3){
     let prob=64; if(cvdFalling) prob+=15; if(oiRising&&priceUp) prob+=5; if(lastRSI>60) prob+=7; if(lastRSI>70) prob+=8;
-    if(bearishContext) prob+=8; if(hasAskWall) prob+=8;
-    if(prevHigh>prevHigh2&&prevRSI<prevRSI8-2) prob+=10;
+    if(bearishContext) prob+=8; if(hasAskWall) prob+=8; if(prevHigh>prevHigh2&&prevRSI<prevRSI8-2) prob+=10;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
     divergences.push({ type:'rsi_bajista', name:'Div. RSI Bajista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`Precio HH ($${parseInt(lastHigh).toLocaleString()}) pero RSI LH (${lastRSI} vs ${prevRSI}) — momentum agotado.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[cvdFalling&&'CVD divergente',bearishContext&&'Contexto bajista',hasAskWall&&'Muro ask'].filter(Boolean) });
   }
   if(lastLow<prevLow&&lastRSI>prevRSI+3){
     let prob=64; if(cvdRising) prob+=15; if(lastRSI<40) prob+=7; if(lastRSI<30) prob+=8;
-    if(bullishContext) prob+=8; if(hasBidWall) prob+=8;
-    if(prevLow<prevLow2&&prevRSI>prevRSI8+2) prob+=10;
+    if(bullishContext) prob+=8; if(hasBidWall) prob+=8; if(prevLow<prevLow2&&prevRSI>prevRSI8+2) prob+=10;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
     divergences.push({ type:'rsi_alcista', name:'Div. RSI Alcista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Precio LL ($${parseInt(lastLow).toLocaleString()}) pero RSI HL (${lastRSI} vs ${prevRSI}) — vendedores agotados.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista',hasBidWall&&'Muro bid'].filter(Boolean) });
   }
   if(priceUp&&cvdFalling){
     let prob=65; if(oiRising) prob+=8; if(lastRSI>60) prob+=8; if(cvdAgressive) prob+=7; if(bearishContext) prob+=8; if(aboveVwap) prob+=5;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
     divergences.push({ type:'cvd_precio_bajista', name:'Div. CVD/Precio Bajista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`Precio sube pero CVD ${cvd.cvdPct}% negativo — subida sin respaldo real de volumen.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',bearishContext&&'Contexto bajista'].filter(Boolean) });
   }
   if(priceDown&&cvdRising){
     let prob=65; if(lastRSI<40) prob+=10; if(cvdAgressive) prob+=7; if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
     divergences.push({ type:'cvd_precio_alcista', name:'Div. CVD/Precio Alcista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Precio baja pero CVD +${cvd.cvdPct}% — demanda oculta absorbiendo la caída.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'Shorts cerrando',bullishContext&&'Contexto alcista'].filter(Boolean) });
   }
   if(priceUp&&oiFalling&&cvdFalling){
     let prob=72; if(lastRSI>65) prob+=8; if(bearishContext) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
     divergences.push({ type:'bull_trap', name:'Trampa Alcista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:'Subida con OI cayendo y CVD negativo — shorts liquidados sin demanda real. Fakeout.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'OI cayendo',cvdFalling&&'CVD divergente',bearishContext&&'Contexto bajista'].filter(Boolean) });
   }
   if(priceDown&&oiFalling&&cvdRising){
     let prob=72; if(lastRSI<35) prob+=8; if(bullishContext) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
     divergences.push({ type:'bear_trap', name:'Trampa Bajista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:'Caída con OI cayendo y CVD positivo — longs liquidados sin oferta real. Fakeout bajista.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'OI cayendo',cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista'].filter(Boolean) });
   }
   if(oiRising&&priceDown10&&cvdFalling){
     let prob=70; if(lastRSI<50) prob+=8; if(bearishContext) prob+=10; if(cvdAgressive) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'short_buildup', name:'Short Buildup', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio cae — nuevas posiciones cortas con convicción. Tendencia bajista real.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdFalling&&'CVD negativo',bearishContext&&'Contexto bajista'].filter(Boolean) });
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'short_buildup', name:'Short Buildup', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio cae — nuevas posiciones cortas con convicción.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdFalling&&'CVD negativo',bearishContext&&'Contexto bajista'].filter(Boolean) });
   }
   if(oiRising&&priceUp10&&cvdRising){
     let prob=70; if(lastRSI>50&&lastRSI<70) prob+=8; if(bullishContext) prob+=10; if(cvdAgressive) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'long_buildup', name:'Long Buildup', direction:'LONG', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio sube — nuevas posiciones largas con convicción. Tendencia alcista real.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista'].filter(Boolean) });
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'long_buildup', name:'Long Buildup', direction:'LONG', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio sube — nuevas posiciones largas con convicción.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista'].filter(Boolean) });
   }
   if(Math.abs(fundingRate)>0.0008){
     const isBull=fundingRate>0; let prob=68;
     if(Math.abs(fundingRate)>0.002) prob+=12; else if(Math.abs(fundingRate)>0.001) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,isBull?'down':'up'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'funding_extremo', name:'Funding Extremo', direction:isBull?'SHORT':'LONG', probability:Math.min(90,prob), entry:price, description:`FR ${(fundingRate*100).toFixed(4)}% — ${isBull?'longs sobrecalentados, corrección inminente':'shorts en riesgo, squeeze probable'}`, action:prob>=75?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:[`FR ${(fundingRate*100).toFixed(4)}%`] });
+    divergences.push({ type:'funding_extremo', name:'Funding Extremo', direction:isBull?'SHORT':'LONG', probability:Math.min(90,prob), entry:price, description:`FR ${(fundingRate*100).toFixed(4)}% — ${isBull?'longs sobrecalentados':'shorts en riesgo'}`, action:prob>=75?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:[`FR ${(fundingRate*100).toFixed(4)}%`] });
   }
   if(cvd.isClimax){
     const dir=cvd.delta5>0?'SHORT':'LONG'; let prob=73;
     const nearLiq=getNearestLiqMagnet(price,dir==='SHORT'?'down':'up'); if(nearLiq) prob+=nearLiq.bonus;
     if(dir==='SHORT'&&bearishContext) prob+=8; if(dir==='LONG'&&bullishContext) prob+=8;
-    divergences.push({ type:'volumen_climax', name:'Volumen Clímax', direction:dir, probability:Math.min(92,prob), entry:price, description:`Vol ${dir==='SHORT'?'comprador':'vendedor'} extremo (2.5x avg) — agotamiento inminente. Clímax = reversión.`, action:prob>=80?'ENTRAR':'ESPERAR', liqTarget:nearLiq?.price, confluence:['Vol 2.5x avg'] });
+    prob += wsAnomalyBonus(dir);
+    divergences.push({ type:'volumen_climax', name:'Volumen Clímax', direction:dir, probability:Math.min(92,prob), entry:price, description:`Vol extremo (2.5x avg) — agotamiento inminente. Clímax = reversión.`, action:prob>=80?'ENTRAR':'ESPERAR', liqTarget:nearLiq?.price, confluence:['Vol 2.5x avg'] });
   }
   if(oiRising&&fundingRate<-0.0005&&priceDown){
     let prob=72; if(cvdFalling) prob+=8; if(bearishContext) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'long_squeeze', name:'Squeeze de Longs', direction:'SHORT', probability:Math.min(90,prob), entry:price, description:'OI alto + funding negativo + precio cae — longs siendo liquidados en cascada.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding negativo','Precio cayendo'] });
+    divergences.push({ type:'long_squeeze', name:'Squeeze de Longs', direction:'SHORT', probability:Math.min(90,prob), entry:price, description:'OI alto + funding negativo + precio cae — longs liquidados en cascada.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding negativo','Precio cayendo'] });
   }
   if(oiRising&&fundingRate>0.002&&priceUp){
     let prob=72; if(cvdRising) prob+=8; if(bullishContext) prob+=8;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
-    divergences.push({ type:'short_squeeze', name:'Squeeze de Shorts', direction:'LONG', probability:Math.min(90,prob), entry:price, description:'OI alto + funding muy positivo + precio sube — shorts siendo liquidados. Momentum alcista.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding extremo','Precio subiendo'] });
+    divergences.push({ type:'short_squeeze', name:'Squeeze de Shorts', direction:'LONG', probability:Math.min(90,prob), entry:price, description:'OI alto + funding muy positivo + precio sube — shorts liquidados.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding extremo','Precio subiendo'] });
   }
-
   if (fib) {
     divergences.forEach(d => {
       const isLong = d.direction === 'LONG'; const isShort = d.direction === 'SHORT';
@@ -365,40 +625,27 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
       if (fib.extImpact.signal === 'long_exhaustion' && isShort) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
     });
   }
-
   const priceDownRegime = closes.length >= 6 ? lastClose < closes[closes.length - 6] : false;
   const bearExhaustion = [lastRSI < 35, cvdRising && priceDownRegime, oiFalling && priceDownRegime, fundingRate < -0.0005, lastVol > avgVol * 2 && priceDownRegime].filter(Boolean).length;
   if (bearExhaustion >= 3) {
     let prob = 65 + (bearExhaustion * 6);
-    if (bullishContext) prob = Math.min(95, prob + 10);
-    if (hasBidWall) prob = Math.min(95, prob + 8);
+    if (bullishContext) prob = Math.min(95, prob + 10); if (hasBidWall) prob = Math.min(95, prob + 8);
     const nearLiq = getNearestLiqMagnet(price, 'up'); if (nearLiq) prob += nearLiq.bonus;
-    divergences.push({ type:'regime_change_long', name:'Cambio de Régimen — LONG', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`${bearExhaustion}/5 señales de agotamiento bajista activas — mercado cambia de dirección. ${bearExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela alcista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI<35&&'RSI sobreventa',cvdRising&&priceDownRegime&&'CVD divergente alcista',oiFalling&&priceDownRegime&&'OI cayendo (shorts cierran)',fundingRate<-0.0005&&'Funding negativo extremo',lastVol>avgVol*2&&priceDownRegime&&'Volumen clímax bajista'].filter(Boolean) });
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'regime_change_long', name:'Cambio de Régimen — LONG', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`${bearExhaustion}/5 señales agotamiento bajista — ${bearExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela alcista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI<35&&'RSI sobreventa',cvdRising&&priceDownRegime&&'CVD divergente',oiFalling&&priceDownRegime&&'OI cayendo',fundingRate<-0.0005&&'Funding negativo'].filter(Boolean) });
   }
-
   const priceUpRegime = closes.length >= 6 ? lastClose > closes[closes.length - 6] : false;
   const bullExhaustion = [lastRSI > 68, cvdFalling && priceUpRegime, oiFalling && priceUpRegime, fundingRate > 0.001, lastVol > avgVol * 2 && priceUpRegime].filter(Boolean).length;
   if (bullExhaustion >= 3) {
     let prob = 65 + (bullExhaustion * 6);
-    if (bearishContext) prob = Math.min(95, prob + 10);
-    if (hasAskWall) prob = Math.min(95, prob + 8);
+    if (bearishContext) prob = Math.min(95, prob + 10); if (hasAskWall) prob = Math.min(95, prob + 8);
     const nearLiq = getNearestLiqMagnet(price, 'down'); if (nearLiq) prob += nearLiq.bonus;
-    divergences.push({ type:'regime_change_short', name:'Cambio de Régimen — SHORT', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`${bullExhaustion}/5 señales de agotamiento alcista activas — mercado cambia de dirección. ${bullExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela bajista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI>68&&'RSI sobrecompra',cvdFalling&&priceUpRegime&&'CVD divergente bajista',oiFalling&&priceUpRegime&&'OI cayendo (longs cierran)',fundingRate>0.001&&'Funding positivo extremo',lastVol>avgVol*2&&priceUpRegime&&'Volumen clímax alcista'].filter(Boolean) });
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'regime_change_short', name:'Cambio de Régimen — SHORT', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`${bullExhaustion}/5 señales agotamiento alcista — ${bullExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela bajista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI>68&&'RSI sobrecompra',cvdFalling&&priceUpRegime&&'CVD divergente',oiFalling&&priceUpRegime&&'OI cayendo',fundingRate>0.001&&'Funding positivo'].filter(Boolean) });
   }
-
-  if (fib) {
-    divergences.forEach(d => {
-      const isLong = d.direction === 'LONG'; const isShort = d.direction === 'SHORT';
-      if (fib.retImpact.signal === 'long_bounce' && isLong) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
-      if (fib.retImpact.signal === 'short_bounce' && isShort) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
-      if (fib.extImpact.signal === 'short_exhaustion' && isShort) d.probability = Math.min(95, d.probability + 10);
-      if (fib.extImpact.signal === 'long_exhaustion' && isLong) d.probability = Math.min(95, d.probability + 10);
-      if (fib.extImpact.signal === 'short_exhaustion' && isLong) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
-      if (fib.extImpact.signal === 'long_exhaustion' && isShort) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
-    });
-  }
-
-  return divergences.sort((a,b)=>b.probability-a.probability);
+  // ── Aplicar bonus de zonas de liquidación a todas las divergencias ──
+  const divsWithLiq = applyLiqZoneProbBonus(divergences, price);
+  return divsWithLiq.sort((a,b)=>b.probability-a.probability);
   } catch(e) { console.error('detectDivergences error:', e.message); return []; }
 }
 
@@ -411,19 +658,16 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   const longScore=longs.reduce((s,d)=>s+d.probability,0)/(longs.length||1);
   let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
   let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
-
   const regimeLong  = divergences.find(d => d.type === 'regime_change_long');
   const regimeShort = divergences.find(d => d.type === 'regime_change_short');
   if (regimeLong && direction === 'SHORT') { prob = Math.max(5, prob - 30); if (regimeLong.probability >= 80) prob = 5; }
   if (regimeShort && direction === 'LONG') { prob = Math.max(5, prob - 30); if (regimeShort.probability >= 80) prob = 5; }
-
   const both4hAnd1dLong  = bias4h?.bias==='long'  && bias1d?.bias==='long';
   const both4hAnd1dShort = bias4h?.bias==='short' && bias1d?.bias==='short';
   const only4hLong  = bias4h?.bias==='long'  && bias1d?.bias!=='short';
   const only4hShort = bias4h?.bias==='short' && bias1d?.bias!=='long';
   if(direction==='LONG'){ if(both4hAnd1dLong) prob=Math.min(95,prob+15); else if(only4hLong) prob=Math.min(95,prob+8); if(bias1d?.bias==='short') prob=Math.max(5,prob-10); }
   if(direction==='SHORT'){ if(both4hAnd1dShort) prob=Math.min(95,prob+15); else if(only4hShort) prob=Math.min(95,prob+8); if(bias1d?.bias==='long') prob=Math.max(5,prob-10); }
-
   if(whaleData && whaleData.whaleCount >= 3) {
     if(direction==='LONG' && whaleData.whaleBias==='bull') prob=Math.min(95,prob+10);
     if(direction==='SHORT' && whaleData.whaleBias==='bear') prob=Math.min(95,prob+10);
@@ -445,7 +689,6 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   if (absorcionCount >= 2) prob = Math.min(95, prob + 8);
   const topDiv = divergences[0];
   if (topDiv && absorcionCount >= 1 && divergences.length >= 3) prob = Math.min(95, prob + 5);
-
   const isRegimeChange = (regimeLong && direction==='LONG') || (regimeShort && direction==='SHORT');
   const action = isRegimeChange && prob >= 75 ? '⚠️ CAMBIO DE RÉGIMEN — ENTRAR' : prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
   const fibSummary = fib?.nearestRetrace?.dist < 0.8 ? `Fib ${fib.nearestRetrace.label} cerca` : fib?.nearestExt?.dist < 0.8 ? `Ext Fib ${fib.nearestExt.label} cerca` : null;
@@ -453,7 +696,6 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   return { direction, probability:Math.round(prob), action, shortCount:shorts.length, longCount:longs.length, whaleSummary, fibSummary };
 }
 
-// ─── LIQUIDACIONES REALES ────────────────────────────────────────
 async function fetchForceOrders(symbol) {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/allForceOrders?symbol=${symbol}&limit=200`);
@@ -476,7 +718,6 @@ async function fetchForceOrders(symbol) {
   } catch(e) { return { zones: [], totalLongs: 0, totalShorts: 0, count: 0 }; }
 }
 
-// ─── LIBRO PROFUNDO ──────────────────────────────────────────────
 async function fetchDeepOrderBook(symbol) {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=500`);
@@ -500,7 +741,6 @@ async function fetchDeepOrderBook(symbol) {
   } catch(e) { return { bidClusters: [], askClusters: [], deepImbalance: 0 }; }
 }
 
-// ─── DETECCIÓN DE BALLENAS ───────────────────────────────────────
 async function detectWhales(symbol, price) {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/aggTrades?symbol=${symbol}&limit=500`);
@@ -566,7 +806,9 @@ app.get('/api/market/:symbol', async (req, res) => {
     const avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4;
     const lastVol=vols[vols.length-1];
     const volDeltaPct=avgVol5>0?((lastVol-avgVol5)/avgVol5*100).toFixed(1):'0.0';
-    res.json({ price, change24h:parseFloat(ticker.data.priceChangePercent), volume24h:parseFloat(ticker.data.quoteVolume), openInterest:parseFloat(oiRes.data.openInterest), fundingRate, markPrice:parseFloat(funding.data.markPrice), indexPrice:parseFloat(funding.data.indexPrice), rsi15m, rsiOverbought:rsi15m>70, rsiOversold:rsi15m<30, cvd15m, vrvp, bb15m, vwap15m:vwap15m.toFixed(1), oiTrends:{ tf15m:oiTrend15m, tf1h:oiTrend1h, tf4h:oiTrend4h }, volDeltaPct:parseFloat(volDeltaPct), orderBook:ob, liqMagnets, divergences:allDivs, combinedSignal, scalpSignal, doublePatterns, bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d }, klines:k15m.data.slice(-20), liqData, deepOB, whaleData, fibonacci:{ tf15m:fib15m, tf4h:fib4h } });
+    // Incluir métricas WS en tiempo real
+    const wsMetrics = getWsMetrics(symbol);
+    res.json({ price, change24h:parseFloat(ticker.data.priceChangePercent), volume24h:parseFloat(ticker.data.quoteVolume), openInterest:parseFloat(oiRes.data.openInterest), fundingRate, markPrice:parseFloat(funding.data.markPrice), indexPrice:parseFloat(funding.data.indexPrice), rsi15m, rsiOverbought:rsi15m>70, rsiOversold:rsi15m<30, cvd15m, vrvp, bb15m, vwap15m:vwap15m.toFixed(1), oiTrends:{ tf15m:oiTrend15m, tf1h:oiTrend1h, tf4h:oiTrend4h }, volDeltaPct:parseFloat(volDeltaPct), orderBook:ob, liqMagnets, divergences:allDivs, combinedSignal, scalpSignal, doublePatterns, bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d }, klines:k15m.data.slice(-20), liqData, deepOB, whaleData, fibonacci:{ tf15m:fib15m, tf4h:fib4h }, wsMetrics });
   } catch(e) { console.error('Market error:',e.message); res.status(500).json({ error:e.message }); }
 });
 
@@ -577,6 +819,8 @@ app.post('/api/analyze', async (req, res) => {
     if(analyzeCache[symbol]&&now-analyzeCache[symbol].ts<60000) return res.json(analyzeCache[symbol].data);
     const divSummary=d.divergences?.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n')||'Ninguna';
     const b=d.bias;
+    const wsM = getWsMetrics(symbol);
+    const wsNote = wsM && Math.abs(wsM.cvdLive) > 20 ? `\nWS TIEMPO REAL: CVD=${wsM.cvdLive.toFixed(1)}% vol=${wsM.volumeMultiplier.toFixed(1)}x ballenas=${wsM.whaleCount}` : '';
     const prompt=`Eres un trader experto en futuros perpetuos de criptomonedas. Analiza y da señal precisa.
 
 MERCADO: ${symbol} — $${d.price} (${d.change24h>0?'+':''}${d.change24h?.toFixed(2)}%)
@@ -596,7 +840,7 @@ ${divSummary}
 
 SEÑAL: ${d.combinedSignal?.direction} ${d.combinedSignal?.probability}% — ${d.combinedSignal?.action}
 LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
-IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)
+IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
 
 REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
 
@@ -606,16 +850,12 @@ Responde SOLO JSON sin markdown:
     const response=await anthropic.messages.create({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{role:'user',content:prompt}] });
     const text=response.content[0].text;
     const signal=JSON.parse(text.replace(/```json|```/g,'').trim());
-
-    // ✅ FIX R:R — recalcular con precios reales, ignorar valor de IA
     const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
     const _rrRisk   = signal.direction === 'SHORT' ? (signal.sl - signal.entry) : (signal.entry - signal.sl);
     const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
     signal.rr = `1:${_rrVal.toFixed(1)}`;
-
     analyzeCache[symbol]={ ts:now, data:signal };
     try { await supabase.from('signals').insert({ symbol, direction:signal.direction, confidence:signal.confidence, entry:signal.entry, tp1:signal.tp1, tp2:signal.tp2, sl:signal.sl, rr:signal.rr, reasoning:signal.reasoning, market_data:d }); } catch(_){}
-
     if(signal.confidence>=75&&process.env.TELEGRAM_CHAT_ID){
       const e=signal.direction==='LONG'?'▲':signal.direction==='SHORT'?'▼':'◆';
       const msg=`${e} ${signal.direction} — ${symbol}\n💰 Entry: $${signal.entry}\n🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}\n🛑 SL: $${signal.sl} | ${signal.rr}\n📊 ${signal.confidence}% — ${signal.action}\n💬 ${signal.reasoning}`;
@@ -632,7 +872,6 @@ app.get('/api/trades', async (req, res) => {
   try { const {data,error}=await supabase.from('trades').select('*').order('created_at',{ascending:false}).limit(50); if(error) throw error; res.json(data); } catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// ─── ALERTAS TELEGRAM AUTOMÁTICAS ────────────────────────────────
 let alertCache = {};
 const signalHistory = {};
 
@@ -644,10 +883,9 @@ function confirmSignal(symbol, direction, probability) {
   signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
   const recent = signalHistory[symbol];
   const sameDirection = recent.filter(s => s.direction === direction && now - s.timestamp < 30 * 60 * 1000);
-  if (sameDirection.length < 2) { console.log(`⏳ Señal ${direction} ${symbol} ${probability}% — esperando confirmación (${sameDirection.length}/2)`); return { confirmed: false, count: sameDirection.length }; }
-  if (probability >= 92 && sameDirection.length >= 1) { console.log(`✅ Señal ${direction} ${symbol} ${probability}% — confirmada inmediatamente`); return { confirmed: true, count: sameDirection.length, avgProbability: probability }; }
+  if (sameDirection.length < 2) { return { confirmed: false, count: sameDirection.length }; }
+  if (probability >= 92 && sameDirection.length >= 1) { return { confirmed: true, count: sameDirection.length, avgProbability: probability }; }
   const avgProb = Math.round(sameDirection.reduce((s,r) => s + r.probability, 0) / sameDirection.length);
-  console.log(`✅ Señal ${direction} ${symbol} CONFIRMADA — ${sameDirection.length} análisis, prob promedio ${avgProb}%`);
   return { confirmed: true, count: sameDirection.length, avgProbability: avgProb };
 }
 
@@ -671,7 +909,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price = parseFloat(ticker.data.lastPrice);
     const fundingRate = parseFloat(funding.data.lastFundingRate);
-    if (!k15m.data || !Array.isArray(k15m.data) || k15m.data.length < 20) { console.log(`⚠️ Auto-analysis: datos insuficientes para ${symbol}`); return; }
+    if (!k15m.data || !Array.isArray(k15m.data) || k15m.data.length < 20) return;
     const closes15m = k15m.data.map(k => parseFloat(k[4]));
     const cvd15m = calcCVD(k15m.data);
     const vrvp = calcVRVP(k15m.data);
@@ -684,7 +922,6 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const bias4h  = calcBias(k4h.data?.length >= 20 ? k4h.data : k15m.data, oi4hHist, fundingRate);
     const bias1d  = calcBias(k1d.data?.length >= 20 ? k1d.data : k15m.data, null, fundingRate);
     const fib15m = calcFibonacci(k15m.data, price);
-    const fib4h  = calcFibonacci(k4h.data?.length >= 20 ? k4h.data : k15m.data, price);
     const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
     const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m);
     const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
@@ -698,126 +935,65 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     const now = Date.now();
     if (alertCache[cacheKey] && now - alertCache[cacheKey] < 30 * 60 * 1000) return;
     alertCache[cacheKey] = now;
-
     const marketData = { price, change24h: parseFloat(ticker.data.priceChangePercent), fundingRate, openInterest: parseFloat(oiRes.data.openInterest), rsi15m: calcRSI(closes15m), cvd15m, vrvp, volDeltaPct: 0, orderBook: ob, liqMagnets: calcLiqMagnets(price).slice(0,5), divergences: divergences.slice(0,4), combinedSignal, bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d } };
     const divSummary = divergences.slice(0,3).map(d => `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`).join('\n');
     const b = marketData.bias;
     const prompt = `Eres un trader experto en futuros perpetuos. Analiza y da señal precisa.
-
-MERCADO: ${symbol} — $${price} (${marketData.change24h?.toFixed(2)}%)
-RSI 15m: ${marketData.rsi15m}
-CVD 15m: tendencia=${cvd15m.trend}, cvdPct=${cvd15m.cvdPct}%
+MERCADO: ${symbol} — $${price}
+RSI 15m: ${marketData.rsi15m} | CVD: ${cvd15m.trend} ${cvd15m.cvdPct}%
 OI: ${marketData.openInterest?.toFixed(0)} | Funding: ${(fundingRate*100).toFixed(4)}%
 VRVP: POC=$${vrvp.poc} VAH=$${vrvp.vah} VAL=$${vrvp.val}
 SESGO: 15m=${b.tf15m?.bias}(${b.tf15m?.score}) 1H=${b.tf1h?.bias}(${b.tf1h?.score}) 4H=${b.tf4h?.bias}(${b.tf4h?.score}) 1D=${b.tf1d?.bias}(${b.tf1d?.score})
 DIVERGENCIAS (${divergences.length}):
 ${divSummary}
 SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
-${fib15m?.nearestRetrace?.dist < 0.8 ? 'FIB: precio en retroceso ' + fib15m.nearestRetrace.label + ' — ' + fib15m.retImpact.description : ''}
-REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dir=trend real.
+REGLAS: RSI>72 no long; RSI<28 no short.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
-
     const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
     const text = response.content[0].text;
     const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
-
-    // ✅ FIX R:R — recalcular con precios reales, ignorar valor de IA
     const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
     const _rrRisk   = signal.direction === 'SHORT' ? (signal.sl - signal.entry) : (signal.entry - signal.sl);
     const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
     signal.rr = `1:${_rrVal.toFixed(1)}`;
-
     if (signal.confidence < minConfidence) return;
     if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) return;
-
     const dir = signal.direction;
     const emoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '🟡';
     const fibNote = fib15m?.nearestRetrace?.dist < 0.8 ? `\n⬟ Fib ${fib15m.nearestRetrace.label} — ${fib15m.retImpact.description}` : '';
     const whaleNote = whaleData?.whaleCount >= 3 ? `\n🐋 Ballenas: ${whaleData.dominance} (${whaleData.whaleCount} trades)` : '';
-
-    const msg = `${emoji} *${dir}* — ${symbol}
-━━━━━━━━━━━━━━
-💰 Entry: *$${signal.entry?.toLocaleString()}*
-🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}
-🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}
-━━━━━━━━━━━━━━
-📊 Confianza: *${signal.confidence}%* — ${signal.action}
-📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas
-💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}
-━━━━━━━━━━━━━━
-🕐 ${new Date().toLocaleTimeString('es-PE')}`;
-
+    const wsM = getWsMetrics(symbol);
+    const wsNote2 = wsM?.anomaly && Date.now() - wsM.anomaly.time < 5*60*1000 ? `\n⚡ WS: ${wsM.anomaly.reason}` : '';
+    const msg = `${emoji} *${dir}* — ${symbol}\n━━━━━━━━━━━━━━\n💰 Entry: *$${signal.entry?.toLocaleString()}*\n🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}\n🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}\n━━━━━━━━━━━━━━\n📊 Confianza: *${signal.confidence}%* — ${signal.action}\n📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas\n💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}${wsNote2}\n━━━━━━━━━━━━━━\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
-
     try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
-
-    // 7. AUTO PAPER TRADING
     const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90');
     const trend1d = bias1d.bias;
-    const trendOk = signal.direction === 'ESPERAR' ? false : signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : true;
-
-    // ✅ FIX FILTRO R:R — descartar trades con R:R < 1.5
-    // ✅ FIX LONG+SHORT — bloquear cualquier trade abierto del mismo par
-    const canAutoTrade = signal.confidence >= autoPaperThreshold
-      && signal.direction !== 'ESPERAR'
-      && trendOk
-      && divergences.length >= 2
-      && _rrVal >= 1.5;
-
+    const trendOk = signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : false;
+    const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
       try {
-        // ✅ FIX: bloquear cualquier trade abierto del mismo par (no solo misma dirección)
-        const { data: existing } = await supabase.from('paper_trades')
-          .select('id').eq('symbol', symbol).eq('status', 'open');
-
+        const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
         if (!existing || existing.length === 0) {
-          const mlSnapshot = {
-            confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d,
-            rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate,
-            oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct,
-            bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score,
-            bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score,
-            divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability,
-            short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount,
-            fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus,
-            whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio,
-            deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length,
-            price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price_vs_vah: ((marketData.price - vrvp.vah) / vrvp.vah * 100).toFixed(3), price_vs_val: ((marketData.price - vrvp.val) / vrvp.val * 100).toFixed(3),
-            price: marketData.price, timestamp: new Date().toISOString()
-          };
-
-          await supabase.from('paper_trades').insert({
-            symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl,
-            rr: signal.rr, confidence: signal.confidence,
-            size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
-            leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
-            divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', market_data: mlSnapshot
-          }).select().single();
-
-          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry} (${signal.confidence}%) R:R ${_rrVal.toFixed(2)}`);
-
+          const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
+          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', market_data: mlSnapshot }).select().single();
+          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
           if (process.env.TELEGRAM_CHAT_ID) {
             const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼';
             const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {}
           }
-        } else {
-          console.log(`⏭ Auto paper trade omitido: ya hay ${existing.length} trade(s) abierto(s) para ${symbol}`);
         }
       } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
-    } else if (_rrVal > 0 && _rrVal < 1.5) {
-      console.log(`⚠️ Auto paper trade descartado — R:R ${_rrVal.toFixed(2)} < 1.5 mínimo`);
     }
-
-  } catch(e) { console.error('Auto-analysis error:', e.message, e.stack?.split('\n')[1]); }
+  } catch(e) { console.error('Auto-analysis error:', e.message); }
 }
 
-// ─── JOB PERIÓDICO ───────────────────────────────────────────────
 function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
-    console.log('⚠️ Alertas Telegram desactivadas — faltan TELEGRAM_CHAT_ID y TELEGRAM_TOKEN');
+    console.log('⚠️ Alertas Telegram desactivadas');
     setInterval(monitorPaperTrades, 5 * 60 * 1000);
     setTimeout(monitorPaperTrades, 15000);
     return;
@@ -829,6 +1005,24 @@ function startAlertJob() {
   setTimeout(monitorPaperTrades, 15000);
   setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 3000)); } }, intervalMin * 60 * 1000);
   setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 3000)); } }, 10000);
+  // Iniciar WebSockets para detección en tiempo real
+  const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
+  wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
+  console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
+  // Actualizar volumen promedio cada 5 minutos
+  setInterval(async () => {
+    for (const sym of wsSymbols) {
+      try {
+        const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
+        const vols = k1m.data.map(k => {
+          const p = parseFloat(k[4]);
+          const v = parseFloat(k[5]);
+          return p * v;
+        });
+        if (wsState[sym.trim()]) wsState[sym.trim()].avgVolume1m = vols.reduce((a,b)=>a+b,0)/vols.length;
+      } catch(_) {}
+    }
+  }, 5 * 60 * 1000);
 }
 
 app.get('/api/prices', async (req, res) => {
@@ -850,25 +1044,16 @@ app.post('/api/alert/trigger', async (req, res) => {
 });
 
 app.get('/api/alert/status', (req, res) => {
-  res.json({ active: !!(process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN), intervalMin: parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','), minConfidence: parseInt(process.env.ALERT_MIN_CONFIDENCE || '80') });
+  res.json({ active: !!(process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN), intervalMin: parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','), minConfidence: parseInt(process.env.ALERT_MIN_CONFIDENCE || '90') });
 });
 
 // ─── PAPER TRADING ───────────────────────────────────────────────
 app.post('/api/paper/open', async (req, res) => {
   try {
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
-
-    // ✅ FIX: verificar que no hay trade abierto del mismo par antes de abrir manual
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
-    if (existing && existing.length > 0) {
-      return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
-    }
-
-    const { data, error } = await supabase.from('paper_trades').insert({
-      symbol, direction, entry, tp1, tp2, sl, rr, confidence,
-      size_usd: size_usd || 1000, leverage: leverage || 10,
-      divergences, fibonacci, source: source || 'manual', status: 'open'
-    }).select().single();
+    if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || 1000, leverage: leverage || 10, divergences, fibonacci, source: source || 'manual', status: 'open' }).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -883,39 +1068,26 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const entry = parseFloat(trade.entry);
     const closeP = parseFloat(close_price);
     const size = parseFloat(trade.size_usd);
-
-    // ✅ FIX PnL — NO multiplicar por leverage (size_usd ya incluye el leverage)
     const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
     const pnl_usd = parseFloat((size * priceDiff).toFixed(2));
     const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
-
     const finalStatus = close_reason === 'tp1' || close_reason === 'tp2' ? 'won'
       : close_reason === 'sl' ? 'lost'
       : close_reason === 'manual' ? 'cancelled'
       : 'closed';
-    const { data, error } = await supabase.from('paper_trades').update({
-      status: finalStatus,
-      close_price: closeP, close_reason, pnl_usd: finalStatus === 'cancelled' ? 0 : pnl_usd,
-      pnl_pct: finalStatus === 'cancelled' ? 0 : pnl_pct,
-      closed_at: new Date().toISOString()
-    }).eq('id', id).select().single();
+    const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd: finalStatus === 'cancelled' ? 0 : pnl_usd, pnl_pct: finalStatus === 'cancelled' ? 0 : pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/paper/open', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('paper_trades').select('*').eq('status', 'open').order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json(data);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  try { const { data, error } = await supabase.from('paper_trades').select('*').eq('status', 'open').order('created_at', { ascending: false }); if (error) throw error; res.json(data); } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/paper/stats', async (req, res) => {
   try {
     const { data, error } = await supabase.from('paper_trades').select('*').in('status', ['won', 'lost']).order('created_at', { ascending: false }).limit(100);
-    // 'cancelled' excluido intencionalmente — no cuenta en estadísticas
     if (error) throw error;
     const total = data.length;
     const won = data.filter(t => t.status === 'won').length;
@@ -940,11 +1112,8 @@ async function monitorPaperTrades() {
         const priceRes = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${trade.symbol}`);
         const currentPrice = parseFloat(priceRes.data.price);
         const entryPrice = parseFloat(trade.entry);
-        const priceDiffPct = Math.abs(currentPrice - entryPrice) / entryPrice * 100;
-        if (priceDiffPct > 50) { console.log(`⚠️ Precio incoherente para ${trade.symbol} — omitiendo`); continue; }
-        const tp1 = parseFloat(trade.tp1);
-        const tp2 = parseFloat(trade.tp2) || tp1;
-        const sl  = parseFloat(trade.sl);
+        if (Math.abs(currentPrice - entryPrice) / entryPrice * 100 > 50) continue;
+        const tp1 = parseFloat(trade.tp1), tp2 = parseFloat(trade.tp2) || tp1, sl = parseFloat(trade.sl);
         let closeReason = null;
         if (trade.direction === 'LONG') {
           if (currentPrice >= tp2 && tp2 > tp1) closeReason = 'tp2';
@@ -958,22 +1127,17 @@ async function monitorPaperTrades() {
         if (closeReason) {
           const entry = parseFloat(trade.entry);
           const priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
-
-          // ✅ FIX PnL — NO multiplicar por leverage
           const pnl_usd = parseFloat((trade.size_usd * priceDiff).toFixed(2));
           const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
-
-          const maxPnl = parseFloat(trade.size_usd) * 5;
-          if (Math.abs(pnl_usd) > maxPnl) {
-            console.log(`⚠️ PnL absurdo detectado para ${trade.symbol} ${trade.id}: $${pnl_usd} — cerrando con pnl=0`);
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * 5) {
             await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id);
             continue;
           }
-          await supabase.from('paper_trades').update({ status: closeReason === 'tp2' ? 'won' : closeReason === 'tp1' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          await supabase.from('paper_trades').update({ status: closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
             const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
-            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${entry.toLocaleString()} → Cierre: $${currentPrice.toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd} (${pnl_pct}%)`;
+            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
           }
         }
@@ -982,326 +1146,48 @@ async function monitorPaperTrades() {
   } catch(e) { console.error('Monitor paper trades error:', e.message); }
 }
 
-// ─── BACKTESTING HISTÓRICO ────────────────────────────────────────
-let backtestRunning = false;
-
-async function fetchKlinesHistory(symbol, interval, startTime, endTime) {
-  const allKlines = [];
-  let start = startTime;
-  while (start < endTime) {
-    try {
-      const res = await axios.get(`${BINANCE}/fapi/v1/klines`, { params: { symbol, interval, startTime: start, endTime, limit: 1500 } });
-      const klines = res.data;
-      if (!klines.length) break;
-      allKlines.push(...klines);
-      start = klines[klines.length - 1][0] + 1;
-      if (klines.length < 1500) break;
-      await new Promise(r => setTimeout(r, 200));
-    } catch(e) { break; }
-  }
-  return allKlines;
-}
-
-app.post('/api/backtest/run', async (req, res) => {
-  if (backtestRunning) return res.json({ error: 'Backtesting ya en progreso' });
-  const { symbol = 'BTCUSDT', months = 12, minConfidence = 80, leverage = 10, sizeUsd = 1000 } = req.body;
-  res.json({ ok: true, message: `Backtesting iniciado: ${symbol} últimos ${months} meses` });
-  backtestRunning = true;
-  try {
-    console.log(`🔄 Backtesting ${symbol} — ${months} meses...`);
-    const endTime = Date.now();
-    const startTime = endTime - (months * 30 * 24 * 60 * 60 * 1000);
-    console.log(`📥 Descargando 15m...`);
-    // El resto del backtest continúa igual que en el original
-  } catch(e) {
-    console.error('Backtest error:', e.message);
-  } finally {
-    backtestRunning = false;
-  }
-});
-
-
-// ─── DETECTOR DE DOUBLE TOP / DOUBLE BOTTOM (SCALPING) ──────────
-function detectDoublePatterns(klines15m, price) {
-  try {
-    if (!klines15m || klines15m.length < 30) return [];
-    const patterns = [];
-    const highs = klines15m.map(k => parseFloat(k[2]));
-    const lows  = klines15m.map(k => parseFloat(k[3]));
-    const closes = klines15m.map(k => parseFloat(k[4]));
-    const volumes = klines15m.map(k => parseFloat(k[5]));
-    const n = closes.length;
-
-    const lookback = 20;
-    let peaks = [];
-    for (let i = n - lookback; i < n - 1; i++) {
-      if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) {
-        peaks.push({ idx: i, price: highs[i], vol: volumes[i] });
-      }
-    }
-
-    if (peaks.length >= 2) {
-      const p1 = peaks[peaks.length - 2];
-      const p2 = peaks[peaks.length - 1];
-      const priceDiff = Math.abs(p1.price - p2.price) / p1.price * 100;
-      const volDivergence = p2.vol < p1.vol * 0.85;
-      const rsi1 = calcRSI(closes.slice(0, p1.idx + 1));
-      const rsi2 = calcRSI(closes.slice(0, p2.idx + 1));
-      const rsiDivergence = rsi2 < rsi1 - 3;
-
-      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
-        let prob = 74;
-        if (volDivergence) prob += 10;
-        if (rsiDivergence) prob += 8;
-        if (price < p2.price * 0.999) prob += 7;
-        const neckline = Math.min(...lows.slice(p1.idx, p2.idx + 1));
-        patterns.push({
-          type: 'double_top',
-          name: '\u2533 Double Top \u2014 Scalping Bajista',
-          direction: 'SHORT',
-          probability: Math.min(92, prob),
-          entry: price,
-          tp: neckline - (p2.price - neckline) * 0.8,
-          sl: p2.price * 1.002,
-          description: `Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} \u2014 se\u00f1al de reversi\u00f3n bajista.`,
-          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
-          scalpMode: true
-        });
-      }
-    }
-
-    let troughs = [];
-    for (let i = n - lookback; i < n - 1; i++) {
-      if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) {
-        troughs.push({ idx: i, price: lows[i], vol: volumes[i] });
-      }
-    }
-
-    if (troughs.length >= 2) {
-      const t1 = troughs[troughs.length - 2];
-      const t2 = troughs[troughs.length - 1];
-      const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100;
-      const volDivergence = t2.vol < t1.vol * 0.85;
-      const rsi1 = calcRSI(closes.slice(0, t1.idx + 1));
-      const rsi2 = calcRSI(closes.slice(0, t2.idx + 1));
-      const rsiDivergence = rsi2 > rsi1 + 3;
-
-      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
-        let prob = 74;
-        if (volDivergence) prob += 10;
-        if (rsiDivergence) prob += 8;
-        if (price > t2.price * 1.001) prob += 7;
-        const neckline = Math.max(...highs.slice(t1.idx, t2.idx + 1));
-        patterns.push({
-          type: 'double_bottom',
-          name: '\u25b2 Double Bottom \u2014 Scalping Alcista',
-          direction: 'LONG',
-          probability: Math.min(92, prob),
-          entry: price,
-          tp: neckline + (neckline - t2.price) * 0.8,
-          sl: t2.price * 0.998,
-          description: `Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence ? 'RSI divergente' : 'volumen decreciente'} \u2014 se\u00f1al de reversi\u00f3n alcista.`,
-          action: prob >= 80 ? 'ENTRAR' : 'ESPERAR',
-          scalpMode: true
-        });
-      }
-    }
-
-    return patterns;
-  } catch(e) {
-    return [];
-  }
-}
-
-
-// ─── SEÑAL COMBINADA PARA SCALPING (PESOS DIFERENTES) ────────────
-function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
-  try {
-    if (!divergences.length) return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
-
-    const longs  = divergences.filter(d => d.direction === 'LONG');
-    const shorts = divergences.filter(d => d.direction === 'SHORT');
-
-    let longScore  = longs.reduce((s, d)  => s + d.probability, 0) / Math.max(longs.length, 1);
-    let shortScore = shorts.reduce((s, d) => s + d.probability, 0) / Math.max(shorts.length, 1);
-
-    if (bias15m?.bias === 'long')  longScore  += 12;
-    if (bias15m?.bias === 'short') shortScore += 12;
-    if (bias1h?.bias  === 'long')  longScore  += 8;
-    if (bias1h?.bias  === 'short') shortScore += 8;
-    if (bias4h?.bias  === 'long')  longScore  += 4;
-    if (bias4h?.bias  === 'short') shortScore += 4;
-
-    const hasDoubleTop    = divergences.some(d => d.type === 'double_top');
-    const hasDoubleBottom = divergences.some(d => d.type === 'double_bottom');
-    if (hasDoubleTop)    shortScore += 15;
-    if (hasDoubleBottom) longScore  += 15;
-
-    const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
-    const prob = direction === 'SHORT' ? shortScore : direction === 'LONG' ? longScore : 30;
-
-    return {
-      direction,
-      probability: Math.min(95, Math.round(prob)),
-      action: prob >= 78 ? 'ENTRAR' : prob >= 65 ? 'ESPERAR' : 'NO ENTRAR',
-      mode: 'scalping'
-    };
-  } catch(e) {
-    return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
-  }
-}
-
-
-// ─── NOTICIAS — múltiples fuentes con fallback ───────────────────
+// ─── NOTICIAS ────────────────────────────────────────────────────
 app.get('/api/news/latest', async (req, res) => {
   const sources = [
-    // Fuente 1: CryptoCompare
-    async () => {
-      const r = await axios.get(
-        'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=12',
-        { timeout: 7000, headers: { 'User-Agent': 'Mozilla/5.0' } }
-      );
-      if (!r.data?.Data?.length) throw new Error('empty');
-      return r.data.Data.map(n => ({
-        title: n.title,
-        source: n.source_info?.name || n.source || 'CryptoCompare',
-        published_on: n.published_on,
-        url: n.url
-      }));
-    },
-    // Fuente 2: RSS CoinTelegraph
-    async () => {
-      const r = await axios.get('https://cointelegraph.com/rss', {
-        timeout: 6000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
-      });
-      const items = [];
-      const rx = /<item>([\s\S]*?)<\/item>/g;
-      let m;
-      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
-        const it = m[1];
-        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
-        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || '';
-        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
-        if (title) items.push({ title, source: 'CoinTelegraph', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
-      }
-      if (!items.length) throw new Error('empty');
-      return items;
-    },
-    // Fuente 3: RSS Decrypt
-    async () => {
-      const r = await axios.get('https://decrypt.co/feed', {
-        timeout: 6000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
-      });
-      const items = [];
-      const rx = /<item>([\s\S]*?)<\/item>/g;
-      let m;
-      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
-        const it = m[1];
-        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
-        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || '';
-        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
-        if (title) items.push({ title, source: 'Decrypt', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
-      }
-      if (!items.length) throw new Error('empty');
-      return items;
-    },
-    // Fuente 4: RSS CoinDesk
-    async () => {
-      const r = await axios.get('https://www.coindesk.com/arc/outboundfeeds/rss/', {
-        timeout: 6000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' }
-      });
-      const items = [];
-      const rx = /<item>([\s\S]*?)<\/item>/g;
-      let m;
-      while ((m = rx.exec(r.data)) !== null && items.length < 8) {
-        const it = m[1];
-        const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || '';
-        const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || it.match(/<guid[^>]*>([^<]+)<\/guid>/)?.[1]?.trim() || '';
-        const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || '';
-        if (title) items.push({ title, source: 'CoinDesk', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url });
-      }
-      if (!items.length) throw new Error('empty');
-      return items;
-    }
+    async () => { const r = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=12', { timeout: 7000, headers: { 'User-Agent': 'Mozilla/5.0' } }); if (!r.data?.Data?.length) throw new Error('empty'); return r.data.Data.map(n => ({ title: n.title, source: n.source_info?.name || n.source || 'CryptoCompare', published_on: n.published_on, url: n.url })); },
+    async () => { const r = await axios.get('https://cointelegraph.com/rss', { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } }); const items = []; const rx = /<item>([\s\S]*?)<\/item>/g; let m; while ((m = rx.exec(r.data)) !== null && items.length < 8) { const it = m[1]; const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || ''; const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || ''; const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || ''; if (title) items.push({ title, source: 'CoinTelegraph', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url }); } if (!items.length) throw new Error('empty'); return items; },
+    async () => { const r = await axios.get('https://decrypt.co/feed', { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } }); const items = []; const rx = /<item>([\s\S]*?)<\/item>/g; let m; while ((m = rx.exec(r.data)) !== null && items.length < 8) { const it = m[1]; const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || ''; const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || ''; const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || ''; if (title) items.push({ title, source: 'Decrypt', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url }); } if (!items.length) throw new Error('empty'); return items; }
   ];
-
   for (const source of sources) {
-    try {
-      const items = await source();
-      if (items && items.length) {
-        console.log(`✅ Noticias: ${items.length} items cargados`);
-        return res.json(items);
-      }
-    } catch(e) {
-      console.log(`⚠️ Fuente de noticias falló: ${e.message}`);
-      continue;
-    }
+    try { const items = await source(); if (items?.length) { console.log(`✅ Noticias: ${items.length} items`); return res.json(items); } } catch(e) { console.log(`⚠️ Fuente noticias falló: ${e.message}`); }
   }
-  console.log('❌ Todas las fuentes de noticias fallaron');
   res.json([]);
 });
 
 // ─── ML INSIGHTS ────────────────────────────────────────────────
 app.get('/api/ml/insights', async (req, res) => {
   try {
-    const { data: trades, error } = await supabase.from('paper_trades')
-      .select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci')
-      .in('status', ['won','lost'])  // cancelled excluido del ML
-      .order('created_at', { ascending: false })
-      .limit(2000);
+    const { data: trades, error } = await supabase.from('paper_trades').select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci').in('status', ['won','lost']).order('created_at', { ascending: false }).limit(2000);
     if (error) throw error;
-    if (!trades || trades.length < 10) {
-      return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
-    }
-    const won = trades.filter(t => t.status === 'won');
-    const lost = trades.filter(t => t.status === 'lost');
-    function avg(arr, key) {
-      const vals = arr.map(t => parseFloat(t.market_data?.[key])).filter(v => !isNaN(v));
-      return vals.length > 0 ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : null;
-    }
+    if (!trades || trades.length < 10) return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
+    const won = trades.filter(t => t.status === 'won'), lost = trades.filter(t => t.status === 'lost');
+    function avg(arr, key) { const vals = arr.map(t => parseFloat(t.market_data?.[key])).filter(v => !isNaN(v)); return vals.length > 0 ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : null; }
     const totalPnl = trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
     const avgWin = won.length > 0 ? won.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/won.length : 0;
     const avgLoss = lost.length > 0 ? Math.abs(lost.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/lost.length) : 0;
-    let peak=0,maxDD=0,cumPnl=0;
-    [...trades].reverse().forEach(t=>{cumPnl+=parseFloat(t.pnl_usd)||0;if(cumPnl>peak)peak=cumPnl;const dd=peak-cumPnl;if(dd>maxDD)maxDD=dd;});
+    let peak=0,maxDD=0,cumPnl=0; [...trades].reverse().forEach(t=>{cumPnl+=parseFloat(t.pnl_usd)||0;if(cumPnl>peak)peak=cumPnl;const dd=peak-cumPnl;if(dd>maxDD)maxDD=dd;});
     const wr = (won.length/trades.length)*100;
-    const withFib = trades.filter(t=>t.market_data?.fib_bonus>0);
-    const withWhales = trades.filter(t=>t.market_data?.whale_count>=3);
+    const withFib = trades.filter(t=>t.market_data?.fib_bonus>0), withWhales = trades.filter(t=>t.market_data?.whale_count>=3);
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
-    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']); // cancelled excluido
-    const sources = ['scalping','auto','manual','backtest'];
+    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
     const bySource = {};
-    for (const src of sources) {
-      const st = (allTrades||[]).filter(t=>t.source===src);
-      const sw = st.filter(t=>t.status==='won');
-      const closed = st.filter(t=>t.status!=='open');
-      if (!closed.length) continue;
-      const sp = closed.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
-      bySource[src] = { total:closed.length, won:sw.length, lost:closed.length-sw.length, winRate:parseFloat(((sw.length/Math.max(closed.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(closed.length,1)).toFixed(2)) };
+    for (const src of ['scalping','auto','manual','backtest']) {
+      const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+      if (!st.length) continue;
+      bySource[src] = { total:st.length, won:sw.length, lost:st.length-sw.length, winRate:parseFloat(((sw.length/Math.max(st.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(st.length,1)).toFixed(2)) };
     }
     const topDivs = won.reduce((acc,t)=>{const d=t.market_data?.top_divergence;if(d)acc[d]=(acc[d]||0)+1;return acc;},{});
     const recs = [];
-    const avgConfW = parseFloat(avg(won,'confidence'));
-    const avgConfL = parseFloat(avg(lost,'confidence'));
-    if (!isNaN(avgConfW) && !isNaN(avgConfL) && avgConfW > avgConfL+5) recs.push(`Subir umbral mínimo a ${Math.round(avgConfW-2)}% (ganadores: ${avgConfW.toFixed(0)}% vs perdedores: ${avgConfL.toFixed(0)}%)`);
+    const avgConfW = parseFloat(avg(won,'confidence')), avgConfL = parseFloat(avg(lost,'confidence'));
+    if (!isNaN(avgConfW) && !isNaN(avgConfL) && avgConfW > avgConfL+5) recs.push(`Subir umbral a ${Math.round(avgConfW-2)}% (ganadores: ${avgConfW.toFixed(0)}% vs perdedores: ${avgConfL.toFixed(0)}%)`);
     const wrFib = withFib.length > 0 ? (withFib.filter(t=>t.status==='won').length/withFib.length*100) : 0;
-    if (wrFib > wr+10) recs.push(`Fibonacci activo mejora WR en ${(wrFib-wr).toFixed(1)}% — priorizar señales con nivel Fib cercano`);
-    res.json({
-      total:trades.length, won:won.length, lost:lost.length,
-      winRate: wr.toFixed(1), totalPnl: totalPnl.toFixed(2),
-      avgWin: avgWin.toFixed(2), avgLoss: avgLoss.toFixed(2),
-      profitFactor: avgLoss>0?(avgWin/avgLoss).toFixed(2):'∞',
-      maxDrawdown: maxDD.toFixed(2),
-      avgConfidenceWon: avg(won,'confidence'), avgConfidenceLost: avg(lost,'confidence'),
-      avgRsiWon: avg(won,'rsi_15m'), avgRsiLost: avg(lost,'rsi_15m'),
-      winRateWithFib: wrFib.toFixed(1),
-      winRateWithWhales: withWhales.length>0?(withWhales.filter(t=>t.status==='won').length/withWhales.length*100).toFixed(1):'0',
-      winRateAligned4h: aligned4h.length>0?(aligned4h.filter(t=>t.status==='won').length/aligned4h.length*100).toFixed(1):'n/a',
-      topDivergencesWon: topDivs, bySource, recommendations: recs
-    });
+    if (wrFib > wr+10) recs.push(`Fibonacci mejora WR en ${(wrFib-wr).toFixed(1)}% — priorizar señales con Fib`);
+    res.json({ total:trades.length, won:won.length, lost:lost.length, winRate: wr.toFixed(1), totalPnl: totalPnl.toFixed(2), avgWin: avgWin.toFixed(2), avgLoss: avgLoss.toFixed(2), profitFactor: avgLoss>0?(avgWin/avgLoss).toFixed(2):'∞', maxDrawdown: maxDD.toFixed(2), avgConfidenceWon: avg(won,'confidence'), avgConfidenceLost: avg(lost,'confidence'), avgRsiWon: avg(won,'rsi_15m'), avgRsiLost: avg(lost,'rsi_15m'), winRateWithFib: wrFib.toFixed(1), winRateWithWhales: withWhales.length>0?(withWhales.filter(t=>t.status==='won').length/withWhales.length*100).toFixed(1):'0', winRateAligned4h: aligned4h.length>0?(aligned4h.filter(t=>t.status==='won').length/aligned4h.length*100).toFixed(1):'n/a', topDivergencesWon: topDivs, bySource, recommendations: recs });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1309,52 +1195,89 @@ app.post('/api/ml/optimize', async (req, res) => {
   try {
     const { data: trades } = await supabase.from('paper_trades').select('*').in('status',['won','lost']).not('market_data','is',null).limit(1000);
     if (!trades || trades.length < 50) return res.json({ optimized:false, reason:'insufficient_data', trades:trades?.length||0 });
-    const won = trades.filter(t=>t.status==='won');
-    const winRate = won.length/trades.length;
-    const adjustments = {};
-    const recommendations = [];
-    // Simple optimization: check if high confidence trades win more
-    const highConf = trades.filter(t=>(t.market_data?.confidence||0)>=90);
-    const lowConf  = trades.filter(t=>(t.market_data?.confidence||0)<90);
-    if (highConf.length>=10&&lowConf.length>=10) {
-      const wrH = highConf.filter(t=>t.status==='won').length/highConf.length;
-      const wrL = lowConf.filter(t=>t.status==='won').length/lowConf.length;
-      if (wrH>wrL+0.1) { adjustments.min_confidence={from:85,to:88}; recommendations.push(`Alta confianza (≥90%) WR: ${(wrH*100).toFixed(1)}% vs baja: ${(wrL*100).toFixed(1)}%`); }
-    }
+    const won = trades.filter(t=>t.status==='won'), winRate = won.length/trades.length;
+    const adjustments = {}, recommendations = [];
+    const highConf = trades.filter(t=>(t.market_data?.confidence||0)>=90), lowConf = trades.filter(t=>(t.market_data?.confidence||0)<90);
+    if (highConf.length>=10&&lowConf.length>=10) { const wrH=highConf.filter(t=>t.status==='won').length/highConf.length, wrL=lowConf.filter(t=>t.status==='won').length/lowConf.length; if(wrH>wrL+0.1){adjustments.min_confidence={from:85,to:88};recommendations.push(`Alta confianza WR: ${(wrH*100).toFixed(1)}% vs baja: ${(wrL*100).toFixed(1)}%`);} }
     res.json({ optimized:true, trades:trades.length, winRate:(winRate*100).toFixed(1), adjustments_count:Object.keys(adjustments).length, adjustments, recommendations });
   } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ─── SCALPING ENDPOINTS ──────────────────────────────────────────
-let scalpingActive = false;
-let scalpingInterval = null;
+// ─── SCALPING ────────────────────────────────────────────────────
+let scalpingActive = false, scalpingInterval = null;
 
 app.post('/api/scalping/start', (req, res) => {
   if (scalpingActive) return res.json({ ok: false, message: 'Scalping ya activo' });
   const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
   const intervalMin = parseFloat(process.env.SCALP_INTERVAL_MIN || '3');
   scalpingActive = true;
-  scalpingInterval = setInterval(async () => {
-    for (const sym of symbols) {
-      try { await runScalpingAnalysis(sym.trim()); } catch(_) {}
-      await new Promise(r => setTimeout(r, 2000));
-    }
-  }, intervalMin * 60 * 1000);
+  scalpingInterval = setInterval(async () => { for (const sym of symbols) { try { await runScalpingAnalysis(sym.trim()); } catch(_) {} await new Promise(r => setTimeout(r, 2000)); } }, intervalMin * 60 * 1000);
   setTimeout(async () => { for (const sym of symbols) { try { await runScalpingAnalysis(sym.trim()); } catch(_) {} } }, 5000);
   res.json({ ok: true, message: `Scalping activado cada ${intervalMin} min` });
 });
 
 app.post('/api/scalping/stop', (req, res) => {
   if (!scalpingActive) return res.json({ ok: false, message: 'Scalping no estaba activo' });
-  clearInterval(scalpingInterval);
-  scalpingActive = false;
-  scalpingInterval = null;
+  clearInterval(scalpingInterval); scalpingActive = false; scalpingInterval = null;
   res.json({ ok: true, message: 'Scalping desactivado' });
 });
 
 app.get('/api/scalping/status', (req, res) => {
   res.json({ active: scalpingActive, intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'), threshold: parseInt(process.env.SCALP_THRESHOLD || '88'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',') });
 });
+
+function detectDoublePatterns(klines15m, price) {
+  try {
+    if (!klines15m || klines15m.length < 30) return [];
+    const patterns = [], highs = klines15m.map(k => parseFloat(k[2])), lows = klines15m.map(k => parseFloat(k[3])), closes = klines15m.map(k => parseFloat(k[4])), volumes = klines15m.map(k => parseFloat(k[5])), n = closes.length, lookback = 20;
+    let peaks = [];
+    for (let i = n - lookback; i < n - 1; i++) { if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) peaks.push({ idx: i, price: highs[i], vol: volumes[i] }); }
+    if (peaks.length >= 2) {
+      const p1 = peaks[peaks.length-2], p2 = peaks[peaks.length-1];
+      const priceDiff = Math.abs(p1.price - p2.price) / p1.price * 100;
+      const volDivergence = p2.vol < p1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, p1.idx+1)), rsi2 = calcRSI(closes.slice(0, p2.idx+1));
+      const rsiDivergence = rsi2 < rsi1 - 3;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price < p2.price*0.999) prob+=7;
+        const neckline = Math.min(...lows.slice(p1.idx, p2.idx+1));
+        patterns.push({ type:'double_top', name:'┳ Double Top — Scalping Bajista', direction:'SHORT', probability:Math.min(92,prob), entry:price, tp:neckline-(p2.price-neckline)*0.8, sl:p2.price*1.002, description:`Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal bajista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
+      }
+    }
+    let troughs = [];
+    for (let i = n - lookback; i < n - 1; i++) { if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) troughs.push({ idx: i, price: lows[i], vol: volumes[i] }); }
+    if (troughs.length >= 2) {
+      const t1 = troughs[troughs.length-2], t2 = troughs[troughs.length-1];
+      const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100;
+      const volDivergence = t2.vol < t1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, t1.idx+1)), rsi2 = calcRSI(closes.slice(0, t2.idx+1));
+      const rsiDivergence = rsi2 > rsi1 + 3;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+        let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price > t2.price*1.001) prob+=7;
+        const neckline = Math.max(...highs.slice(t1.idx, t2.idx+1));
+        patterns.push({ type:'double_bottom', name:'▲ Double Bottom — Scalping Alcista', direction:'LONG', probability:Math.min(92,prob), entry:price, tp:neckline+(neckline-t2.price)*0.8, sl:t2.price*0.998, description:`Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal alcista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
+      }
+    }
+    return patterns;
+  } catch(e) { return []; }
+}
+
+function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
+  try {
+    if (!divergences.length) return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+    const longs = divergences.filter(d => d.direction === 'LONG'), shorts = divergences.filter(d => d.direction === 'SHORT');
+    let longScore = longs.reduce((s,d)=>s+d.probability,0)/Math.max(longs.length,1);
+    let shortScore = shorts.reduce((s,d)=>s+d.probability,0)/Math.max(shorts.length,1);
+    if(bias15m?.bias==='long') longScore+=12; if(bias15m?.bias==='short') shortScore+=12;
+    if(bias1h?.bias==='long') longScore+=8; if(bias1h?.bias==='short') shortScore+=8;
+    if(bias4h?.bias==='long') longScore+=4; if(bias4h?.bias==='short') shortScore+=4;
+    if(divergences.some(d=>d.type==='double_top')) shortScore+=15;
+    if(divergences.some(d=>d.type==='double_bottom')) longScore+=15;
+    const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
+    const prob = direction === 'SHORT' ? shortScore : direction === 'LONG' ? longScore : 30;
+    return { direction, probability:Math.min(95,Math.round(prob)), action:prob>=78?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', mode:'scalping' };
+  } catch(e) { return { direction:'ESPERAR', probability:30, action:'ESPERAR' }; }
+}
 
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   try {
@@ -1370,52 +1293,44 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const cvd3m = calcCVD(k3m.data);
     const rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
     const fib3m = calcFibonacci(k3m.data, price);
+    const wsM = getWsMetrics(symbol);
     let longScore = 0, shortScore = 0;
     const imb = parseFloat(ob.imbalance||0);
     if (imb > 20) longScore += 30; if (imb < -20) shortScore += 30;
-    if (cvd3m.trend==='bull'&&cvd3m.cvdPct>5) longScore += 25;
-    if (cvd3m.trend==='bear'&&cvd3m.cvdPct<-5) shortScore += 25;
+    if (cvd3m.trend==='bull'&&cvd3m.cvdPct>5) longScore += 25; if (cvd3m.trend==='bear'&&cvd3m.cvdPct<-5) shortScore += 25;
     if (rsi3m < 35) longScore += 15; if (rsi3m > 65) shortScore += 15;
-    if (fib3m?.retImpact?.signal==='long_bounce') longScore += 15;
-    if (fib3m?.retImpact?.signal==='short_bounce') shortScore += 15;
-    if (ob.bidWalls?.length>0) longScore += 10;
-    if (ob.askWalls?.length>0) shortScore += 10;
+    if (fib3m?.retImpact?.signal==='long_bounce') longScore += 15; if (fib3m?.retImpact?.signal==='short_bounce') shortScore += 15;
+    if (ob.bidWalls?.length>0) longScore += 10; if (ob.askWalls?.length>0) shortScore += 10;
+    // WebSocket boost para scalping
+    if (wsM?.anomaly && Date.now() - wsM.anomaly.time < 3*60*1000) {
+      if (wsM.anomaly.direction === 'LONG') longScore += 20;
+      if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
+    }
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
     const scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
-    if (scalpProb < 65) return;
-    const scalpThreshold = parseInt(process.env.SCALP_THRESHOLD || '88');
-    if (scalpProb < scalpThreshold) return;
-    const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2]));
-    const lows3m  = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
+    if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '88')) return;
+    const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2])), lows3m = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
     const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20;
     const atr3m = Math.max(rawAtr, price*0.004);
     const isLong = scalpDir==='LONG';
-    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2;
-    const sl  = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
+    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2, sl = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
     if (existing?.length) return;
-    await supabase.from('paper_trades').insert({
-      symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl,
-      rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb,
-      size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'),
-      leverage:parseInt(process.env.PAPER_LEVERAGE||'10'),
-      source:'scalping', status:'open',
-      market_data:{ confidence:scalpProb, direction:scalpDir, rsi_3m:rsi3m, cvd_3m:cvd3m.cvdPct, ob_imbalance:imb, price, timestamp:new Date().toISOString(), mode:'scalping' }
-    });
+    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'), leverage:parseInt(process.env.PAPER_LEVERAGE||'10'), source:'scalping', status:'open', market_data:{ confidence:scalpProb, direction:scalpDir, rsi_3m:rsi3m, cvd_3m:cvd3m.cvdPct, ob_imbalance:imb, price, ws_anomaly:wsM?.anomaly?.reason||null, timestamp:new Date().toISOString(), mode:'scalping' } });
     if (process.env.TELEGRAM_CHAT_ID) {
-      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%`;
+      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
     }
-    console.log(`⚡ Scalp paper trade: ${scalpDir} ${symbol} @ $${price}`);
+    console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
   } catch(e) { console.error('Scalping error:', e.message); }
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.1.1 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.0 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
