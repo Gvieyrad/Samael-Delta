@@ -889,9 +889,15 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const pnl_usd = parseFloat((size * priceDiff).toFixed(2));
     const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
 
+    const finalStatus = close_reason === 'tp1' || close_reason === 'tp2' ? 'won'
+      : close_reason === 'sl' ? 'lost'
+      : close_reason === 'manual' ? 'cancelled'
+      : 'closed';
     const { data, error } = await supabase.from('paper_trades').update({
-      status: close_reason === 'tp1' || close_reason === 'tp2' ? 'won' : close_reason === 'sl' ? 'lost' : 'closed',
-      close_price: closeP, close_reason, pnl_usd, pnl_pct, closed_at: new Date().toISOString()
+      status: finalStatus,
+      close_price: closeP, close_reason, pnl_usd: finalStatus === 'cancelled' ? 0 : pnl_usd,
+      pnl_pct: finalStatus === 'cancelled' ? 0 : pnl_pct,
+      closed_at: new Date().toISOString()
     }).eq('id', id).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
@@ -909,6 +915,7 @@ app.get('/api/paper/open', async (req, res) => {
 app.get('/api/paper/stats', async (req, res) => {
   try {
     const { data, error } = await supabase.from('paper_trades').select('*').in('status', ['won', 'lost']).order('created_at', { ascending: false }).limit(100);
+    // 'cancelled' excluido intencionalmente — no cuenta en estadísticas
     if (error) throw error;
     const total = data.length;
     const won = data.filter(t => t.status === 'won').length;
@@ -962,7 +969,7 @@ async function monitorPaperTrades() {
             await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id);
             continue;
           }
-          await supabase.from('paper_trades').update({ status: closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          await supabase.from('paper_trades').update({ status: closeReason === 'tp2' ? 'won' : closeReason === 'tp1' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
             const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
@@ -1242,7 +1249,7 @@ app.get('/api/ml/insights', async (req, res) => {
   try {
     const { data: trades, error } = await supabase.from('paper_trades')
       .select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci')
-      .in('status', ['won','lost'])
+      .in('status', ['won','lost'])  // cancelled excluido del ML
       .order('created_at', { ascending: false })
       .limit(2000);
     if (error) throw error;
@@ -1264,7 +1271,7 @@ app.get('/api/ml/insights', async (req, res) => {
     const withFib = trades.filter(t=>t.market_data?.fib_bonus>0);
     const withWhales = trades.filter(t=>t.market_data?.whale_count>=3);
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
-    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost','closed']);
+    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']); // cancelled excluido
     const sources = ['scalping','auto','manual','backtest'];
     const bySource = {};
     for (const src of sources) {
