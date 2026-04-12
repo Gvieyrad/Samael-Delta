@@ -947,7 +947,7 @@ function renderPaper(){
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Entry</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${parseInt(entry).toLocaleString()}</div></div>
+          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Entry</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${parseInt(entry).toLocaleString()}</div><div style="font-size:9px;color:#2a3040;margin-top:2px">${new Date(t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${time}</div></div>
           <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Precio actual</div><div class="mono" style="font-size:12px;font-weight:700;color:#f59e0b">$${parseInt(currentP).toLocaleString()}</div></div>
           <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Tamaño</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${(size).toLocaleString()}</div></div>
         </div>
@@ -969,7 +969,7 @@ function renderPaper(){
         <div style="display:flex;gap:6px">
           <button onclick="closePaperTrade('${t.id}','tp1')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
           <button onclick="closePaperTrade('${t.id}','sl')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','manual')" style="padding:7px 10px;background:#111520;color:#4b5563;border:1px solid #1e2330;border-radius:5px;font-size:11px;cursor:pointer">✕</button>
+          <button onclick="closePaperTrade('${t.id}','manual')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
         </div>
         <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
           <span>Abierto: ${time}</span>
@@ -997,13 +997,28 @@ function renderPaper(){
       <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
       ${s.recentTrades.slice(0,8).map(t=>{
         if(t.status==='closed'&&(t.pnl_usd===0||t.pnl_usd===null))return'';
-        const won=t.status==='won',lost=t.status==='lost';
-        const pnlCol=won?'#00d68f':lost?'#ff4d6d':'#f59e0b';
-        const icon=won?'✓':lost?'✗':'—';
+        const won=t.status==='won',lost=t.status==='lost',cancelled=t.status==='cancelled';
+        const pnlCol=won?'#00d68f':lost?'#ff4d6d':cancelled?'#4b5563':'#f59e0b';
+        const icon=won?'✓':lost?'✗':cancelled?'○':'—';
         const date=new Date(t.closed_at||t.created_at).toLocaleDateString('es-PE',{month:'2-digit',day:'2-digit'});
         const srcIcon=t.source==='scalping'?'⚡':t.source==='auto'?'🤖':t.source==='manual'?'👤':'📊';
         const srcCol=t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='manual'?'#f59e0b':'#4b5563';
-        return`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:13px;color:${pnlCol};font-weight:700;width:14px">${icon}</span><span style="font-size:10px;color:${srcCol};width:16px">${srcIcon}</span><span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700;width:42px">${t.direction}</span><span style="font-size:10px;color:#4b5563;flex:1">${t.symbol}</span><span style="font-size:10px;color:#2a3040">${date}</span><span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:58px;text-align:right">${(t.pnl_usd>=0?'+':'')+'$'+(t.pnl_usd||0).toFixed(0)}</span></div>`;
+        const openTime = new Date(t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'});
+        const closeTime = t.closed_at ? new Date(t.closed_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '–';
+        const closeDate = t.closed_at ? new Date(t.closed_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'}) : '';
+        return`<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:13px;color:${pnlCol};font-weight:700;width:14px">${icon}</span>
+            <span style="font-size:10px;color:${srcCol};width:16px">${srcIcon}</span>
+            <span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700;width:42px">${t.direction}</span>
+            <span style="font-size:10px;color:#4b5563;flex:1">${t.symbol}</span>
+            <span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:58px;text-align:right">${(t.pnl_usd>=0?'+':'')+'$'+(t.pnl_usd||0).toFixed(0)}</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:3px;padding-left:30px;font-size:9px;color:#2a3040">
+            <span>📅 Apertura: ${date} ${openTime}</span>
+            ${t.closed_at?`<span>🏁 Cierre: ${closeDate} ${closeTime}</span>`:''}
+          </div>
+        </div>`;
       }).join('')}
     </div>`;
   } else {
