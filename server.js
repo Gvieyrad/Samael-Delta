@@ -878,6 +878,9 @@ const signalHistory = {};
 function confirmSignal(symbol, direction, probability) {
   if (!signalHistory[symbol]) signalHistory[symbol] = [];
   const now = Date.now();
+  const minConf = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
+  // No acumular señales por debajo del umbral mínimo
+  if (probability < minConf) return { confirmed: false, count: 0 };
   const history = signalHistory[symbol];
   history.push({ direction, probability, timestamp: now });
   signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
@@ -933,7 +936,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     if (!confirmation.confirmed) return;
     const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
     const now = Date.now();
-    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 30 * 60 * 1000) return;
+    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 45 * 60 * 1000) return; // 45 min cooldown
     alertCache[cacheKey] = now;
     const marketData = { price, change24h: parseFloat(ticker.data.priceChangePercent), fundingRate, openInterest: parseFloat(oiRes.data.openInterest), rsi15m: calcRSI(closes15m), cvd15m, vrvp, volDeltaPct: 0, orderBook: ob, liqMagnets: calcLiqMagnets(price).slice(0,5), divergences: divergences.slice(0,4), combinedSignal, bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d } };
     const divSummary = divergences.slice(0,3).map(d => `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`).join('\n');
@@ -958,6 +961,11 @@ Responde SOLO JSON sin markdown:
     const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
     signal.rr = `1:${_rrVal.toFixed(1)}`;
     if (signal.confidence < minConfidence) return;
+    // ✅ Filtro R:R — no mandar alerta si R:R < 1.5
+    if (_rrVal < 1.5 && signal.direction !== 'ESPERAR') {
+      console.log(`⚠️ Alerta descartada — R:R ${_rrVal.toFixed(2)} < 1.5 para ${symbol}`);
+      return;
+    }
     if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) return;
     const dir = signal.direction;
     const emoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '🟡';
