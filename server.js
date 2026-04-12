@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.2' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -132,28 +132,44 @@ async function evaluateAnomaly(symbol) {
   const metrics = getWsMetrics(symbol);
   if (!metrics) return;
 
-  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '5');
+  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '10');
   const whaleThresholdUsd = parseFloat(process.env.WS_WHALE_THRESHOLD || '2000000');
   const now = Date.now();
 
-  // ── DETECCIÓN 1: Volumen anómalo (>5x promedio) ──────────────
+  // ── DETECCIÓN 1: Volumen anómalo (>10x promedio) ─────────────
   const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
 
-  // ── DETECCIÓN 2: CVD extremo en 60s ─────────────────────────
-  const isBearishSweep = metrics.cvdLive < -30 && isVolumeAnomaly; // venta agresiva masiva
-  const isBullishSweep = metrics.cvdLive > 30 && isVolumeAnomaly;  // compra agresiva masiva
+  // ── DETECCIÓN 2: CVD extremo en 60s (>40% dominancia) ───────
+  const isBearishSweep = metrics.cvdLive < -40 && isVolumeAnomaly; // barrida bajista real
+  const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;  // barrida alcista real
 
-  // ── DETECCIÓN 3: Ballena única >$2M ─────────────────────────
+  // ── DETECCIÓN 3: Precio moviéndose >0.5% en 60s ─────────────
+  // Confirma que la presión está moviendo el mercado, no es solo ruido
+  const prices60s = state.trades.filter(t => now - t.time < 60000).map(t => t.price);
+  const priceMove60s = prices60s.length >= 2
+    ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100
+    : 0;
+  const isPriceMoving = priceMove60s >= 0.5;
+
+  // Barrida real = las 3 condiciones juntas
+  const isRealBearishSweep = isBearishSweep && isPriceMoving;
+  const isRealBullishSweep = isBullishSweep && isPriceMoving;
+
+  // ── DETECCIÓN 4: Ballena única >$2M ─────────────────────────
   const bigWhale = state.trades.find(t => t.usdVal >= whaleThresholdUsd && now - t.time < 30000);
+
+  // Reemplazar referencias a isBearishSweep/isBullishSweep con las versiones "real"
+  const _isBearishSweep = isRealBearishSweep;
+  const _isBullishSweep = isRealBullishSweep;
 
   // ── DETECCIÓN 4: Zona de liquidación cercana ─────────────────
   const liqZoneBonus = calcLiqZoneBonus(symbol, metrics.lastPrice);
 
-  if (!isBearishSweep && !isBullishSweep && !bigWhale) return;
+  if (!isRealBearishSweep && !isRealBullishSweep && !bigWhale) return;
 
-  const direction = isBearishSweep ? 'SHORT' : isBullishSweep ? 'LONG' : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
-  const reason = isBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x` :
-                 isBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x` :
+  const direction = isRealBearishSweep ? 'SHORT' : isRealBullishSweep ? 'LONG' : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
+  const reason = isRealBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio -${priceMove60s.toFixed(2)}%` :
+                 isRealBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio +${priceMove60s.toFixed(2)}%` :
                  `Ballena $${(bigWhale.usdVal/1e6).toFixed(2)}M ${bigWhale.isBuy ? 'comprando' : 'vendiendo'}`;
 
   // Evitar spam — cooldown de 3 minutos por símbolo+dirección
@@ -168,7 +184,13 @@ async function evaluateAnomaly(symbol) {
   // ── ACCIÓN 1: Cerrar posiciones contrarias automáticamente ──
   await killSwitchOpposite(symbol, direction, reason);
 
-  // ── ACCIÓN 2: Alerta Telegram urgente ───────────────────────
+  // ── ACCIÓN 2: Abrir posición contraria si es barrida real (vol >5x) ──
+  // Solo barridas reales, no ballenas solas — demasiado riesgo sin volumen
+  if ((isRealBearishSweep || isRealBullishSweep) && direction !== 'ESPERAR') {
+    await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
+  }
+
+  // ── ACCIÓN 3: Alerta Telegram urgente ───────────────────────
   if (process.env.TELEGRAM_CHAT_ID) {
     const emoji = direction === 'SHORT' ? '🔴' : '🟢';
     const msg = `${emoji} *ALERTA TIEMPO REAL — ${symbol}*\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Zona liquidación cercana — imán activo +' + liqZoneBonus + '%' : ''}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
@@ -209,6 +231,91 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       }
     }
   } catch(e) { console.error('Kill switch error:', e.message); }
+}
+
+// ── ABRIR POSICIÓN CONTRA LA BARRIDA (5m analysis) ──────────────
+async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
+  try {
+    // No abrir si ya hay trade abierto en ese par
+    const { data: existing } = await supabase.from('paper_trades')
+      .select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) {
+      console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`);
+      return;
+    }
+
+    const price = metrics.lastPrice;
+    if (!price) return;
+
+    // Obtener klines de 5m para calcular ATR y niveles precisos
+    const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
+    const highs5m = k5m.data.map(k => parseFloat(k[2]));
+    const lows5m  = k5m.data.map(k => parseFloat(k[3]));
+    const atr5m   = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr = Math.max(atr5m, price * 0.003); // mínimo 0.3%
+
+    const isShort = direction === 'SHORT';
+
+    // TP apunta a la zona de liquidación más cercana en la dirección del sweep
+    // SL ajustado — barridas son rápidas, SL estrecho
+    const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
+    const sl  = isShort ? price + atr * 0.8  : price - atr * 0.8;
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+
+    if (rrVal < 1.5) {
+      console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`);
+      return;
+    }
+
+    // Confianza basada en intensidad de la barrida
+    const sweepConfidence = Math.min(95, Math.round(
+      70 +
+      (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) +
+      (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) +
+      liqBonus
+    ));
+
+    await supabase.from('paper_trades').insert({
+      symbol,
+      direction,
+      entry: price,
+      tp1, tp2: isShort ? price - atr * 4 : price + atr * 4,
+      sl,
+      rr: `1:${rrVal.toFixed(1)}`,
+      confidence: sweepConfidence,
+      size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+      leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
+      source: 'sweep',
+      status: 'open',
+      market_data: {
+        confidence: sweepConfidence,
+        direction,
+        sweep_reason: reason,
+        cvd_live: metrics.cvdLive,
+        volume_multiplier: metrics.volumeMultiplier,
+        whale_count: metrics.whaleCount,
+        liq_bonus: liqBonus,
+        atr_5m: atr.toFixed(1),
+        price,
+        timestamp: new Date().toISOString(),
+        mode: 'sweep'
+      }
+    });
+
+    console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
+
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'SHORT' ? '▼' : '▲';
+      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*
+${e} ${direction} @ $${parseInt(price).toLocaleString()}
+🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}
+📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%
+⚡ ${reason}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+  } catch(e) {
+    console.error('Sweep trade error:', e.message);
+  }
 }
 
 // ── LIQUIDEZ COMO SEÑAL ACTIVA ────────────────────────────────────
@@ -1339,6 +1446,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.0 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.2 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
