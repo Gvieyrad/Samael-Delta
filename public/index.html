@@ -441,9 +441,16 @@ function renderTFGrid(){
     const oiColor=oiTrend==='rising'?'#ff4d6d':oiTrend==='falling'?'#00d68f':'#4b5563';
     const oiIcon=oiTrend==='rising'?'↑':oiTrend==='falling'?'↓':'→';
     const fr=d.fundingRate||0;const frCol=frColor(fr);const frStr=(fr>=0?'+':'')+(fr*100).toFixed(4)+'%';
+    // % cambio de precio en la temporalidad — usa vwap como proxy si priceVsPrev no viene
+    const pvp = parseFloat(d.priceVsPrev||0);
+    const pvpStr = (pvp>=0?'+':'')+pvp.toFixed(2)+'%';
+    const pvpCol = pvp>0.3?'#00d68f':pvp<-0.3?'#ff4d6d':'#6b7280';
     return `<div class="tf-card">
       <div class="tf-label">${t.tf}</div>
-      <div class="tf-bias" style="color:${bColor}">${bLabel} <span style="font-size:11px;color:#4b5563">${d.score}/100</span></div>
+      <div class="tf-bias" style="color:${bColor};display:flex;justify-content:space-between;align-items:baseline">
+        <span>${bLabel} <span style="font-size:10px;color:#4b5563;font-weight:400">${d.score}/100</span></span>
+        <span style="font-size:12px;font-weight:700;color:${pvpCol}">${pvpStr}</span>
+      </div>
       <div class="tf-row"><span class="tf-key">RSI</span><span class="tf-val ${rsiClass}" style="color:${rsiColor}">${d.rsi}</span></div>
       <div class="tf-row"><span class="tf-key">CVD%</span><span class="tf-val ${cvdClass}" style="color:${cvdColor}">${d.cvdPct>=0?'+':''}${d.cvdPct}%</span></div>
       <div class="tf-row"><span class="tf-key">Vol%</span><span class="tf-val ${volClass}" style="color:${volColor}">${d.volPct>=0?'+':''}${d.volPct}%</span></div>
@@ -1070,73 +1077,66 @@ async function refreshNews(){
   const el=document.getElementById('news-panel');if(!el)return;
   el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Cargando noticias...</div>';
 
+  function sentimentTag(title) {
+    const t=title.toLowerCase();
+    const bull=['surge','jump','rally','bullish','etf','approval','buy','rise','pump','adopt','partnership','launch','upgrade','all-time','ath','record','gains','soars'].some(w=>t.includes(w));
+    const bear=['crash','drop','fall','bearish','ban','hack','sell','dump','fear','war','sanction','inflation','lawsuit','fraud','scam','plunge','tumble','slump','concerns'].some(w=>t.includes(w));
+    return bull?{col:'#00d68f',emoji:'🟢',label:'ALCISTA'}:bear?{col:'#ff4d6d',emoji:'🔴',label:'BAJISTA'}:{col:'#f59e0b',emoji:'🟡',label:'NEUTRO'};
+  }
+
   function renderNewsItems(items) {
-    if(!items||!items.length){
-      el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';
-      return;
-    }
+    if(!items||!items.length){el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';return;}
     el.innerHTML=items.slice(0,6).map(n=>{
-      const title=n.title||'';
-      const src=n.source||n.source_info?.name||'';
+      const title=n.title||'';const src=n.source||'';
       const ago=n.published_on?Math.round((Date.now()/1000-n.published_on)/60)+'m':'';
-      const t=title.toLowerCase();
-      const bull=['surge','jump','rally','bullish','etf','approval','buy','rise','high','pump','ceasefire','adopt','partnership','launch','upgrade'].some(w=>t.includes(w));
-      const bear=['crash','drop','fall','bearish','ban','hack','sell','low','dump','fear','war','sanction','inflation','lawsuit','fraud','scam'].some(w=>t.includes(w));
-      const col=bull?'#00d68f':bear?'#ff4d6d':'#f59e0b';
-      const emoji=bull?'🟢':bear?'🔴':'🟡';
-      const sentiment=bull?'ALCISTA':bear?'BAJISTA':'NEUTRO';
-      const url=n.url||n.guid||'#';
+      const s=sentimentTag(title);const url=n.url||'#';
       return`<div style="padding:10px 14px;border-bottom:1px solid #1a2035;cursor:pointer" onclick="window.open('${url}','_blank')">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span>${emoji}</span>
-          <span style="font-size:10px;color:${col};font-weight:700">${sentiment}</span>
-          <span style="font-size:9px;color:#2a3040;margin-left:auto">${src} · ${ago}</span>
+          <span>${s.emoji}</span><span style="font-size:10px;color:${s.col};font-weight:700">${s.label}</span>
+          <span style="font-size:9px;color:#2a3040;margin-left:auto">${src}${ago?' · '+ago:''}</span>
         </div>
         <div style="font-size:11px;color:#e2e4ea;line-height:1.4">${title}</div>
       </div>`;
     }).join('');
   }
 
-  // Intentar primero el backend propio
+  // 1. Backend propio (Railway) — fuente principal
   try {
-    const data = await fetch(`${API}/api/news/latest`).then(r=>r.json());
-    if(data && data.length >= 1) { renderNewsItems(data); return; }
+    const data = await fetch(`${API}/api/news/latest`,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
+    if(data && Array.isArray(data) && data.length >= 1) { renderNewsItems(data); return; }
   } catch(_) {}
 
-  // Fallback 1: CryptoCompare sin auth key (funciona para datos públicos)
+  // 2. CryptoCompare API pública (no requiere key, CORS abierto)
   try {
-    const cc = await fetch(
-      'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=10',
-      { headers: { 'accept': 'application/json' } }
-    ).then(r=>r.json());
-    if(cc.Data && cc.Data.length) {
-      renderNewsItems(cc.Data.map(n=>({
-        title: n.title,
-        source: n.source_info?.name || n.source,
-        published_on: n.published_on,
-        url: n.url
-      })));
+    const cc = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=10',
+      {signal:AbortSignal.timeout(5000)}).then(r=>r.json());
+    if(cc.Data?.length) {
+      renderNewsItems(cc.Data.map(n=>({title:n.title,source:n.source_info?.name||n.source,published_on:n.published_on,url:n.url})));
       return;
     }
   } catch(_) {}
 
-  // Fallback 2: CryptoPanic (RSS público, no requiere auth)
+  // 3. RSS via allorigins proxy (evita CORS en browser)
   try {
-    const cp = await fetch(
-      'https://cryptopanic.com/api/v1/posts/?auth_token=&public=true&kind=news&currencies=BTC,ETH',
-    ).then(r=>r.json());
-    if(cp.results && cp.results.length) {
-      renderNewsItems(cp.results.slice(0,8).map(n=>({
-        title: n.title,
-        source: n.source?.title || 'CryptoPanic',
-        published_on: Math.floor(new Date(n.published_at).getTime()/1000),
-        url: n.url
-      })));
-      return;
+    const rssUrl = encodeURIComponent('https://cointelegraph.com/rss');
+    const proxy = await fetch(`https://api.allorigins.win/get?url=${rssUrl}`,
+      {signal:AbortSignal.timeout(6000)}).then(r=>r.json());
+    if(proxy.contents) {
+      const items=[];
+      const rx=/<item>([\s\S]*?)<\/item>/g;let m;
+      while((m=rx.exec(proxy.contents))!==null&&items.length<8){
+        const it=m[1];
+        const title=(it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)||it.match(/<title>(.*?)<\/title>/))?.[1]||'';
+        const url=(it.match(/<link>(.*?)<\/link>/))?.[1]||'';
+        const pub=(it.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]||'';
+        if(title) items.push({title:title.trim(),source:'CoinTelegraph',
+          published_on:pub?Math.floor(new Date(pub).getTime()/1000):Math.floor(Date.now()/1000),url});
+      }
+      if(items.length){renderNewsItems(items);return;}
     }
   } catch(_) {}
 
-  el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias disponibles — reintenta en unos minutos</div>';
+  el.innerHTML='<div style="padding:12px 14px;font-size:11px;color:#4b5563;text-align:center">⚠ Noticias no disponibles — <a href="https://cointelegraph.com" target="_blank" style="color:#f59e0b">ver CoinTelegraph</a></div>';
 }
 
 fetchAll();
