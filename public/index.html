@@ -146,6 +146,25 @@ input[type=number]:focus{border-color:#f59e0b}
   </div>
 </div>
 
+<!-- ⚡ Widget WebSocket Tiempo Real -->
+<div id="ws-widget" style="background:#0a0d12;border-bottom:1px solid #1e2330;padding:6px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+  <span style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#4b5563;font-weight:700">⚡ Flujo en vivo</span>
+  <div id="ws-btc" style="display:flex;align-items:center;gap:6px">
+    <span style="font-size:10px;font-weight:700;color:#f59e0b;font-family:monospace">BTC</span>
+    <span id="ws-btc-cvd" style="font-size:11px;font-family:monospace;font-weight:700">–</span>
+    <span id="ws-btc-vol" style="font-size:10px;color:#4b5563">vol –x</span>
+    <span id="ws-btc-status" style="font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700">–</span>
+  </div>
+  <div style="width:1px;height:16px;background:#1e2330"></div>
+  <div id="ws-eth" style="display:flex;align-items:center;gap:6px">
+    <span style="font-size:10px;font-weight:700;color:#8b5cf6;font-family:monospace">ETH</span>
+    <span id="ws-eth-cvd" style="font-size:11px;font-family:monospace;font-weight:700">–</span>
+    <span id="ws-eth-vol" style="font-size:10px;color:#4b5563">vol –x</span>
+    <span id="ws-eth-status" style="font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700">–</span>
+  </div>
+  <div id="ws-anomaly-banner" style="display:none;margin-left:auto;font-size:10px;font-weight:700;padding:2px 10px;border-radius:4px;animation:blink-urgent .4s infinite"></div>
+</div>
+
 <div class="layout">
 <div class="lcol">
 
@@ -396,6 +415,54 @@ function checkAutoAI() {
   console.log('⚡ Auto-análisis: ' + highProb.length + ' divergencias ≥90%');
   showToast('⚡ ' + highProb.length + ' divergencias ≥90% — analizando automáticamente...', '#f59e0b');
   runAI(true); // true = modo automático
+}
+
+async function refreshWsWidget() {
+  try {
+    const data = await fetch(`${API}/api/ws/status`).then(r=>r.json());
+    for (const [sym, info] of Object.entries(data)) {
+      const key = sym === 'BTCUSDT' ? 'btc' : sym === 'ETHUSDT' ? 'eth' : null;
+      if (!key || !info.metrics) continue;
+      const cvd = parseFloat(info.metrics.cvdLive);
+      const vol = parseFloat(info.metrics.volumeMultiplier);
+      const anomaly = info.metrics.anomaly;
+      // CVD color
+      const cvdCol = cvd > 10 ? '#00d68f' : cvd < -10 ? '#ff4d6d' : '#f59e0b';
+      const cvdEl = document.getElementById(`ws-${key}-cvd`);
+      if (cvdEl) { cvdEl.textContent = (cvd>=0?'+':'')+cvd+'%'; cvdEl.style.color = cvdCol; }
+      // Volume multiplier
+      const volEl = document.getElementById(`ws-${key}-vol`);
+      if (volEl) { volEl.textContent = `vol ${vol.toFixed(1)}x`; volEl.style.color = vol>=5?'#ff4d6d':vol>=2?'#f59e0b':'#4b5563'; }
+      // Status badge
+      const stEl = document.getElementById(`ws-${key}-status`);
+      if (stEl) {
+        if (anomaly) {
+          stEl.textContent = anomaly.direction==='SHORT'?'🔴 BARRIDA':'🟢 BARRIDA';
+          stEl.style.background = anomaly.direction==='SHORT'?'rgba(255,77,109,.2)':'rgba(0,214,143,.2)';
+          stEl.style.color = anomaly.direction==='SHORT'?'#ff4d6d':'#00d68f';
+        } else if (vol >= 5) {
+          stEl.textContent = '⚡ ANOMALÍA'; stEl.style.background='rgba(245,158,11,.2)'; stEl.style.color='#f59e0b';
+        } else {
+          stEl.textContent = '🟢 Normal'; stEl.style.background='rgba(0,214,143,.08)'; stEl.style.color='#2a3040';
+        }
+      }
+      // Banner de anomalía activa
+      const banner = document.getElementById('ws-anomaly-banner');
+      if (banner) {
+        const anyAnomaly = Object.values(data).find(i => i.metrics?.anomaly);
+        if (anyAnomaly?.metrics?.anomaly) {
+          const a = anyAnomaly.metrics.anomaly;
+          banner.style.display='block';
+          banner.textContent = `⚡ ${a.direction} — ${a.reason}`;
+          banner.style.background = a.direction==='SHORT'?'rgba(255,77,109,.2)':'rgba(0,214,143,.2)';
+          banner.style.color = a.direction==='SHORT'?'#ff4d6d':'#00d68f';
+          banner.style.border = `1px solid ${a.direction==='SHORT'?'rgba(255,77,109,.4)':'rgba(0,214,143,.4)'}`;
+        } else {
+          banner.style.display='none';
+        }
+      }
+    }
+  } catch(_) {}
 }
 
 async function fetchAll(){
@@ -1158,6 +1225,9 @@ fetchAll();
 fetchAllPrices();
 setInterval(fetchAll,30000);
 setInterval(fetchAllPrices,15000);
+// Widget WS — actualizar cada 5 segundos
+setTimeout(refreshWsWidget, 3000);
+setInterval(refreshWsWidget, 5000);
 setTimeout(refreshNews,5000);
 setInterval(refreshNews,5*60*1000);
 setTimeout(refreshML,3000);
