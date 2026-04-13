@@ -946,7 +946,7 @@ function renderFib(){
 async function triggerAlert(){
   const btn=document.getElementById('alert-btn');const icon=document.getElementById('alert-icon');
   btn.disabled=true;icon.textContent='⏳';
-  try{await fetch(`${API}/api/alert/trigger`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair})});icon.textContent='✅';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
+  try{await fetch(`${API}/api/alert/trigger`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,force:true})});icon.textContent='✅';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
   catch(e){icon.textContent='❌';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
 }
 
