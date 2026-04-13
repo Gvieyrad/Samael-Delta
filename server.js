@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.3' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.4' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1008,6 +1008,7 @@ LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
 IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
 
 REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
+R:R OBLIGATORIO: tp1 debe estar mínimo 2x la distancia del SL desde entry. Si no puedes lograr R:R ≥1:2 da direction=ESPERAR.
 
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo principal o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
@@ -1116,6 +1117,7 @@ DIVERGENCIAS (${divergences.length}):
 ${divSummary}
 SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
 REGLAS: RSI>72 no long; RSI<28 no short.
+R:R OBLIGATORIO: tp1 debe estar mínimo 2x la distancia del SL desde entry. Si no puedes lograr R:R ≥1:2 da direction=ESPERAR.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
     const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
@@ -1148,6 +1150,29 @@ Responde SOLO JSON sin markdown:
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
       try {
+        // ✅ Si hay trade abierto en dirección CONTRARIA con señal ≥90%, cerrarlo primero
+        const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
+        const { data: oppTrades } = await supabase.from('paper_trades')
+          .select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+        if (oppTrades?.length) {
+          for (const oppTrade of oppTrades) {
+            const currentPrice = wsState[symbol]?.lastPrice || signal.entry;
+            const entry = parseFloat(oppTrade.entry);
+            const priceDiff = oppTrade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
+            const pnl_usd = parseFloat((parseFloat(oppTrade.size_usd) * priceDiff).toFixed(2));
+            const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
+            await supabase.from('paper_trades').update({
+              status: pnl_usd >= 0 ? 'won' : 'lost',
+              close_price: currentPrice, close_reason: 'signal_reversal',
+              pnl_usd, pnl_pct, closed_at: new Date().toISOString()
+            }).eq('id', oppTrade.id);
+            console.log(`🔄 Reversión de señal: cerrado ${oppTrade.direction} ${symbol} @ $${currentPrice} — nueva señal ${signal.direction} ${signal.confidence}%`);
+            if (process.env.TELEGRAM_CHAT_ID) {
+              const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`;
+              try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+            }
+          }
+        }
         const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
         if (!existing || existing.length === 0) {
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
@@ -1553,6 +1578,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.3 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.4 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
