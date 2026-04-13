@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.3' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.4' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1057,7 +1057,7 @@ LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
 IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
 
 REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
-R:R OBLIGATORIO: tp1 debe estar mínimo 2x la distancia del SL desde entry. Si no puedes lograr R:R ≥1:2 da direction=ESPERAR.
+R:R OBLIGATORIO: tp1 debe estar mínimo 1.5x la distancia del SL. Apunta a R:R 1:2 cuando sea posible. Solo da ESPERAR si no puedes lograr R:R ≥1:1.5.
 
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo principal o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
@@ -1113,7 +1113,7 @@ function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
 const analysisInProgress = {};
 async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
   // Evitar análisis simultáneos del mismo símbolo
-  if (analysisInProgress[symbol]) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
+  if (analysisInProgress[symbol] && !force) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
   analysisInProgress[symbol] = true;
   try {
     console.log(`🔍 runAutoAnalysis iniciado: ${symbol} force=${force}`);
@@ -1202,7 +1202,7 @@ DIVERGENCIAS (${divergences.length}):
 ${divSummary}
 SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
 REGLAS: RSI>72 no long; RSI<28 no short.
-R:R OBLIGATORIO: tp1 debe estar mínimo 2x la distancia del SL desde entry. Si no puedes lograr R:R ≥1:2 da direction=ESPERAR.
+R:R OBLIGATORIO: tp1 debe estar mínimo 1.5x la distancia del SL. Apunta a R:R 1:2 cuando sea posible. Solo da ESPERAR si no puedes lograr R:R ≥1:1.5.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
     console.log(`🤖 Llamando a Claude: ${symbol}`);
@@ -1677,6 +1677,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.3 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.4 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
