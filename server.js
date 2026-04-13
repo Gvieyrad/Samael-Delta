@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.6' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.7' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1025,7 +1025,11 @@ app.post('/api/analyze', async (req, res) => {
     const { marketData:d, symbol } = req.body;
     const now=Date.now();
     if(analyzeCache[symbol]&&now-analyzeCache[symbol].ts<60000) return res.json(analyzeCache[symbol].data);
-    const divSummary=d.divergences?.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n')||'Ninguna';
+    // Solo divergencias ≥90% al prompt para evitar señales débiles que confundan a Claude
+    const strongDivs2 = (d.divergences||[]).filter(dv => dv.probability >= 90);
+    const divSummary = strongDivs2.length
+      ? strongDivs2.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n')
+      : (d.divergences||[]).slice(0,2).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') || 'Ninguna';
     const b=d.bias;
     const wsM = getWsMetrics(symbol);
     const wsNote = wsM && Math.abs(wsM.cvdLive) > 20 ? `\nWS TIEMPO REAL: CVD=${wsM.cvdLive.toFixed(1)}% vol=${wsM.volumeMultiplier.toFixed(1)}x ballenas=${wsM.whaleCount}` : '';
@@ -1161,7 +1165,9 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     if (alertCache[cacheKey] && now - alertCache[cacheKey] < 45 * 60 * 1000) return; // 45 min cooldown
     alertCache[cacheKey] = now;
     const marketData = { price, change24h: parseFloat(ticker.data.priceChangePercent), fundingRate, openInterest: parseFloat(oiRes.data.openInterest), rsi15m: calcRSI(closes15m), cvd15m, vrvp, volDeltaPct: 0, orderBook: ob, liqMagnets: calcLiqMagnets(price).slice(0,5), divergences: divergences.slice(0,4), combinedSignal, bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d } };
-    const divSummary = divergences.slice(0,3).map(d => `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`).join('\n');
+    // Solo pasar divergencias ≥90% al prompt — evitar confusión con señales débiles
+    const strongDivs = divergences.filter(d => d.probability >= 90);
+    const divSummary = strongDivs.slice(0,4).map(d => `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`).join('\n');
     const b = marketData.bias;
     const prompt = `Eres un trader experto en futuros perpetuos. Analiza y da señal precisa.
 MERCADO: ${symbol} — $${price}
@@ -1634,6 +1640,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.6 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.7 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
