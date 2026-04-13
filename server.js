@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.2' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.3' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -109,8 +109,9 @@ function getWsMetrics(symbol) {
   const buyVol10s = last10s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const sellVol10s = last10s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
 
-  // Ballenas en los últimos 60s
-  const whaleThreshold = symbol.includes('BTC') ? 500000 : symbol.includes('ETH') ? 100000 : 50000;
+  // Ballenas REALES — una sola transacción que realmente mueve el mercado
+  // BTC: ≥$10M, ETH: ≥$3M, otros: ≥$1M
+  const whaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
   const whales60s = last60s.filter(t => t.usdVal >= whaleThreshold);
   const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
@@ -155,8 +156,10 @@ async function evaluateAnomaly(symbol) {
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
 
-  // ── DETECCIÓN 4: Ballena única >$2M ─────────────────────────
-  const bigWhale = state.trades.find(t => t.usdVal >= whaleThresholdUsd && now - t.time < 30000);
+  // ── DETECCIÓN 4: Ballena única — una sola transacción real ─────
+  // BTC: ≥$10M, ETH: ≥$3M en UNA sola transacción (no suma)
+  const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
+  const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
 
   // Reemplazar referencias a isBearishSweep/isBullishSweep con las versiones "real"
   const _isBearishSweep = isRealBearishSweep;
@@ -167,6 +170,8 @@ async function evaluateAnomaly(symbol) {
 
   if (!isRealBearishSweep && !isRealBullishSweep && !bigWhale) return;
 
+  const isSweep = isRealBearishSweep || isRealBullishSweep;
+  const isWhaleOnly = !isSweep && !!bigWhale;
   const direction = isRealBearishSweep ? 'SHORT' : isRealBullishSweep ? 'LONG' : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
   const reason = isRealBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio -${priceMove60s.toFixed(2)}%` :
                  isRealBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio +${priceMove60s.toFixed(2)}%` :
@@ -177,23 +182,43 @@ async function evaluateAnomaly(symbol) {
   if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) return;
   killSwitchCooldown[cooldownKey] = now;
 
-  state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus };
+  // Solo guardar anomalía si es barrida real (no ballena sola)
+  if (isSweep || isWhaleOnly) {
+    state.anomaly = {
+      direction,
+      reason,
+      time: now,
+      volumeMultiplier: metrics.volumeMultiplier,
+      cvdLive: metrics.cvdLive,
+      liqZoneBonus,
+      isSweep: !!(isRealBearishSweep || isRealBullishSweep),
+      isWhale: !!bigWhale && !isSweep
+    };
+    // Auto-limpiar anomalía después de 5 minutos
+    setTimeout(() => {
+      if (wsState[symbol]?.anomaly?.time === now) {
+        wsState[symbol].anomaly = null;
+      }
+    }, 5 * 60 * 1000);
+  }
 
   console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
 
-  // ── ACCIÓN 1: Cerrar posiciones contrarias automáticamente ──
-  await killSwitchOpposite(symbol, direction, reason);
-
-  // ── ACCIÓN 2: Abrir posición contraria si es barrida real (vol >5x) ──
-  // Solo barridas reales, no ballenas solas — demasiado riesgo sin volumen
-  if ((isRealBearishSweep || isRealBullishSweep) && direction !== 'ESPERAR') {
+  if (isSweep) {
+    // ── BARRIDA REAL (bajista o alcista): Kill switch + Sweep trade ──
+    await killSwitchOpposite(symbol, direction, reason);
     await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
   }
+  // Ballena sola: SOLO alerta informativa, sin kill switch ni sweep trade
 
-  // ── ACCIÓN 3: Alerta Telegram urgente ───────────────────────
+  // ── ALERTA TELEGRAM ─────────────────────────────────────────
   if (process.env.TELEGRAM_CHAT_ID) {
     const emoji = direction === 'SHORT' ? '🔴' : '🟢';
-    const msg = `${emoji} *ALERTA TIEMPO REAL — ${symbol}*\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Zona liquidación cercana — imán activo +' + liqZoneBonus + '%' : ''}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : isRealBullishSweep ? '🟢 BARRIDA ALCISTA' : `${emoji} Ballena detectada`;
+    const actionNote = isSweep
+      ? `\n🛡️ Kill Switch activado — posiciones contrarias cerradas\n⚡ Sweep trade abierto en dirección ${direction}`
+      : `\nℹ️ Solo informativo — sin acción automática`;
+    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}${actionNote}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
   }
 }
@@ -275,6 +300,51 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       liqBonus
     ));
 
+    // Obtener datos adicionales para market_data completo en sweep
+    let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
+    try {
+      const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+        fetchOIHistory(symbol,'15m',5),
+        fetchOIHistory(symbol,'4h',5),
+        axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+      ]);
+      fundingSweep = parseFloat(fundSw.data.lastFundingRate);
+      bias4hSweep = calcBias(k4hSw.data, oi4hSw, fundingSweep);
+      bias1dSweep = calcBias(k1dSw.data, null, fundingSweep);
+      oiTrend15mSweep = calcOITrend(oi15mSw);
+      fib15mSweep = calcFibonacci(k15mSw.data, price);
+    } catch(_) {}
+
+    const mlDataSweep = {
+      confidence: sweepConfidence,
+      direction,
+      mode: 'sweep',
+      price,
+      sweep_reason: reason,
+      cvd_live: metrics.cvdLive,
+      volume_multiplier: metrics.volumeMultiplier,
+      whale_count: metrics.whaleCount,
+      whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2),
+      whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2),
+      liq_bonus: liqBonus,
+      atr_5m: atr.toFixed(1),
+      funding_rate: fundingSweep,
+      oi_trend_15m: oiTrend15mSweep?.trend || 'flat',
+      oi_delta_15m: oiTrend15mSweep?.deltaPct || '0',
+      bias_4h: bias4hSweep?.bias || 'neutral',
+      bias_4h_score: bias4hSweep?.score || 50,
+      bias_1d: bias1dSweep?.bias || 'neutral',
+      bias_1d_score: bias1dSweep?.score || 50,
+      fib_level: fib15mSweep?.nearestRetrace?.label || null,
+      fib_dist: fib15mSweep?.nearestRetrace?.dist || null,
+      fib_signal: fib15mSweep?.retImpact?.signal || null,
+      rsi_15m: null, // se calcula en k15mSw si está disponible
+      timestamp: new Date().toISOString()
+    };
+
     await supabase.from('paper_trades').insert({
       symbol,
       direction,
@@ -287,19 +357,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
       source: 'sweep',
       status: 'open',
-      market_data: {
-        confidence: sweepConfidence,
-        direction,
-        sweep_reason: reason,
-        cvd_live: metrics.cvdLive,
-        volume_multiplier: metrics.volumeMultiplier,
-        whale_count: metrics.whaleCount,
-        liq_bonus: liqBonus,
-        atr_5m: atr.toFixed(1),
-        price,
-        timestamp: new Date().toISOString(),
-        mode: 'sweep'
-      }
+      market_data: mlDataSweep
     });
 
     console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
@@ -852,7 +910,7 @@ async function detectWhales(symbol, price) {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/aggTrades?symbol=${symbol}&limit=500`);
     const trades = res.data || [];
-    const whaleThreshold = symbol.includes('BTC') ? 500000 : symbol.includes('ETH') ? 100000 : 50000;
+    const whaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
     const whales = [];
     let whaleBuyVol = 0, whaleSellVol = 0, totalBuyVol = 0, totalSellVol = 0;
     trades.forEach(t => {
@@ -1435,7 +1493,56 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (rrVal < 1.5) return;
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
     if (existing?.length) return;
-    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'), leverage:parseInt(process.env.PAPER_LEVERAGE||'10'), source:'scalping', status:'open', market_data:{ confidence:scalpProb, direction:scalpDir, rsi_3m:rsi3m, cvd_3m:cvd3m.cvdPct, ob_imbalance:imb, price, ws_anomaly:wsM?.anomaly?.reason||null, timestamp:new Date().toISOString(), mode:'scalping' } });
+    // Obtener datos adicionales para market_data completo (ML)
+    let bias4hScalp = null, oiTrend15mScalp = null, fundingScalp = 0, whaleDataScalp = null;
+    try {
+      const [k4hS, oi15mS, fundS, oi4hS] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        fetchOIHistory(symbol,'15m',5),
+        axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+        fetchOIHistory(symbol,'4h',5),
+      ]);
+      fundingScalp = parseFloat(fundS.data.lastFundingRate);
+      bias4hScalp = calcBias(k4hS.data, oi4hS, fundingScalp);
+      oiTrend15mScalp = calcOITrend(oi15mS);
+      whaleDataScalp = await detectWhales(symbol, price);
+    } catch(_) {}
+
+    const mlDataScalp = {
+      confidence: scalpProb,
+      direction: scalpDir,
+      mode: 'scalping',
+      price,
+      rsi_3m: rsi3m,
+      cvd_3m: cvd3m.cvdPct,
+      cvd_trend: cvd3m.trend,
+      ob_imbalance: imb,
+      funding_rate: fundingScalp,
+      oi_trend_15m: oiTrend15mScalp?.trend || 'flat',
+      oi_delta_15m: oiTrend15mScalp?.deltaPct || '0',
+      bias_4h: bias4hScalp?.bias || 'neutral',
+      bias_4h_score: bias4hScalp?.score || 50,
+      fib_level: fib3m?.nearestRetrace?.label || null,
+      fib_dist: fib3m?.nearestRetrace?.dist || null,
+      fib_signal: fib3m?.retImpact?.signal || null,
+      fib_bonus: fib3m?.retImpact?.bonus || 0,
+      whale_count: whaleDataScalp?.whaleCount || 0,
+      whale_bias: whaleDataScalp?.whaleBias || 'neutral',
+      whale_dominance: whaleDataScalp?.dominance || 'balanced',
+      ws_anomaly: wsM?.anomaly?.reason || null,
+      ws_vol_multiplier: wsM?.volumeMultiplier || 1,
+      ws_cvd_live: wsM?.cvdLive || 0,
+      atr_3m: atr3m.toFixed(1),
+      timestamp: new Date().toISOString()
+    };
+
+    await supabase.from('paper_trades').insert({
+      symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl,
+      rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb,
+      size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'),
+      leverage:parseInt(process.env.PAPER_LEVERAGE||'10'),
+      source:'scalping', status:'open', market_data: mlDataScalp
+    });
     if (process.env.TELEGRAM_CHAT_ID) {
       const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
@@ -1446,6 +1553,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.2 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.3 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
