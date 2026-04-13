@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.5' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.6' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -984,9 +984,7 @@ app.get('/api/market/:symbol', async (req, res) => {
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
     const price_temp = parseFloat(ticker.data.lastPrice);
-    console.log(`📡 Fetching liq/whale data: ${symbol}`);
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
-    console.log(`📡 Liq/whale OK: ${symbol}`);
     const price=parseFloat(ticker.data.lastPrice);
     const fundingRate=parseFloat(funding.data.lastFundingRate);
     if(!k15m.data||!Array.isArray(k15m.data)||k15m.data.length<20) throw new Error('Insufficient kline data');
@@ -1111,9 +1109,8 @@ function confirmSignal(symbol, direction, probability) {
   if (!signalHistory[symbol]) signalHistory[symbol] = [];
   const now = Date.now();
   const minConf = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
-  console.log(`📊 confirmSignal: ${symbol} ${direction} ${probability}% minConf=${minConf}`);
   // No acumular señales por debajo del umbral mínimo
-  if (probability < minConf) { console.log(`⏭ Descartado: prob ${probability}% < minConf ${minConf}%`); return { confirmed: false, count: 0 }; }
+  if (probability < minConf) return { confirmed: false, count: 0 };
   const history = signalHistory[symbol];
   history.push({ direction, probability, timestamp: now });
   signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
@@ -1133,30 +1130,25 @@ async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
   if (analysisInProgress[symbol] && !force) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
   analysisInProgress[symbol] = true;
   try {
-    console.log(`🔍 runAutoAnalysis iniciado: ${symbol} force=${force}`);
     // Delay pequeño para evitar saturar Binance API
     await new Promise(r => setTimeout(r, 1000));
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
     // Grupo 1: datos base
-    console.log(`📡 Grupo1 fetch: ${symbol}`);
     const [oiRes,funding,k15m,k1h] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
     ]);
-    console.log(`📡 Grupo1 OK: ${symbol}`);
     await new Promise(r => setTimeout(r, 500));
     // Grupo 2: datos secundarios
-    console.log(`📡 Grupo2 fetch: ${symbol}`);
     const [k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
       axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
-    console.log(`📡 Grupo2 OK: ${symbol}`);
     const ticker = price_temp_res;
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price = parseFloat(ticker.data.lastPrice);
@@ -1222,9 +1214,7 @@ REGLAS: RSI>72 no long; RSI<28 no short.
 R:R OBLIGATORIO: calcula SL en zona de soporte/resistencia real, no arbitrario. TP1 debe ser mínimo 1.5x la distancia del SL desde entry. Ejemplo SHORT: entry=71000, SL=71500 (500 riesgo), TP1 mínimo=70250 (750 reward). Si el mercado no ofrece R:R ≥1:1.5 da direction=ESPERAR.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
-    console.log(`🤖 Llamando a Claude: ${symbol}`);
     const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
-    console.log(`🤖 Claude respondió: ${symbol}`);
     const text = response.content[0].text;
     const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
     const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
@@ -1694,6 +1684,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.5 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.6 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
