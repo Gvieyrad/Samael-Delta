@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.9' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.0' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1413,7 +1413,44 @@ async function monitorPaperTrades() {
         const currentPrice = parseFloat(priceRes.data.price);
         const entryPrice = parseFloat(trade.entry);
         if (Math.abs(currentPrice - entryPrice) / entryPrice * 100 > 50) continue;
-        const tp1 = parseFloat(trade.tp1), tp2 = parseFloat(trade.tp2) || tp1, sl = parseFloat(trade.sl);
+        const tp1 = parseFloat(trade.tp1), tp2 = parseFloat(trade.tp2) || tp1;
+        let sl = parseFloat(trade.sl);
+
+        // ── TRAILING STOP ────────────────────────────────────────
+        const isLong = trade.direction === 'LONG';
+        const priceDiffPct = isLong
+          ? (currentPrice - entryPrice) / entryPrice * 100
+          : (entryPrice - currentPrice) / entryPrice * 100;
+        const slDistance = Math.abs(entryPrice - sl);
+        let newSl = sl;
+
+        if (priceDiffPct >= 1.5) {
+          // Ganando +1.5% → SL sigue al precio con distancia 0.5x SL original
+          const trailDistance = slDistance * 0.5;
+          newSl = isLong
+            ? Math.max(sl, currentPrice - trailDistance)
+            : Math.min(sl, currentPrice + trailDistance);
+        } else if (priceDiffPct >= 1.0) {
+          // Ganando +1% → SL al 50% del recorrido
+          newSl = isLong
+            ? Math.max(sl, entryPrice + (currentPrice - entryPrice) * 0.5)
+            : Math.min(sl, entryPrice - (entryPrice - currentPrice) * 0.5);
+        } else if (priceDiffPct >= 0.5) {
+          // Ganando +0.5% → SL al breakeven (entry)
+          newSl = isLong
+            ? Math.max(sl, entryPrice)
+            : Math.min(sl, entryPrice);
+        }
+
+        // Si el SL mejoró, actualizar en Supabase
+        if ((isLong && newSl > sl) || (!isLong && newSl < sl)) {
+          const newSlRounded = parseFloat(newSl.toFixed(1));
+          await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
+          sl = newSlRounded;
+          console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(0)} → ${newSlRounded.toFixed(0)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
+        }
+        // ────────────────────────────────────────────────────────
+
         let closeReason = null;
         if (trade.direction === 'LONG') {
           if (currentPrice >= tp2 && tp2 > tp1) closeReason = 'tp2';
@@ -1684,6 +1721,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.9 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.0 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
