@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.1' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -237,8 +237,9 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const priceDiff = trade.direction === 'LONG'
         ? (currentPrice - entry) / entry
         : (entry - currentPrice) / entry;
-      const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff).toFixed(2));
-      const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
+      const _lev1 = parseFloat(trade.leverage || 10);
+      const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff * _lev1).toFixed(2));
+      const pnl_pct = parseFloat((priceDiff * _lev1 * 100).toFixed(2));
 
       await supabase.from('paper_trades').update({
         status: pnl_usd >= 0 ? 'won' : 'lost',
@@ -1253,8 +1254,9 @@ Responde SOLO JSON sin markdown:
             const currentPrice = wsState[symbol]?.lastPrice || signal.entry;
             const entry = parseFloat(oppTrade.entry);
             const priceDiff = oppTrade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
-            const pnl_usd = parseFloat((parseFloat(oppTrade.size_usd) * priceDiff).toFixed(2));
-            const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
+            const _lev2 = parseFloat(oppTrade.leverage || 10);
+            const pnl_usd = parseFloat((parseFloat(oppTrade.size_usd) * priceDiff * _lev2).toFixed(2));
+            const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
             await supabase.from('paper_trades').update({
               status: pnl_usd >= 0 ? 'won' : 'lost',
               close_price: currentPrice, close_reason: 'signal_reversal',
@@ -1369,8 +1371,9 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const closeP = parseFloat(close_price);
     const size = parseFloat(trade.size_usd);
     const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
-    const pnl_usd = parseFloat((size * priceDiff).toFixed(2));
-    const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
+    const _lev3 = parseFloat(trade.leverage || 10);
+    const pnl_usd = parseFloat((size * priceDiff * _lev3).toFixed(2));
+    const pnl_pct = parseFloat((priceDiff * _lev3 * 100).toFixed(2));
     const finalStatus = close_reason === 'tp1' || close_reason === 'tp2' ? 'won'
       : close_reason === 'sl' ? 'lost'
       : close_reason === 'manual' ? 'cancelled'
@@ -1464,9 +1467,10 @@ async function monitorPaperTrades() {
         if (closeReason) {
           const entry = parseFloat(trade.entry);
           const priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
-          const pnl_usd = parseFloat((trade.size_usd * priceDiff).toFixed(2));
-          const pnl_pct = parseFloat((priceDiff * 100).toFixed(2));
-          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * 5) {
+          const _lev4 = parseFloat(trade.leverage || 10);
+          const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4).toFixed(2));
+          const pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { // max = capital * leverage * 110%
             await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id);
             continue;
           }
@@ -1721,6 +1725,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.0 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.1 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
