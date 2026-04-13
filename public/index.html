@@ -438,12 +438,18 @@ async function refreshWsWidget() {
       // Status badge
       const stEl = document.getElementById(`ws-${key}-status`);
       if (stEl) {
-        if (anomaly) {
+        if (anomaly && anomaly.isSweep) {
+          // Barrida real — mostrar BARRIDA con color y parpadeo
           stEl.textContent = anomaly.direction==='SHORT'?'🔴 BARRIDA':'🟢 BARRIDA';
           stEl.style.background = anomaly.direction==='SHORT'?'rgba(255,77,109,.2)':'rgba(0,214,143,.2)';
           stEl.style.color = anomaly.direction==='SHORT'?'#ff4d6d':'#00d68f';
-        } else if (vol >= 5) {
-          stEl.textContent = '⚡ ANOMALÍA'; stEl.style.background='rgba(245,158,11,.2)'; stEl.style.color='#f59e0b';
+          stEl.style.border = anomaly.direction==='SHORT'?'1px solid rgba(255,77,109,.4)':'1px solid rgba(0,214,143,.4)';
+        } else if (anomaly && anomaly.isWhale) {
+          // Ballena sola — informativo, sin parpadeo agresivo
+          stEl.textContent = anomaly.direction==='SHORT'?'🐋 Venta':'🐋 Compra';
+          stEl.style.background = 'rgba(245,158,11,.15)';
+          stEl.style.color = '#f59e0b';
+          stEl.style.border = '1px solid rgba(245,158,11,.3)';
         } else {
           stEl.textContent = 'Normal'; stEl.style.background='rgba(0,214,143,.15)'; stEl.style.color='#00d68f'; stEl.style.border='1px solid rgba(0,214,143,.3)';
         }
@@ -451,7 +457,7 @@ async function refreshWsWidget() {
       // Banner de anomalía activa
       const banner = document.getElementById('ws-anomaly-banner');
       if (banner) {
-        const anyAnomaly = Object.values(data).find(i => i.metrics?.anomaly);
+        const anyAnomaly = Object.values(data).find(i => i.metrics?.anomaly?.isSweep);
         if (anyAnomaly?.metrics?.anomaly) {
           const a = anyAnomaly.metrics.anomaly;
           banner.style.display='block';
