@@ -717,7 +717,12 @@ function renderLiq(){
           <span class="mono" style="font-size:12px;font-weight:700;color:${priceCol}">${arrow} $${parseInt(z.price).toLocaleString()}</span>
           ${isMajor?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">MAYOR</span>':''}
         </div>
-        <div style="display:flex;gap:5px"><span style="font-size:10px;color:#4b5563">${z.label}</span><span style="font-size:10px;color:${heatCol};font-weight:600">$${z.size}M</span><span style="font-size:10px;color:#2a3040">${z.dist}%</span></div>
+        <div style="display:flex;gap:5px;align-items:center">
+          <span style="font-size:10px;color:#4b5563">${z.label}</span>
+          <span style="font-size:10px;color:${heatCol};font-weight:600">$${z.size}M</span>
+          <span style="font-size:10px;color:#2a3040">${z.dist}%</span>
+          ${z.isReal?'<span style="font-size:8px;background:rgba(0,214,143,.15);color:#00d68f;padding:1px 4px;border-radius:2px;font-weight:700">REAL</span>':''}
+        </div>
       </div>
       <div style="text-align:right;flex-shrink:0;position:relative">
         <div class="mono" style="font-size:13px;font-weight:700;color:${probColor}">${prob}%</div>
