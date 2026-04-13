@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.1' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1119,17 +1119,22 @@ async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
     await new Promise(r => setTimeout(r, 1000));
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
-    const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
-      Promise.resolve(price_temp_res),
+    // Grupo 1: datos base
+    const [oiRes,funding,k15m,k1h] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+    ]);
+    await new Promise(r => setTimeout(r, 500));
+    // Grupo 2: datos secundarios
+    const [k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
       axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
+    const ticker = price_temp_res;
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price = parseFloat(ticker.data.lastPrice);
     const fundingRate = parseFloat(funding.data.lastFundingRate);
@@ -1260,7 +1265,13 @@ Responde SOLO JSON sin markdown:
         }
       } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
     }
-  } catch(e) { console.error('Auto-analysis error:', e.message); }
+  } catch(e) {
+    console.error(`❌ Auto-analysis error ${symbol}:`, e.message, e.response?.status || '');
+    if (e.response?.status === 429) {
+      console.log(`⏳ Rate limit 429 — esperando 30s antes de próximo análisis`);
+      await new Promise(r => setTimeout(r, 30000));
+    }
+  }
   finally { analysisInProgress[symbol] = false; }
 }
 
@@ -1658,6 +1669,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.0 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.1 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
