@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.8' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.9' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1092,8 +1092,9 @@ function confirmSignal(symbol, direction, probability) {
   if (!signalHistory[symbol]) signalHistory[symbol] = [];
   const now = Date.now();
   const minConf = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
+  console.log(`📊 confirmSignal: ${symbol} ${direction} ${probability}% minConf=${minConf}`);
   // No acumular señales por debajo del umbral mínimo
-  if (probability < minConf) return { confirmed: false, count: 0 };
+  if (probability < minConf) { console.log(`⏭ Descartado: prob ${probability}% < minConf ${minConf}%`); return { confirmed: false, count: 0 }; }
   const history = signalHistory[symbol];
   history.push({ direction, probability, timestamp: now });
   signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
@@ -1109,6 +1110,7 @@ function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
 
 async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
   try {
+    console.log(`🔍 runAutoAnalysis iniciado: ${symbol} force=${force}`);
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
     const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
@@ -1645,6 +1647,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.8 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.9 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
