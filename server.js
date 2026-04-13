@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.2' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.3' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -984,7 +984,9 @@ app.get('/api/market/:symbol', async (req, res) => {
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
     const price_temp = parseFloat(ticker.data.lastPrice);
+    console.log(`📡 Fetching liq/whale data: ${symbol}`);
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
+    console.log(`📡 Liq/whale OK: ${symbol}`);
     const price=parseFloat(ticker.data.lastPrice);
     const fundingRate=parseFloat(funding.data.lastFundingRate);
     if(!k15m.data||!Array.isArray(k15m.data)||k15m.data.length<20) throw new Error('Insufficient kline data');
@@ -1675,6 +1677,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.2 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.3 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
