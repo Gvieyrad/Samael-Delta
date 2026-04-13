@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.4' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.5' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -602,7 +602,50 @@ function getNearestLiqMagnet(price,direction) {
 
 function calcLiqMagnets(price) {
   const zones=[{dist:-0.018,size:240,label:'Stop longs'},{dist:-0.025,size:380,label:'Zona shorts'},{dist:-0.042,size:490,label:'Pool liq.'},{dist:-0.055,size:620,label:'Cluster grande'},{dist:-0.075,size:830,label:'Imán mayor'},{dist:0.015,size:210,label:'Stop shorts'},{dist:0.028,size:320,label:'Zona longs'},{dist:0.045,size:480,label:'Pool liq. arriba'},{dist:0.068,size:740,label:'Cluster arriba'},{dist:0.095,size:950,label:'Imán crítico'}];
-  return zones.map(z=>({price:parseFloat((price*(1+z.dist)).toFixed(0)),size:z.size,label:z.label,dist:Math.abs(z.dist*100).toFixed(1),direction:z.dist>0?'up':'down',isMajor:z.size>=600})).sort((a,b)=>Math.abs(parseFloat(a.dist))-Math.abs(parseFloat(b.dist)));
+  return zones.map(z=>({price:parseFloat((price*(1+z.dist)).toFixed(0)),size:z.size,label:z.label,dist:Math.abs(z.dist*100).toFixed(1),direction:z.dist>0?'up':'down',isMajor:z.size>=600,isEstimated:true})).sort((a,b)=>Math.abs(parseFloat(a.dist))-Math.abs(parseFloat(b.dist)));
+}
+
+// ── LIQUIDACIONES REALES — combina fetchForceOrders con zonas estáticas ──
+function calcRealLiqMagnets(price, liqData) {
+  // Si no hay datos reales, usar estáticos
+  if (!liqData?.zones?.length) return calcLiqMagnets(price);
+
+  // Convertir zonas reales de Binance a formato de liqMagnets
+  const realZones = liqData.zones
+    .filter(z => z.total >= 50) // mínimo $50K para ser relevante
+    .map(z => {
+      const dist = ((z.price - price) / price * 100);
+      const direction = z.price > price ? 'up' : 'down';
+      // Tamaño en M USD — usar total de la zona
+      const sizeM = Math.round(z.total / 1000 * 10) / 10; // z.total está en K
+      const label = z.dominant === 'longs'
+        ? (direction === 'down' ? 'Stop longs reales' : 'Zona longs reales')
+        : (direction === 'up' ? 'Stop shorts reales' : 'Zona shorts reales');
+      return {
+        price: z.price,
+        size: Math.max(sizeM, 10), // mínimo 10M para visualización
+        label,
+        dist: Math.abs(dist).toFixed(1),
+        direction,
+        isMajor: z.total >= 500, // mayor si >$500K
+        isReal: true, // dato real de Binance
+        dominant: z.dominant
+      };
+    })
+    .filter(z => Math.abs(parseFloat(z.dist)) <= 10) // solo zonas dentro del 10%
+    .sort((a,b) => Math.abs(parseFloat(a.dist)) - Math.abs(parseFloat(b.dist)))
+    .slice(0, 15);
+
+  // Si hay suficientes zonas reales, usarlas. Si no, mezclar con estáticas
+  if (realZones.length >= 5) {
+    return realZones;
+  }
+
+  // Mezclar: reales primero, completar con estáticas que no se solapan
+  const staticZones = calcLiqMagnets(price);
+  const realPrices = new Set(realZones.map(z => Math.round(z.price / 100) * 100));
+  const filteredStatic = staticZones.filter(z => !realPrices.has(Math.round(z.price / 100) * 100));
+  return [...realZones, ...filteredStatic].sort((a,b) => Math.abs(parseFloat(a.dist)) - Math.abs(parseFloat(b.dist))).slice(0, 12);
 }
 
 function calcFibonacci(klines, price) {
@@ -952,7 +995,7 @@ app.get('/api/market/:symbol', async (req, res) => {
     const vwap15m=calcVWAP(k15m.data);
     const rsi15m=calcRSI(closes15m);
     const ob=analyzeOB(obRes.data.bids,obRes.data.asks);
-    const liqMagnets=calcLiqMagnets(price);
+    const liqMagnets=calcRealLiqMagnets(price, liqData);
     const oiTrend15m=calcOITrend(oi15mHist);
     const oiTrend1h=calcOITrend(oi1hHist);
     const oiTrend4h=calcOITrend(oi4hHist);
@@ -1578,6 +1621,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.4 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.5 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
