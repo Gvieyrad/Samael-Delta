@@ -17,7 +17,150 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.1' }));
+// ══════════════════════════════════════════════════════════════════
+// ─── COINGLASS — LIQUIDATION HEATMAP REAL ────────────────────────
+// ══════════════════════════════════════════════════════════════════
+const COINGLASS_KEY = process.env.COINGLASS_KEY;
+let coinglassCache = {};
+
+async function fetchCoinglassLiqHeatmap(symbol) {
+  const cgSymbol = symbol.replace('USDT','').replace('PERP','');
+  const now = Date.now();
+  if (coinglassCache[cgSymbol] && now - coinglassCache[cgSymbol].ts < 5 * 60 * 1000) {
+    return coinglassCache[cgSymbol].data;
+  }
+  if (!COINGLASS_KEY) return null;
+  try {
+    const res = await axios.get('https://open-api-v3.coinglass.com/api/futures/liquidation/heatmap', {
+      headers: { 'CG-API-KEY': COINGLASS_KEY },
+      params: { symbol: cgSymbol, exchange: 'Binance', interval: '12h' },
+      timeout: 8000
+    });
+    if (!res.data?.data) return null;
+    const rawData = res.data.data;
+    const bucketSize = cgSymbol === 'BTC' ? 200 : cgSymbol === 'ETH' ? 20 : 2;
+    const buckets = {};
+    rawData.forEach(item => {
+      const price = parseFloat(item.price || item.liqPrice);
+      const usd = parseFloat(item.liqUsd || item.size || 0);
+      const side = item.side || 'long';
+      if (!price || !usd) return;
+      const bucket = Math.round(price / bucketSize) * bucketSize;
+      if (!buckets[bucket]) buckets[bucket] = { price: bucket, longLiq: 0, shortLiq: 0, total: 0 };
+      if (side === 'long') buckets[bucket].longLiq += usd;
+      else buckets[bucket].shortLiq += usd;
+      buckets[bucket].total += usd;
+    });
+    const zones = Object.values(buckets)
+      .filter(b => b.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 25)
+      .map(b => ({
+        price: b.price,
+        longLiq: Math.round(b.longLiq / 1e6 * 10) / 10,
+        shortLiq: Math.round(b.shortLiq / 1e6 * 10) / 10,
+        total: Math.round(b.total / 1e6 * 10) / 10,
+        dominant: b.longLiq > b.shortLiq ? 'longs' : 'shorts'
+      }));
+    const result = { zones, source: 'coinglass', ts: now };
+    coinglassCache[cgSymbol] = { data: result, ts: now };
+    console.log(`🔥 Coinglass heatmap ${cgSymbol}: ${zones.length} zonas reales`);
+    return result;
+  } catch(e) {
+    console.log(`⚠️ Coinglass error (${cgSymbol}): ${e.message} — usando Binance`);
+    return null;
+  }
+}
+
+async function fetchBestLiqData(symbol, price) {
+  const [cgData, binanceData] = await Promise.all([
+    fetchCoinglassLiqHeatmap(symbol),
+    fetchForceOrders(symbol)
+  ]);
+  if (cgData?.zones?.length >= 3) {
+    // Convertir M USD → K para compatibilidad con calcRealLiqMagnets
+    const cgZones = cgData.zones.map(z => ({
+      price: z.price,
+      longLiq: z.longLiq * 1000,
+      shortLiq: z.shortLiq * 1000,
+      total: z.total * 1000,
+      dominant: z.dominant,
+      source: 'coinglass'
+    }));
+    return { zones: cgZones, source: 'coinglass', totalLongs: 0, totalShorts: 0 };
+  }
+  return { ...binanceData, source: 'binance' };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ─── BINANCE ACCOUNT — BALANCE REAL (READ-ONLY) ──────────────────
+// ══════════════════════════════════════════════════════════════════
+const crypto = require('crypto');
+const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
+const BINANCE_SECRET  = process.env.BINANCE_SECRET_KEY;
+
+function binanceSign(params) {
+  const query = new URLSearchParams(params).toString();
+  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(query).digest('hex');
+  return `${query}&signature=${sig}`;
+}
+
+let binanceAccountCache = { data: null, ts: 0 };
+
+async function fetchBinanceAccount() {
+  if (!BINANCE_API_KEY || !BINANCE_SECRET) return null;
+  const now = Date.now();
+  if (binanceAccountCache.data && now - binanceAccountCache.ts < 30000) return binanceAccountCache.data;
+  try {
+    const params = { timestamp: now, recvWindow: 5000 };
+    const signed = binanceSign(params);
+    const res = await axios.get(`${BINANCE}/fapi/v2/account?${signed}`, {
+      headers: { 'X-MBX-APIKEY': BINANCE_API_KEY },
+      timeout: 8000
+    });
+    const d = res.data;
+    const result = {
+      totalWalletBalance: parseFloat(d.totalWalletBalance || 0),
+      totalUnrealizedProfit: parseFloat(d.totalUnrealizedProfit || 0),
+      totalMarginBalance: parseFloat(d.totalMarginBalance || 0),
+      availableBalance: parseFloat(d.availableBalance || 0),
+      totalPositionInitialMargin: parseFloat(d.totalPositionInitialMargin || 0),
+      assets: (d.assets || [])
+        .filter(a => parseFloat(a.walletBalance) > 0)
+        .map(a => ({
+          asset: a.asset,
+          walletBalance: parseFloat(a.walletBalance),
+          unrealizedProfit: parseFloat(a.unrealizedProfit),
+          availableBalance: parseFloat(a.availableBalance)
+        })),
+      positions: (d.positions || [])
+        .filter(p => parseFloat(p.positionAmt) !== 0)
+        .map(p => ({
+          symbol: p.symbol,
+          positionAmt: parseFloat(p.positionAmt),
+          entryPrice: parseFloat(p.entryPrice),
+          unrealizedProfit: parseFloat(p.unrealizedProfit),
+          leverage: parseInt(p.leverage),
+          liquidationPrice: parseFloat(p.liquidationPrice)
+        }))
+    };
+    binanceAccountCache = { data: result, ts: now };
+    return result;
+  } catch(e) {
+    console.log(`⚠️ Binance account error: ${e.message}`);
+    return null;
+  }
+}
+
+app.get('/api/binance/account', async (req, res) => {
+  try {
+    const account = await fetchBinanceAccount();
+    if (!account) return res.json({ error: 'API keys no configuradas o error de conexión', available: false });
+    res.json({ ...account, available: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.2' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -358,6 +501,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       leverage: parseInt(process.env.PAPER_LEVERAGE || '10'),
       source: 'sweep',
       status: 'open',
+      opened_at: new Date().toISOString(),
       market_data: mlDataSweep
     });
 
@@ -985,7 +1129,7 @@ app.get('/api/market/:symbol', async (req, res) => {
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
     const price_temp = parseFloat(ticker.data.lastPrice);
-    const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
+    const [liqData, deepOB, whaleData] = await Promise.all([fetchBestLiqData(symbol, price_temp), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price=parseFloat(ticker.data.lastPrice);
     const fundingRate=parseFloat(funding.data.lastFundingRate);
     if(!k15m.data||!Array.isArray(k15m.data)||k15m.data.length<20) throw new Error('Insufficient kline data');
@@ -1151,7 +1295,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
     const ticker = price_temp_res;
-    const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
+    const [liqData, deepOB, whaleData] = await Promise.all([fetchBestLiqData(symbol, price_temp), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price = parseFloat(ticker.data.lastPrice);
     const fundingRate = parseFloat(funding.data.lastFundingRate);
     if (!k15m.data || !Array.isArray(k15m.data) || k15m.data.length < 20) return;
@@ -1355,7 +1499,7 @@ app.post('/api/paper/open', async (req, res) => {
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
-    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || 1000, leverage: leverage || 10, divergences, fibonacci, source: source || 'manual', status: 'open' }).select().single();
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || 1000, leverage: leverage || 10, divergences, fibonacci, source: source || 'manual', status: 'open', opened_at: new Date().toISOString() }).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1712,7 +1856,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb,
       size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'),
       leverage:parseInt(process.env.PAPER_LEVERAGE||'10'),
-      source:'scalping', status:'open', market_data: mlDataScalp
+      source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp
     });
     if (process.env.TELEGRAM_CHAT_ID) {
       const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
@@ -1725,6 +1869,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.1 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.2 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
