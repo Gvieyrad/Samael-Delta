@@ -99,21 +99,24 @@ const crypto = require('crypto');
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET  = process.env.BINANCE_SECRET_KEY;
 
-function binanceSign(params) {
-  const query = new URLSearchParams(params).toString();
-  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(query).digest('hex');
-  return `${query}&signature=${sig}`;
+// Firma Binance — query string manual para garantizar orden correcto
+function binanceSign(timestamp, recvWindow) {
+  const queryString = `timestamp=${timestamp}&recvWindow=${recvWindow}`;
+  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(queryString).digest('hex');
+  return `${queryString}&signature=${sig}`;
 }
 
 let binanceAccountCache = { data: null, ts: 0, lastError: null };
-let binanceTimeOffset = 0; // diferencia entre tiempo local y Binance
+let binanceTimeOffset = 0;
 
 async function syncBinanceTime() {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/time`, { timeout: 5000 });
     binanceTimeOffset = res.data.serverTime - Date.now();
-    console.log(`⏱ Binance time offset: ${binanceTimeOffset}ms`);
-  } catch(_) {}
+    console.log(`⏱ Binance time sync OK — offset: ${binanceTimeOffset}ms`);
+  } catch(e) {
+    console.log(`⚠️ Binance time sync error: ${e.message}`);
+  }
 }
 
 async function fetchBinanceAccount() {
@@ -121,10 +124,9 @@ async function fetchBinanceAccount() {
   const now = Date.now();
   if (binanceAccountCache.data && now - binanceAccountCache.ts < 30000) return binanceAccountCache.data;
   try {
-    // Sincronizar tiempo si el offset es desconocido o muy grande
-    if (Math.abs(binanceTimeOffset) > 1000) await syncBinanceTime();
-    const params = { timestamp: Date.now() + binanceTimeOffset, recvWindow: 10000 };
-    const signed = binanceSign(params);
+    const timestamp = Date.now() + binanceTimeOffset;
+    const recvWindow = 10000;
+    const signed = binanceSign(timestamp, recvWindow);
     const res = await axios.get(`${BINANCE}/fapi/v2/account?${signed}`, {
       headers: { 'X-MBX-APIKEY': BINANCE_API_KEY },
       timeout: 10000
@@ -136,38 +138,33 @@ async function fetchBinanceAccount() {
       totalMarginBalance: parseFloat(d.totalMarginBalance || 0),
       availableBalance: parseFloat(d.availableBalance || 0),
       totalPositionInitialMargin: parseFloat(d.totalPositionInitialMargin || 0),
-      assets: (d.assets || [])
-        .filter(a => parseFloat(a.walletBalance) > 0)
-        .map(a => ({
-          asset: a.asset,
-          walletBalance: parseFloat(a.walletBalance),
-          unrealizedProfit: parseFloat(a.unrealizedProfit),
-          availableBalance: parseFloat(a.availableBalance)
-        })),
-      positions: (d.positions || [])
-        .filter(p => parseFloat(p.positionAmt) !== 0)
-        .map(p => ({
-          symbol: p.symbol,
-          positionAmt: parseFloat(p.positionAmt),
-          entryPrice: parseFloat(p.entryPrice),
-          unrealizedProfit: parseFloat(p.unrealizedProfit),
-          leverage: parseInt(p.leverage),
-          liquidationPrice: parseFloat(p.liquidationPrice)
-        }))
+      assets: (d.assets || []).filter(a => parseFloat(a.walletBalance) > 0).map(a => ({
+        asset: a.asset,
+        walletBalance: parseFloat(a.walletBalance),
+        unrealizedProfit: parseFloat(a.unrealizedProfit),
+        availableBalance: parseFloat(a.availableBalance)
+      })),
+      positions: (d.positions || []).filter(p => parseFloat(p.positionAmt) !== 0).map(p => ({
+        symbol: p.symbol,
+        positionAmt: parseFloat(p.positionAmt),
+        entryPrice: parseFloat(p.entryPrice),
+        unrealizedProfit: parseFloat(p.unrealizedProfit),
+        leverage: parseInt(p.leverage),
+        liquidationPrice: parseFloat(p.liquidationPrice)
+      }))
     };
     binanceAccountCache = { data: result, ts: now, lastError: null };
+    console.log(`✅ Binance account OK — balance: $${result.totalWalletBalance}`);
     return result;
   } catch(e) {
     const binanceErr = e.response?.data?.msg || e.message;
     const binanceCode = e.response?.data?.code || '';
     console.log(`⚠️ Binance account error [${binanceCode}]: ${binanceErr}`);
     binanceAccountCache = { data: null, ts: 0, lastError: `[${binanceCode}] ${binanceErr}` };
+    if (binanceCode === -1021 || binanceCode === -1022) syncBinanceTime();
     return null;
   }
 }
-
-// Sincronizar tiempo con Binance al arrancar
-syncBinanceTime();
 
 // IP pública del servidor — para whitelist en Binance API
 app.get('/api/myip', async (req, res) => {
@@ -184,14 +181,14 @@ app.get('/api/binance/account', async (req, res) => {
     }
     const account = await fetchBinanceAccount();
     if (!account) {
-      const errMsg = binanceAccountCache.lastError || 'Error de conexión — visita /api/myip y agrega esa IP en Binance';
+      const errMsg = binanceAccountCache.lastError || 'Error desconocido';
       return res.json({ error: errMsg, available: false });
     }
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.6' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.7' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1900,6 +1897,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.6 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.7 corriendo en puerto ${PORT}`);
+  syncBinanceTime(); // sincronizar reloj con Binance al arrancar
   startAlertJob();
 });
