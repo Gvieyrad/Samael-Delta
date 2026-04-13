@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.9' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.0' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1108,9 +1108,15 @@ function confirmSignal(symbol, direction, probability) {
 
 function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
 
+const analysisInProgress = {};
 async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
+  // Evitar análisis simultáneos del mismo símbolo
+  if (analysisInProgress[symbol]) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
+  analysisInProgress[symbol] = true;
   try {
     console.log(`🔍 runAutoAnalysis iniciado: ${symbol} force=${force}`);
+    // Delay pequeño para evitar saturar Binance API
+    await new Promise(r => setTimeout(r, 1000));
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
     const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
@@ -1255,6 +1261,7 @@ Responde SOLO JSON sin markdown:
       } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
     }
   } catch(e) { console.error('Auto-analysis error:', e.message); }
+  finally { analysisInProgress[symbol] = false; }
 }
 
 function startAlertJob() {
@@ -1269,8 +1276,8 @@ function startAlertJob() {
   console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
   setInterval(monitorPaperTrades, 5 * 60 * 1000);
   setTimeout(monitorPaperTrades, 15000);
-  setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 3000)); } }, intervalMin * 60 * 1000);
-  setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 3000)); } }, 10000);
+  setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
+  setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
   // Iniciar WebSockets para detección en tiempo real
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
@@ -1546,7 +1553,10 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
   } catch(e) { return { direction:'ESPERAR', probability:30, action:'ESPERAR' }; }
 }
 
+const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
+  if (scalpingInProgress[symbol]) return;
+  scalpingInProgress[symbol] = true;
   try {
     const [tickerRes, k3m, obRes, fundingRes] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
@@ -1643,10 +1653,11 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     }
     console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
   } catch(e) { console.error('Scalping error:', e.message); }
+  finally { scalpingInProgress[symbol] = false; }
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.9 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.0 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
