@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.7' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.9' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1238,7 +1238,7 @@ Responde SOLO JSON sin markdown:
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
     try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
-    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90');
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '93');
     const trend1d = bias1d.bias;
     const trendOk = signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : false;
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
@@ -1684,6 +1684,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.7 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.9 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
