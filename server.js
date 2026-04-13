@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.1' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.2' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1120,20 +1120,24 @@ async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
     // Grupo 1: datos base
+    console.log(`📡 Grupo1 fetch: ${symbol}`);
     const [oiRes,funding,k15m,k1h] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
     ]);
+    console.log(`📡 Grupo1 OK: ${symbol}`);
     await new Promise(r => setTimeout(r, 500));
     // Grupo 2: datos secundarios
+    console.log(`📡 Grupo2 fetch: ${symbol}`);
     const [k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
       axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
       fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
     ]);
+    console.log(`📡 Grupo2 OK: ${symbol}`);
     const ticker = price_temp_res;
     const [liqData, deepOB, whaleData] = await Promise.all([fetchForceOrders(symbol), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
     const price = parseFloat(ticker.data.lastPrice);
@@ -1199,7 +1203,9 @@ REGLAS: RSI>72 no long; RSI<28 no short.
 R:R OBLIGATORIO: tp1 debe estar mínimo 2x la distancia del SL desde entry. Si no puedes lograr R:R ≥1:2 da direction=ESPERAR.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
+    console.log(`🤖 Llamando a Claude: ${symbol}`);
     const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    console.log(`🤖 Claude respondió: ${symbol}`);
     const text = response.content[0].text;
     const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
     const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
@@ -1669,6 +1675,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.1 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.2 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
