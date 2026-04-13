@@ -620,20 +620,36 @@ function renderCombined(){
   const cs=mkt.combinedSignal,box=document.getElementById('combined-box');
   if(!cs||!mkt.divergences?.length){box.style.display='none';return;}
   box.style.display='block';
-  const isShort=cs.direction==='SHORT',isLong=cs.direction==='LONG';
+
+  // ✅ Si hay señal IA activa ≥90%, adoptar su dirección
+  const hasActiveAI = aiSignal && aiSignal.confidence >= 90 && aiSignal.direction !== 'ESPERAR';
+  const direction = hasActiveAI ? aiSignal.direction : cs.direction;
+  const probability = hasActiveAI ? aiSignal.confidence : cs.probability;
+  const isAIOverride = hasActiveAI && direction !== cs.direction;
+
+  const isShort=direction==='SHORT',isLong=direction==='LONG';
   const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
   const bgClass=isShort?'comb-short':isLong?'comb-long':'comb-wait';
   box.className=`combined-box ${bgClass}`;
-  // Sin botones de ejecución aquí — están en la sección Señal IA abajo
+
+  const aiNote = hasActiveAI
+    ? `<span style="font-size:9px;background:rgba(139,92,246,.15);color:#8b5cf6;padding:1px 6px;border-radius:3px;font-weight:700;margin-left:6px">🤖 IA</span>`
+    : '';
+  const overrideNote = isAIOverride
+    ? `<div style="font-size:10px;color:#8b5cf6;margin-top:3px">⚡ IA sobrescribe señal combinada (algoritmo: ${cs.direction} ${cs.probability}%)</div>`
+    : '';
+
   box.innerHTML=`
     <div class="comb-header">
       <span style="font-size:26px">${isShort?'▼':isLong?'▲':'◆'}</span>
       <div style="flex:1">
         <div style="display:flex;align-items:baseline;gap:8px">
-          <span class="comb-dir" style="color:${col}">${cs.direction}</span>
-          <span class="comb-prob" style="color:${col}">${cs.probability}%</span>
+          <span class="comb-dir" style="color:${col}">${direction}</span>
+          <span class="comb-prob" style="color:${col}">${probability}%</span>
+          ${aiNote}
         </div>
         <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
+        ${overrideNote}
       </div>
       <span id="signal-confirmation-badge"></span>
     </div>`;
