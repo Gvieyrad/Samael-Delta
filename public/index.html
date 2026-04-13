@@ -445,7 +445,7 @@ async function refreshWsWidget() {
         } else if (vol >= 5) {
           stEl.textContent = '⚡ ANOMALÍA'; stEl.style.background='rgba(245,158,11,.2)'; stEl.style.color='#f59e0b';
         } else {
-          stEl.textContent = '🟢 Normal'; stEl.style.background='rgba(0,214,143,.08)'; stEl.style.color='#2a3040';
+          stEl.textContent = 'Normal'; stEl.style.background='rgba(0,214,143,.15)'; stEl.style.color='#00d68f'; stEl.style.border='1px solid rgba(0,214,143,.3)';
         }
       }
       // Banner de anomalía activa
