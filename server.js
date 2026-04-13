@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.5' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.6' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1141,6 +1141,19 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
     if (combinedSignal.direction === 'ESPERAR') { clearSignalHistory(symbol); return; }
     if (combinedSignal.probability < minConfidence) return;
     if (divergences.length < minDivergences) return;
+
+    // ✅ Filtro de mayoría clara — no llamar a Claude si señales están divididas
+    // Requiere que la dirección dominante tenga al menos 1.5x más señales que la opuesta
+    const shortDivs = divergences.filter(d => d.direction === 'SHORT').length;
+    const longDivs  = divergences.filter(d => d.direction === 'LONG').length;
+    const hasClearMajority = combinedSignal.direction === 'SHORT'
+      ? (shortDivs >= 2 && shortDivs > longDivs * 1.5)
+      : (longDivs  >= 2 && longDivs  > shortDivs * 1.5);
+    if (!hasClearMajority) {
+      console.log(`⏭ Auto-análisis omitido — señales divididas: ${shortDivs}S vs ${longDivs}L para ${symbol}`);
+      clearSignalHistory(symbol);
+      return;
+    }
     const confirmation = confirmSignal(symbol, combinedSignal.direction, combinedSignal.probability);
     if (!confirmation.confirmed) return;
     const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
@@ -1621,6 +1634,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.5 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.6 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
