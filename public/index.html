@@ -1014,7 +1014,32 @@ async function openPaperTrade(direction){
     return;
   }
   try{
-    const res=await fetch(`${API}/api/paper/open`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,direction,entry:entryInput,tp1:tp1Input,tp2:useAI&&aiSignal.tp2?parseFloat(aiSignal.tp2):tp1Input,sl:slInput,rr:`1:${rr}`,confidence:cs?.probability||0,size_usd:capital,leverage,divergences:mkt.divergences?.slice(0,3),fibonacci:mkt.fibonacci?.tf15m,source:'manual'})});
+    const res=await fetch(`${API}/api/paper/open`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,direction,entry:entryInput,tp1:tp1Input,tp2:useAI&&aiSignal.tp2?parseFloat(aiSignal.tp2):tp1Input,sl:slInput,rr:`1:${rr}`,confidence:cs?.probability||0,size_usd:capital,leverage,divergences:mkt.divergences?.slice(0,3),fibonacci:mkt.fibonacci?.tf15m,source:'manual',market_data:{
+  confidence: aiSignal?.confidence || cs?.probability || 0,
+  direction,
+  price: mkt.price,
+  rsi_15m: mkt.rsi15m,
+  cvd_pct: mkt.cvd15m?.cvdPct,
+  cvd_trend: mkt.cvd15m?.trend,
+  funding_rate: mkt.fundingRate,
+  oi_trend_15m: mkt.oiTrends?.tf15m?.trend,
+  bias_4h: mkt.bias?.tf4h?.bias,
+  bias_4h_score: mkt.bias?.tf4h?.score,
+  bias_1d: mkt.bias?.tf1d?.bias,
+  fib_level: mkt.fibonacci?.tf15m?.nearestRetrace?.label,
+  fib_dist: mkt.fibonacci?.tf15m?.nearestRetrace?.dist,
+  fib_signal: mkt.fibonacci?.tf15m?.retImpact?.signal,
+  whale_count: mkt.whaleData?.whaleCount,
+  whale_bias: mkt.whaleData?.whaleBias,
+  deep_imbalance: mkt.deepOB?.deepImbalance,
+  price_vs_poc: mkt.vrvp?.poc ? ((mkt.price - mkt.vrvp.poc) / mkt.vrvp.poc * 100).toFixed(3) : null,
+  divergence_count: mkt.divergences?.length,
+  top_divergence: mkt.divergences?.[0]?.type,
+  top_divergence_prob: mkt.divergences?.[0]?.probability,
+  ai_reasoning: aiSignal?.reasoning || null,
+  timestamp: new Date().toISOString(),
+  mode: 'manual'
+}})});
     const d=await res.json();
     if(d.ok){await refreshPaper();const src=useAI?'(valores IA)':'(valores manuales)';showToast((direction==='LONG'?'▲ Paper LONG abierto ':' ▼ Paper SHORT abierto ')+src,direction==='LONG'?'#00d68f':'#ff4d6d');}
     else{showToast(d.error||'Error al abrir trade','#ff4d6d');}
