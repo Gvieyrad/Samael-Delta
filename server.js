@@ -166,6 +166,17 @@ async function fetchBinanceAccount() {
   }
 }
 
+// Sincronizar tiempo con Binance al arrancar
+syncBinanceTime();
+
+// IP pública del servidor — para whitelist en Binance API
+app.get('/api/myip', async (req, res) => {
+  try {
+    const r = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
+    res.json({ ip: r.data.ip, note: 'Agrega esta IP en Binance → Gestión de API → Restricciones de acceso IP' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/binance/account', async (req, res) => {
   try {
     if (!BINANCE_API_KEY || !BINANCE_SECRET) {
@@ -180,7 +191,7 @@ app.get('/api/binance/account', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.5' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.6' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1889,6 +1900,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.5 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.6 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
