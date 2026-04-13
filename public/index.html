@@ -362,19 +362,30 @@ function updateExecButtons() {
     const _k=Math.abs(aiSignal.entry-aiSignal.sl);
     return _k>0?_r/_k:0;
   })();
-  const canExec = lockUnlocked || (conf >= 85 && _aiRrVal >= 1.5);
-  // Activar solo el botón que coincide con la dirección de la señal, o ambos si desbloqueado
+  // Si señal es ESPERAR o NO ENTRAR — ocultar botones completamente
+  if (dir === 'ESPERAR' || aiSignal.action === 'NO ENTRAR') {
+    if (!lockUnlocked) {
+      row.style.display = 'none';
+      return;
+    }
+  }
+
+  const canExec = lockUnlocked || (conf >= 90 && _aiRrVal >= 1.5);
+  // Activar solo el botón que coincide con la dirección de la señal
   if (dir === 'LONG') {
     longBtn.disabled = !canExec;
+    longBtn.className = canExec ? 'btn-exec btn-exec-long' : 'btn-exec btn-exec-lock';
     shortBtn.disabled = true;
     shortBtn.className = 'btn-exec btn-exec-lock';
   } else if (dir === 'SHORT') {
     shortBtn.disabled = !canExec;
+    shortBtn.className = canExec ? 'btn-exec btn-exec-short' : 'btn-exec btn-exec-lock';
     longBtn.disabled = true;
     longBtn.className = 'btn-exec btn-exec-lock';
   } else {
-    longBtn.disabled = !lockUnlocked;
-    shortBtn.disabled = !lockUnlocked;
+    // ESPERAR con candado desbloqueado — modo prueba
+    longBtn.disabled = false;
+    shortBtn.disabled = false;
   }
   if (lockUnlocked) {
     status.textContent = '🔓 Modo prueba — ejecución desbloqueada';
@@ -621,8 +632,11 @@ function renderCombined(){
   if(!cs||!mkt.divergences?.length){box.style.display='none';return;}
   box.style.display='block';
 
-  // ✅ Si hay señal IA activa ≥90%, adoptar su dirección
-  const hasActiveAI = aiSignal && aiSignal.confidence >= 90 && aiSignal.direction !== 'ESPERAR';
+  // ✅ Si hay señal IA activa ≥90% y NO es ESPERAR, adoptar su dirección
+  // Si IA devolvió ESPERAR (por confianza insuficiente), NO override — usar algoritmo
+  const hasActiveAI = aiSignal && aiSignal.confidence >= 90
+    && aiSignal.direction !== 'ESPERAR'
+    && aiSignal.action !== 'NO ENTRAR';
   const direction = hasActiveAI ? aiSignal.direction : cs.direction;
   const probability = hasActiveAI ? aiSignal.confidence : cs.probability;
   const isAIOverride = hasActiveAI && direction !== cs.direction;
