@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Futuros LO v4.1</title>
+<title>Panel Futuros LO v4.4.2</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size:13px;line-height:1.4}
@@ -248,6 +248,16 @@ input[type=number]:focus{border-color:#f59e0b}
       </div>
     </div>
     <div id="paper-panel" style="padding:0"></div>
+  </div>
+
+  <div class="card" id="binance-account-card">
+    <div class="ch">
+      <span class="ct">💼 Cuenta Binance Real</span>
+      <span id="binance-acct-status" style="font-size:10px;color:#4b5563">—</span>
+    </div>
+    <div id="binance-acct-body" class="cb">
+      <div style="color:#2a3040;font-size:11px;text-align:center">Cargando...</div>
+    </div>
   </div>
 
   <div class="card">
@@ -1047,9 +1057,24 @@ async function openPaperTrade(direction){
 }
 
 async function closePaperTrade(id,reason){
+  if(reason==='manual'){
+    if(!confirm('¿Cancelar este trade?\nNo se contabilizará en estadísticas ni ML.')) return;
+  }
   const priceRes=await fetch(`${API}/api/market/${pair}`).then(r=>r.json()).catch(()=>({price:mkt.price}));
   const closePrice=priceRes.price||mkt.price;
-  try{await fetch(`${API}/api/paper/close/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({close_price:closePrice,close_reason:reason})});await refreshPaper();showToast('Trade cerrado','#f59e0b');}catch(e){}
+  try{
+    const res=await fetch(`${API}/api/paper/close/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({close_price:closePrice,close_reason:reason})});
+    const d=await res.json();
+    await refreshPaper();
+    if(reason==='manual'){
+      showToast('Trade cancelado — no contabilizado','#f59e0b');
+    } else {
+      const trade=d.trade;
+      const pnl=parseFloat(trade?.pnl_usd||0);
+      const won=trade?.status==='won';
+      showToast(`${won?'✅ TP':'❌ SL'} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
+    }
+  }catch(e){}
 }
 
 function showToast(msg,col='#f59e0b'){
@@ -1096,7 +1121,7 @@ function renderPaper(){
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Entry</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${parseInt(entry).toLocaleString()}</div><div style="font-size:9px;color:#2a3040;margin-top:2px">${new Date(t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${time}</div></div>
+          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Entry</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${parseInt(entry).toLocaleString()}</div><div style="font-size:9px;color:#2a3040;margin-top:2px">${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</div></div>
           <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Precio actual</div><div class="mono" style="font-size:12px;font-weight:700;color:#f59e0b">$${parseInt(currentP).toLocaleString()}</div></div>
           <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Tamaño</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${(size).toLocaleString()}</div></div>
         </div>
@@ -1121,7 +1146,7 @@ function renderPaper(){
           <button onclick="closePaperTrade('${t.id}','manual')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
         </div>
         <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
-          <span>Abierto: ${time}</span>
+          <span>📅 ${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</span>
           <span style="background:${t.source==='scalping'?'rgba(139,92,246,.15)':t.source==='auto'?'rgba(0,214,143,.1)':'rgba(245,158,11,.1)'};color:${t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':'#f59e0b'};padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px">${t.source==='scalping'?'⚡ Scalping':t.source==='auto'?'🤖 Auto':'👤 Manual'}</span>
           <span>Conf: ${t.confidence||0}%</span>
         </div>
@@ -1316,6 +1341,67 @@ setTimeout(refreshML,3000);
 setInterval(refreshPaper,60000);
 setTimeout(refreshPaper,2000);
 setTimeout(checkScalpingStatus,3000);
+
+// ── BINANCE ACCOUNT ───────────────────────────────────────────────
+async function loadBinanceAccount() {
+  const el = document.getElementById('binance-acct-body');
+  const statusEl = document.getElementById('binance-acct-status');
+  if (!el) return;
+  try {
+    const d = await fetch(`${API}/api/binance/account`).then(r=>r.json());
+    if (!d.available || d.error) {
+      el.innerHTML = `<div style="color:#4b5563;font-size:11px;text-align:center">⚠️ ${d.error||'No disponible'}</div>`;
+      return;
+    }
+    if (statusEl) { statusEl.textContent='● live'; statusEl.style.color='#00d68f'; }
+    const pnlCol = d.totalUnrealizedProfit >= 0 ? '#00d68f' : '#ff4d6d';
+    const pnlSign = d.totalUnrealizedProfit >= 0 ? '+' : '';
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div style="background:#111520;border-radius:6px;padding:8px">
+          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">BALANCE</div>
+          <div class="mono" style="font-size:14px;font-weight:700">$${d.totalWalletBalance.toFixed(2)}</div>
+        </div>
+        <div style="background:#111520;border-radius:6px;padding:8px">
+          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">DISPONIBLE</div>
+          <div class="mono" style="font-size:14px;font-weight:700">$${d.availableBalance.toFixed(2)}</div>
+        </div>
+        <div style="background:#111520;border-radius:6px;padding:8px">
+          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">PNL NO REALIZADO</div>
+          <div class="mono" style="font-size:14px;font-weight:700;color:${pnlCol}">${pnlSign}$${d.totalUnrealizedProfit.toFixed(2)}</div>
+        </div>
+        <div style="background:#111520;border-radius:6px;padding:8px">
+          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">MARGEN USADO</div>
+          <div class="mono" style="font-size:14px;font-weight:700">$${d.totalPositionInitialMargin.toFixed(2)}</div>
+        </div>
+      </div>
+      ${d.positions.length ? `
+        <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Posiciones abiertas</div>
+        ${d.positions.map(p => {
+          const side = p.positionAmt > 0 ? 'LONG' : 'SHORT';
+          const sc = side==='LONG'?'#00d68f':'#ff4d6d';
+          const pc = p.unrealizedProfit>=0?'#00d68f':'#ff4d6d';
+          const ps = p.unrealizedProfit>=0?'+':'';
+          return `<div style="background:#111520;border-radius:5px;padding:7px 8px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <span style="color:${sc};font-weight:700;font-size:11px">${side}</span>
+              <span style="color:#6b7280;font-size:10px;margin-left:6px">${p.symbol}</span>
+              <span style="color:#4b5563;font-size:9px;margin-left:4px">${p.leverage}x</span>
+            </div>
+            <div style="text-align:right">
+              <div class="mono" style="font-size:11px">$${parseInt(p.entryPrice).toLocaleString()}</div>
+              <div class="mono" style="font-size:11px;color:${pc}">${ps}$${p.unrealizedProfit.toFixed(2)}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      ` : '<div style="color:#2a3040;font-size:11px;text-align:center">Sin posiciones abiertas</div>'}
+    `;
+  } catch(e) {
+    if (el) el.innerHTML = `<div style="color:#4b5563;font-size:11px;text-align:center">Error cargando cuenta</div>`;
+  }
+}
+setTimeout(loadBinanceAccount, 4000);
+setInterval(loadBinanceAccount, 30000);
 </script>
 </body>
 </html>
