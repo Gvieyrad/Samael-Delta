@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.7' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.2.8' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1107,7 +1107,7 @@ function confirmSignal(symbol, direction, probability) {
 
 function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
 
-async function runAutoAnalysis(symbol = 'BTCUSDT') {
+async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
   try {
     const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
     const price_temp = parseFloat(price_temp_res.data.lastPrice);
@@ -1148,21 +1148,25 @@ async function runAutoAnalysis(symbol = 'BTCUSDT') {
 
     // ✅ Filtro de mayoría clara — no llamar a Claude si señales están divididas
     // Requiere que la dirección dominante tenga al menos 1.5x más señales que la opuesta
+    // force=true (botón campana manual) salta este filtro
     const shortDivs = divergences.filter(d => d.direction === 'SHORT').length;
     const longDivs  = divergences.filter(d => d.direction === 'LONG').length;
     const hasClearMajority = combinedSignal.direction === 'SHORT'
       ? (shortDivs >= 2 && shortDivs > longDivs * 1.5)
       : (longDivs  >= 2 && longDivs  > shortDivs * 1.5);
-    if (!hasClearMajority) {
+    if (!hasClearMajority && !force) {
       console.log(`⏭ Auto-análisis omitido — señales divididas: ${shortDivs}S vs ${longDivs}L para ${symbol}`);
       clearSignalHistory(symbol);
       return;
+    }
+    if (!hasClearMajority && force) {
+      console.log(`⚡ Análisis forzado (campana) — señales divididas: ${shortDivs}S vs ${longDivs}L para ${symbol}`);
     }
     const confirmation = confirmSignal(symbol, combinedSignal.direction, combinedSignal.probability);
     if (!confirmation.confirmed) return;
     const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
     const now = Date.now();
-    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 45 * 60 * 1000) return; // 45 min cooldown
+    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 45 * 60 * 1000 && !force) return; // 45 min cooldown (forzado lo salta)
     alertCache[cacheKey] = now;
     const marketData = { price, change24h: parseFloat(ticker.data.priceChangePercent), fundingRate, openInterest: parseFloat(oiRes.data.openInterest), rsi15m: calcRSI(closes15m), cvd15m, vrvp, volDeltaPct: 0, orderBook: ob, liqMagnets: calcLiqMagnets(price).slice(0,5), divergences: divergences.slice(0,4), combinedSignal, bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d } };
     // Solo pasar divergencias ≥90% al prompt — evitar confusión con señales débiles
@@ -1299,8 +1303,9 @@ app.get('/api/prices', async (req, res) => {
 
 app.post('/api/alert/trigger', async (req, res) => {
   const symbol = req.body.symbol || 'BTCUSDT';
-  await runAutoAnalysis(symbol);
-  res.json({ ok: true, message: `Análisis disparado para ${symbol}` });
+  const force = req.body.force === true; // true = saltar filtros de mayoría y cooldown
+  await runAutoAnalysis(symbol, force);
+  res.json({ ok: true, message: `Análisis disparado para ${symbol}${force?' (forzado)':''}` });
 });
 
 app.get('/api/alert/status', (req, res) => {
@@ -1640,6 +1645,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.2.7 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.2.8 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
