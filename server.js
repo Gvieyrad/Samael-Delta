@@ -17,7 +17,7 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.6' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.3.7' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1066,7 +1066,7 @@ LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
 IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
 
 REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
-R:R OBLIGATORIO: calcula SL en zona de soporte/resistencia real, no arbitrario. TP1 debe ser mínimo 1.5x la distancia del SL desde entry. Ejemplo SHORT: entry=71000, SL=71500 (500 riesgo), TP1 mínimo=70250 (750 reward). Si el mercado no ofrece R:R ≥1:1.5 da direction=ESPERAR.
+R:R OBLIGATORIO: usa los imanes de liquidación del mapa como TP objetivo. Para SHORT: TP1 = primera zona de liquidación ABAJO del precio (Stop longs). Para LONG: TP1 = primera zona de liquidación ARRIBA (Stop shorts). SL en zona de resistencia/soporte real. TP1 debe ser mínimo 1.5x la distancia del SL. Si no hay zona de liquidación accesible con R:R ≥1:1.5, da direction=ESPERAR.
 
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo principal o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
@@ -1211,7 +1211,7 @@ DIVERGENCIAS (${divergences.length}):
 ${divSummary}
 SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
 REGLAS: RSI>72 no long; RSI<28 no short.
-R:R OBLIGATORIO: calcula SL en zona de soporte/resistencia real, no arbitrario. TP1 debe ser mínimo 1.5x la distancia del SL desde entry. Ejemplo SHORT: entry=71000, SL=71500 (500 riesgo), TP1 mínimo=70250 (750 reward). Si el mercado no ofrece R:R ≥1:1.5 da direction=ESPERAR.
+R:R OBLIGATORIO: usa los imanes de liquidación del mapa como TP objetivo. Para SHORT: TP1 = primera zona de liquidación ABAJO del precio (Stop longs). Para LONG: TP1 = primera zona de liquidación ARRIBA (Stop shorts). SL en zona de resistencia/soporte real. TP1 debe ser mínimo 1.5x la distancia del SL. Si no hay zona de liquidación accesible con R:R ≥1:1.5, da direction=ESPERAR.
 Responde SOLO JSON sin markdown:
 {"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
     const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
@@ -1684,6 +1684,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.3.6 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.3.7 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
