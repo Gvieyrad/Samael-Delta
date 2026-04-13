@@ -402,11 +402,25 @@ async function openPaperTradeFromAI(directionOverride) {
   await openPaperTrade(direction);
 }
 
-// ✅ AUTO-ANÁLISIS: dispara runAI si 2+ divergencias ≥90%
+// ✅ AUTO-ANÁLISIS: dispara runAI si 2+ divergencias ≥90% con mayoría clara
 function checkAutoAI() {
   if (!mkt.divergences || mkt.divergences.length < 2) return;
   const highProb = mkt.divergences.filter(d => d.probability >= 90);
   if (highProb.length < 2) return;
+
+  // ✅ Filtro de mayoría clara — no llamar a Claude si señales están divididas
+  const shortDivs = highProb.filter(d => d.direction === 'SHORT').length;
+  const longDivs  = highProb.filter(d => d.direction === 'LONG').length;
+  const dominantDir = shortDivs > longDivs ? 'SHORT' : 'LONG';
+  const dominantCount = Math.max(shortDivs, longDivs);
+  const oppositeCount = Math.min(shortDivs, longDivs);
+  const hasClearMajority = dominantCount >= 2 && dominantCount > oppositeCount * 1.5;
+
+  if (!hasClearMajority) {
+    console.log('⏭ Auto-análisis omitido — señales divididas: ' + shortDivs + 'S vs ' + longDivs + 'L');
+    return;
+  }
+
   const now = Date.now();
   // No disparar más de una vez cada 5 minutos
   if (now - lastAutoAiTime < 5 * 60 * 1000) return;
@@ -414,9 +428,9 @@ function checkAutoAI() {
   const btn = document.getElementById('ai-btn');
   if (btn && btn.disabled) return;
   lastAutoAiTime = now;
-  console.log('⚡ Auto-análisis: ' + highProb.length + ' divergencias ≥90%');
-  showToast('⚡ ' + highProb.length + ' divergencias ≥90% — analizando automáticamente...', '#f59e0b');
-  runAI(true); // true = modo automático
+  console.log('⚡ Auto-análisis: ' + highProb.length + ' divergencias ≥90% — mayoría ' + dominantDir + ' (' + dominantCount + 'vs' + oppositeCount + ')');
+  showToast('⚡ ' + dominantCount + ' señales ' + dominantDir + ' ≥90% — analizando automáticamente...', '#f59e0b');
+  runAI(true);
 }
 
 async function refreshWsWidget() {
