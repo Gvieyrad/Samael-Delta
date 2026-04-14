@@ -18,30 +18,102 @@ const BINANCE_WS = 'wss://fstream.binance.com';
 let analyzeCache = {};
 
 // ══════════════════════════════════════════════════════════════════
+// ─── COINGLASS — LIQUIDATION HEATMAP REAL ────────────────────────
+// ══════════════════════════════════════════════════════════════════
+const COINGLASS_KEY = process.env.COINGLASS_KEY;
+let coinglassCache = {};
+
+async function fetchCoinglassLiqHeatmap(symbol) {
+  const cgSymbol = symbol.replace('USDT','').replace('PERP','');
+  const now = Date.now();
+  if (coinglassCache[cgSymbol] && now - coinglassCache[cgSymbol].ts < 5 * 60 * 1000) {
+    return coinglassCache[cgSymbol].data;
+  }
+  if (!COINGLASS_KEY) return null;
+  try {
+    const res = await axios.get('https://open-api-v3.coinglass.com/api/futures/liquidation/heatmap', {
+      headers: { 'CG-API-KEY': COINGLASS_KEY },
+      params: { symbol: cgSymbol, exchange: 'Binance', interval: '12h' },
+      timeout: 8000
+    });
+    if (!res.data?.data) return null;
+    const rawData = res.data.data;
+    const bucketSize = cgSymbol === 'BTC' ? 200 : cgSymbol === 'ETH' ? 20 : 2;
+    const buckets = {};
+    rawData.forEach(item => {
+      const price = parseFloat(item.price || item.liqPrice);
+      const usd = parseFloat(item.liqUsd || item.size || 0);
+      const side = item.side || 'long';
+      if (!price || !usd) return;
+      const bucket = Math.round(price / bucketSize) * bucketSize;
+      if (!buckets[bucket]) buckets[bucket] = { price: bucket, longLiq: 0, shortLiq: 0, total: 0 };
+      if (side === 'long') buckets[bucket].longLiq += usd;
+      else buckets[bucket].shortLiq += usd;
+      buckets[bucket].total += usd;
+    });
+    const zones = Object.values(buckets)
+      .filter(b => b.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 25)
+      .map(b => ({
+        price: b.price,
+        longLiq: Math.round(b.longLiq / 1e6 * 10) / 10,
+        shortLiq: Math.round(b.shortLiq / 1e6 * 10) / 10,
+        total: Math.round(b.total / 1e6 * 10) / 10,
+        dominant: b.longLiq > b.shortLiq ? 'longs' : 'shorts'
+      }));
+    const result = { zones, source: 'coinglass', ts: now };
+    coinglassCache[cgSymbol] = { data: result, ts: now };
+    console.log(`🔥 Coinglass heatmap ${cgSymbol}: ${zones.length} zonas reales`);
+    return result;
+  } catch(e) {
+    console.log(`⚠️ Coinglass error (${cgSymbol}): ${e.message} — usando Binance`);
+    return null;
+  }
+}
+
+async function fetchBestLiqData(symbol, price) {
+  const [cgData, binanceData] = await Promise.all([
+    fetchCoinglassLiqHeatmap(symbol),
+    fetchForceOrders(symbol)
+  ]);
+  if (cgData?.zones?.length >= 3) {
+    // Convertir M USD → K para compatibilidad con calcRealLiqMagnets
+    const cgZones = cgData.zones.map(z => ({
+      price: z.price,
+      longLiq: z.longLiq * 1000,
+      shortLiq: z.shortLiq * 1000,
+      total: z.total * 1000,
+      dominant: z.dominant,
+      source: 'coinglass'
+    }));
+    return { zones: cgZones, source: 'coinglass', totalLongs: 0, totalShorts: 0 };
+  }
+  return { ...binanceData, source: 'binance' };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // ─── BINANCE ACCOUNT — BALANCE REAL (READ-ONLY) ──────────────────
 // ══════════════════════════════════════════════════════════════════
 const crypto = require('crypto');
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET  = process.env.BINANCE_SECRET_KEY;
 
-// Firma manual — orden exacto que Binance espera
-function binanceSign(timestamp, recvWindow) {
-  const queryString = `timestamp=${timestamp}&recvWindow=${recvWindow}`;
-  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(queryString).digest('hex');
-  return `${queryString}&signature=${sig}`;
+function binanceSign(params) {
+  const query = new URLSearchParams(params).toString();
+  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(query).digest('hex');
+  return `${query}&signature=${sig}`;
 }
 
 let binanceAccountCache = { data: null, ts: 0, lastError: null };
-let binanceTimeOffset = 0;
+let binanceTimeOffset = 0; // diferencia entre tiempo local y Binance
 
 async function syncBinanceTime() {
   try {
     const res = await axios.get(`${BINANCE}/fapi/v1/time`, { timeout: 5000 });
     binanceTimeOffset = res.data.serverTime - Date.now();
-    console.log(`⏱ Binance time sync OK — offset: ${binanceTimeOffset}ms`);
-  } catch(e) {
-    console.log(`⚠️ Binance time sync error: ${e.message}`);
-  }
+    console.log(`⏱ Binance time offset: ${binanceTimeOffset}ms`);
+  } catch(_) {}
 }
 
 async function fetchBinanceAccount() {
@@ -49,9 +121,10 @@ async function fetchBinanceAccount() {
   const now = Date.now();
   if (binanceAccountCache.data && now - binanceAccountCache.ts < 30000) return binanceAccountCache.data;
   try {
-    const timestamp = Date.now() + binanceTimeOffset;
-    const recvWindow = 10000;
-    const signed = binanceSign(timestamp, recvWindow);
+    // Sincronizar tiempo si el offset es desconocido o muy grande
+    if (Math.abs(binanceTimeOffset) > 1000) await syncBinanceTime();
+    const params = { timestamp: Date.now() + binanceTimeOffset, recvWindow: 10000 };
+    const signed = binanceSign(params);
     const res = await axios.get(`${BINANCE}/fapi/v2/account?${signed}`, {
       headers: { 'X-MBX-APIKEY': BINANCE_API_KEY },
       timeout: 10000
@@ -63,41 +136,35 @@ async function fetchBinanceAccount() {
       totalMarginBalance: parseFloat(d.totalMarginBalance || 0),
       availableBalance: parseFloat(d.availableBalance || 0),
       totalPositionInitialMargin: parseFloat(d.totalPositionInitialMargin || 0),
-      assets: (d.assets || []).filter(a => parseFloat(a.walletBalance) > 0).map(a => ({
-        asset: a.asset, walletBalance: parseFloat(a.walletBalance),
-        unrealizedProfit: parseFloat(a.unrealizedProfit), availableBalance: parseFloat(a.availableBalance)
-      })),
-      positions: (d.positions || []).filter(p => parseFloat(p.positionAmt) !== 0).map(p => ({
-        symbol: p.symbol, positionAmt: parseFloat(p.positionAmt),
-        entryPrice: parseFloat(p.entryPrice), unrealizedProfit: parseFloat(p.unrealizedProfit),
-        leverage: parseInt(p.leverage), liquidationPrice: parseFloat(p.liquidationPrice)
-      }))
+      assets: (d.assets || [])
+        .filter(a => parseFloat(a.walletBalance) > 0)
+        .map(a => ({
+          asset: a.asset,
+          walletBalance: parseFloat(a.walletBalance),
+          unrealizedProfit: parseFloat(a.unrealizedProfit),
+          availableBalance: parseFloat(a.availableBalance)
+        })),
+      positions: (d.positions || [])
+        .filter(p => parseFloat(p.positionAmt) !== 0)
+        .map(p => ({
+          symbol: p.symbol,
+          positionAmt: parseFloat(p.positionAmt),
+          entryPrice: parseFloat(p.entryPrice),
+          unrealizedProfit: parseFloat(p.unrealizedProfit),
+          leverage: parseInt(p.leverage),
+          liquidationPrice: parseFloat(p.liquidationPrice)
+        }))
     };
     binanceAccountCache = { data: result, ts: now, lastError: null };
-    console.log(`✅ Binance account OK — balance: $${result.totalWalletBalance}`);
     return result;
   } catch(e) {
     const binanceErr = e.response?.data?.msg || e.message;
     const binanceCode = e.response?.data?.code || '';
     console.log(`⚠️ Binance account error [${binanceCode}]: ${binanceErr}`);
     binanceAccountCache = { data: null, ts: 0, lastError: `[${binanceCode}] ${binanceErr}` };
-    if (binanceCode === -1021 || binanceCode === -1022) syncBinanceTime();
     return null;
   }
 }
-
-// fetchBestLiqData — usa Binance forceOrders (Coinglass requiere plan de pago)
-async function fetchBestLiqData(symbol, price) {
-  return fetchForceOrders(symbol);
-}
-
-// IP pública del servidor — para whitelist en Binance API
-app.get('/api/myip', async (req, res) => {
-  try {
-    const r = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
-    res.json({ ip: r.data.ip, note: 'Agrega esta IP en Binance → Gestión de API → Restricciones de acceso IP' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
 
 app.get('/api/binance/account', async (req, res) => {
   try {
@@ -106,12 +173,14 @@ app.get('/api/binance/account', async (req, res) => {
     }
     const account = await fetchBinanceAccount();
     if (!account) {
-      return res.json({ error: binanceAccountCache.lastError || 'Error desconocido', available: false });
+      const errMsg = binanceAccountCache.lastError || 'Error de conexión — visita /api/myip y agrega esa IP en Binance';
+      return res.json({ error: errMsg, available: false });
     }
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.8' }));
+
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.10' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -832,18 +901,24 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   };
 
   if(priceUp&&cvdRising&&cvdAgressive){
-    let prob=73; if(hasAskWall) prob+=12; if(oiFalling) prob+=8; if(lastRSI>65) prob+=7; if(lastRSI>75) prob+=8;
+    let prob=65; if(hasAskWall) prob+=10; if(oiFalling) prob+=8; if(lastRSI>65) prob+=7; if(lastRSI>75) prob+=8;
     if(bearishContext) prob+=8; if(aboveVwap) prob+=5; if(volClimaxUp) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
     prob += wsAnomalyBonus('SHORT');
-    divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista',wsAnomalyBonus('SHORT')>0&&'⚡ Barrida WS confirmada'].filter(Boolean) });
+    // Sin barrida WS confirmada, capear en 82% — evitar falsos positivos
+    const hasRealSweep = wsAnomalyBonus('SHORT') > 0;
+    if (!hasRealSweep) prob = Math.min(82, prob);
+    divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}${!hasRealSweep?' (sin barrida confirmada)':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista',hasRealSweep&&'⚡ Barrida WS confirmada'].filter(Boolean) });
   }
   if(priceDown&&cvdFalling&&cvdAgressive){
-    let prob=73; if(hasBidWall) prob+=12; if(lastRSI<35) prob+=10; if(lastRSI<25) prob+=8;
+    let prob=65; if(hasBidWall) prob+=8; if(lastRSI<35) prob+=10; if(lastRSI<25) prob+=8;
     if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5; if(volClimaxDown) prob+=7;
     const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
     prob += wsAnomalyBonus('LONG');
-    divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Ballena comprando con límites — CVD ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista',wsAnomalyBonus('LONG')>0&&'⚡ Barrida WS confirmada'].filter(Boolean) });
+    // Sin ballena real confirmada (WS o detector), capear en 82% — evitar falsos positivos
+    const hasRealWhale = wsAnomalyBonus('LONG') > 0;
+    if (!hasRealWhale) prob = Math.min(82, prob);
+    divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`${hasRealWhale?'🐋 Ballena confirmada':'CVD'} ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}${!hasRealWhale?' (sin ballena confirmada)':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista',hasRealWhale&&'⚡ Barrida WS confirmada'].filter(Boolean) });
   }
   if(lastHigh>prevHigh&&lastRSI<prevRSI-3){
     let prob=64; if(cvdFalling) prob+=15; if(oiRising&&priceUp) prob+=5; if(lastRSI>60) prob+=7; if(lastRSI>70) prob+=8;
@@ -1367,7 +1442,7 @@ Responde SOLO JSON sin markdown:
         const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
         if (!existing || existing.length === 0) {
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
-          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
+          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', market_data: mlSnapshot }).select().single();
           console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
           if (process.env.TELEGRAM_CHAT_ID) {
             const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼';
@@ -1752,9 +1827,12 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '88')) return;
     const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2])), lows3m = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
     const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20;
-    const atr3m = Math.max(rawAtr, price*0.004);
+    const atr3m = Math.max(rawAtr, price*0.008); // mínimo 0.8% — evita SL = entry
     const isLong = scalpDir==='LONG';
-    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2, sl = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
+    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2;
+    const sl  = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
+    if (isLong && sl >= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
+    if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
@@ -1820,7 +1898,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.8 corriendo en puerto ${PORT}`);
-  syncBinanceTime();
+  console.log(`🚀 Panel Futuros LO v4.4.10 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
