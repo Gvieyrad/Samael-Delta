@@ -180,7 +180,7 @@ app.get('/api/binance/account', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.11' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.12' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -388,7 +388,6 @@ async function evaluateAnomaly(symbol) {
 
 async function killSwitchOpposite(symbol, sweepDirection, reason) {
   try {
-    // Buscar trades abiertos en dirección contraria al sweep
     const oppositeDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
     const { data: openTrades } = await supabase.from('paper_trades')
       .select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
@@ -397,6 +396,25 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
     for (const trade of openTrades) {
       const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
       const entry = parseFloat(trade.entry);
+      const sl = parseFloat(trade.sl);
+
+      // ── KILL SWITCH CONSERVADOR ─────────────────────────────────
+      // Solo cerrar si el precio ya recorrió >60% del camino hacia el SL
+      // Así no cerramos trades que tienen margen suficiente
+      const totalDistance = Math.abs(sl - entry);
+      const currentDistance = Math.abs(currentPrice - entry);
+      const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
+
+      if (slProgress < 0.6) {
+        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} solo al ${(slProgress*100).toFixed(0)}% del SL (precio: $${currentPrice}, entry: $${entry}, SL: $${sl})`);
+        if (process.env.TELEGRAM_CHAT_ID) {
+          const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nPrecio al ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nEntry: $${parseInt(entry).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()} | Precio: $${parseInt(currentPrice).toLocaleString()}`;
+          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+        }
+        continue;
+      }
+      // ────────────────────────────────────────────────────────────
+
       const priceDiff = trade.direction === 'LONG'
         ? (currentPrice - entry) / entry
         : (entry - currentPrice) / entry;
@@ -412,7 +430,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
         closed_at: new Date().toISOString()
       }).eq('id', trade.id);
 
-      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} — ${reason}`);
+      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} — ${reason} (${(slProgress*100).toFixed(0)}% hacia SL)`);
 
       if (process.env.TELEGRAM_CHAT_ID) {
         const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
@@ -1916,6 +1934,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.11 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.12 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
