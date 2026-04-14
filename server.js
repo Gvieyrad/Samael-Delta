@@ -205,12 +205,27 @@ function getWsMetrics(symbol) {
   const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
 
+  // Calcular avgVolume1m en tiempo real — ventana de 2 a 10 minutos atrás
+  // Evita depender del timer externo que tarda 5 min en arrancar
+  const last600s = state.trades.filter(t => now - t.time < 600000); // últimos 10 min
+  const last120s = state.trades.filter(t => now - t.time < 120000 && now - t.time >= 60000); // 1-2 min atrás
+  let dynamicAvg = state.avgVolume1m; // fallback al valor externo
+  if (last600s.length >= 10) {
+    // Calcular promedio por minuto en los últimos 10 min
+    const totalVol600s = last600s.reduce((s, t) => s + t.usdVal, 0);
+    dynamicAvg = totalVol600s / 10; // promedio por minuto en ventana de 10 min
+  } else if (last120s.length >= 5) {
+    dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0); // vol del minuto anterior
+  }
+  const effectiveAvg = Math.max(dynamicAvg, state.avgVolume1m);
+  const volumeMultiplier = effectiveAvg > 0 ? totalVol60s / effectiveAvg : 1;
+
   return {
     totalVol60s, buyVol60s, sellVol60s, cvdLive,
     totalVol10s, buyVol10s, sellVol10s,
     whaleCount: whales60s.length, whaleBuyVol, whaleSellVol,
-    avgVolume1m: state.avgVolume1m,
-    volumeMultiplier: state.avgVolume1m > 0 ? totalVol60s / state.avgVolume1m : 1,
+    avgVolume1m: effectiveAvg,
+    volumeMultiplier,
     lastPrice: state.lastPrice,
     anomaly: state.anomaly
   };
@@ -301,10 +316,13 @@ async function evaluateAnomaly(symbol) {
   // Ballena sola: SOLO alerta informativa, sin kill switch ni sweep trade
 
   // ── ALERTA TELEGRAM ─────────────────────────────────────────
-  // Solo notificar si es barrida real — ballenas solas se muestran en el panel pero no generan alerta
-  if (isSweep && process.env.TELEGRAM_CHAT_ID) {
-    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : '🟢 BARRIDA ALCISTA';
-    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}\n🛡️ Kill Switch + Sweep trade abierto\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+  if (process.env.TELEGRAM_CHAT_ID) {
+    const emoji = direction === 'SHORT' ? '🔴' : '🟢';
+    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : isRealBullishSweep ? '🟢 BARRIDA ALCISTA' : `${emoji} Ballena detectada`;
+    const actionNote = isSweep
+      ? `\n🛡️ Kill Switch activado — posiciones contrarias cerradas\n⚡ Sweep trade abierto en dirección ${direction}`
+      : `\nℹ️ Solo informativo — sin acción automática`;
+    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}${actionNote}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
   }
 }
@@ -836,10 +854,8 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const wsAnomalyBonus = (dir) => {
     if (!wsAnomaly || Date.now() - wsAnomaly.time > 5 * 60 * 1000) return 0;
     if (wsAnomaly.isSweep) {
-      // Barrida real: +10 a favor, -8 en contra
       return wsAnomaly.direction === dir ? 10 : -8;
     } else if (wsAnomaly.isWhale) {
-      // Ballena sola: +5 a favor, -5 en contra
       return wsAnomaly.direction === dir ? 5 : -5;
     }
     return 0;
