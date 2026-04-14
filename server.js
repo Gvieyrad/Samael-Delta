@@ -1598,6 +1598,28 @@ async function monitorPaperTrades() {
           sl = newSlRounded;
           console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(0)} → ${newSlRounded.toFixed(0)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
         }
+
+        // ── TP DINÁMICO — mover TP hacia siguiente zona de liquidación ──
+        // Solo cuando el precio avanza +1% — nunca acercar el TP
+        if (priceDiffPct >= 1.0) {
+          try {
+            const liqRes = await fetchForceOrders(trade.symbol);
+            const currentTp1 = parseFloat(trade.tp1);
+            if (liqRes?.zones?.length) {
+              // Buscar zona de liquidación más cercana en dirección del trade
+              const relevantZones = liqRes.zones
+                .filter(z => isLong ? z.price > currentPrice : z.price < currentPrice)
+                .filter(z => isLong ? z.price > currentTp1 : z.price < currentTp1) // más lejos que TP actual
+                .sort((a, b) => isLong ? a.price - b.price : b.price - a.price);
+              if (relevantZones.length) {
+                const nextZone = relevantZones[0];
+                const newTp1 = parseFloat(nextZone.price.toFixed(1));
+                await supabase.from('paper_trades').update({ tp1: newTp1 }).eq('id', trade.id);
+                console.log(`🎯 TP dinámico: ${trade.direction} ${trade.symbol} TP ${currentTp1.toFixed(0)} → ${newTp1.toFixed(0)} (zona liq $${nextZone.total}K)`);
+              }
+            }
+          } catch(_) {} // silencioso — no interrumpir el monitor si falla
+        }
         // ────────────────────────────────────────────────────────
 
         let closeReason = null;
@@ -1759,8 +1781,12 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
     let longScore = longs.reduce((s,d)=>s+d.probability,0)/Math.max(longs.length,1);
     let shortScore = shorts.reduce((s,d)=>s+d.probability,0)/Math.max(shorts.length,1);
     if(bias15m?.bias==='long') longScore+=12; if(bias15m?.bias==='short') shortScore+=12;
+    if(bias15m?.bias==='short') longScore-=10; if(bias15m?.bias==='long') shortScore-=10;
     if(bias1h?.bias==='long') longScore+=8; if(bias1h?.bias==='short') shortScore+=8;
+    // Penalizar scalping contra tendencia 1H — evita abrir contra la corriente
+    if(bias1h?.bias==='short') longScore-=15; if(bias1h?.bias==='long') shortScore-=15;
     if(bias4h?.bias==='long') longScore+=4; if(bias4h?.bias==='short') shortScore+=4;
+    if(bias4h?.bias==='short') longScore-=8; if(bias4h?.bias==='long') shortScore-=8;
     if(divergences.some(d=>d.type==='double_top')) shortScore+=15;
     if(divergences.some(d=>d.type==='double_bottom')) longScore+=15;
     const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
