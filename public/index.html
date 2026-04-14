@@ -1056,11 +1056,13 @@ async function openPaperTrade(direction){
   }catch(e){showToast('Error al abrir trade','#ff4d6d');}
 }
 
-async function closePaperTrade(id,reason){
+async function closePaperTrade(id,reason,tradeSymbol){
   if(reason==='manual'){
     if(!confirm('¿Cancelar este trade?\nNo se contabilizará en estadísticas ni ML.')) return;
   }
-  const priceRes=await fetch(`${API}/api/market/${pair}`).then(r=>r.json()).catch(()=>({price:mkt.price}));
+  // Usar el símbolo del trade, no el par activo en el panel
+  const symbolToFetch = tradeSymbol || pair;
+  const priceRes=await fetch(`${API}/api/market/${symbolToFetch}`).then(r=>r.json()).catch(()=>({price:mkt.price}));
   const closePrice=priceRes.price||mkt.price;
   try{
     const res=await fetch(`${API}/api/paper/close/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({close_price:closePrice,close_reason:reason})});
@@ -1141,9 +1143,9 @@ function renderPaper(){
           </div>
         </div>
         <div style="display:flex;gap:6px">
-          <button onclick="closePaperTrade('${t.id}','tp1')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','sl')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','manual')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
+          <button onclick="closePaperTrade('${t.id}','tp1','${t.symbol}')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
+          <button onclick="closePaperTrade('${t.id}','sl','${t.symbol}')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
+          <button onclick="closePaperTrade('${t.id}','manual','${t.symbol}')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
         </div>
         <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
           <span>📅 ${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</span>
