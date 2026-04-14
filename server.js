@@ -180,7 +180,7 @@ app.get('/api/binance/account', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
 
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.10' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.11' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1028,7 +1028,7 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   } catch(e) { console.error('detectDivergences error:', e.message); return []; }
 }
 
-function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null) {
+function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null, bias1h=null) {
   const absorcionCount = divergences.filter(d => d.type === 'absorcion_compras' || d.type === 'absorcion_ventas').length;
   if(!divergences.length) return { direction:'ESPERAR', probability:30, action:'ESPERAR', reason:'Sin divergencias activas' };
   const shorts=divergences.filter(d=>d.direction==='SHORT');
@@ -1045,8 +1045,23 @@ function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=
   const both4hAnd1dShort = bias4h?.bias==='short' && bias1d?.bias==='short';
   const only4hLong  = bias4h?.bias==='long'  && bias1d?.bias!=='short';
   const only4hShort = bias4h?.bias==='short' && bias1d?.bias!=='long';
-  if(direction==='LONG'){ if(both4hAnd1dLong) prob=Math.min(95,prob+15); else if(only4hLong) prob=Math.min(95,prob+8); if(bias1d?.bias==='short') prob=Math.max(5,prob-10); }
-  if(direction==='SHORT'){ if(both4hAnd1dShort) prob=Math.min(95,prob+15); else if(only4hShort) prob=Math.min(95,prob+8); if(bias1d?.bias==='long') prob=Math.max(5,prob-10); }
+  // Si 1H es contrario al 4H, reducir el bonus del 4H a la mitad
+  const bias1hContraLong  = bias4h?.bias==='long'  && (bias4h?.tf1h?.bias==='short' || false);
+  const bias1hContraShort = bias4h?.bias==='short' && (bias4h?.tf1h?.bias==='long'  || false);
+  if(direction==='LONG'){
+    if(both4hAnd1dLong) prob=Math.min(95,prob+15);
+    else if(only4hLong) prob=Math.min(95,prob+8);
+    if(bias1d?.bias==='short') prob=Math.max(5,prob-10);
+    // Penalizar si 1H es bajista — contexto de corto plazo en contra
+    if(bias1h?.bias==='short') prob=Math.max(5,prob-12);
+  }
+  if(direction==='SHORT'){
+    if(both4hAnd1dShort) prob=Math.min(95,prob+15);
+    else if(only4hShort) prob=Math.min(95,prob+8);
+    if(bias1d?.bias==='long') prob=Math.max(5,prob-10);
+    // Penalizar si 1H es alcista — contexto de corto plazo en contra
+    if(bias1h?.bias==='long') prob=Math.max(5,prob-12);
+  }
   if(whaleData && whaleData.whaleCount >= 3) {
     if(direction==='LONG' && whaleData.whaleBias==='bull') prob=Math.min(95,prob+10);
     if(direction==='SHORT' && whaleData.whaleBias==='bear') prob=Math.min(95,prob+10);
@@ -1179,7 +1194,7 @@ app.get('/api/market/:symbol', async (req, res) => {
     const divergences=detectDivergences(k15m.data,ob,price,fundingRate,bias4h,bias1d,oiTrend15m,fib15m);
     const doublePatterns=detectDoublePatterns(k15m.data,price);
     const allDivs=[...divergences,...doublePatterns];
-    const combinedSignal=calcCombinedSignal(allDivs,bias4h,bias1d,whaleData,deepOB,fib15m);
+    const combinedSignal=calcCombinedSignal(allDivs,bias4h,bias1d,whaleData,deepOB,fib15m,bias1h);
     const scalpSignal=calcScalpSignal(allDivs,calcBias(k15m.data,oi15mHist,fundingRate),calcBias(k1h.data,oi1hHist,fundingRate),bias4h);
     const vols=k15m.data.slice(-5).map(k=>parseFloat(k[5]));
     const avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4;
@@ -1338,7 +1353,7 @@ async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
     const bias1d  = calcBias(k1d.data?.length >= 20 ? k1d.data : k15m.data, null, fundingRate);
     const fib15m = calcFibonacci(k15m.data, price);
     const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
-    const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m);
+    const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m, bias1h);
     const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
     const minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
     if (combinedSignal.direction === 'ESPERAR') { clearSignalHistory(symbol); return; }
@@ -1749,23 +1764,26 @@ function detectDoublePatterns(klines15m, price) {
       const volDivergence = p2.vol < p1.vol * 0.85;
       const rsi1 = calcRSI(closes.slice(0, p1.idx+1)), rsi2 = calcRSI(closes.slice(0, p2.idx+1));
       const rsiDivergence = rsi2 < rsi1 - 3;
-      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+      const neckline = Math.min(...lows.slice(p1.idx, p2.idx+1));
+      // Invalidar si precio ya superó el techo >1.5% (patrón obsoleto)
+      const priceBelowPattern = price < p2.price * 0.985;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence) && !priceBelowPattern) {
         let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price < p2.price*0.999) prob+=7;
-        const neckline = Math.min(...lows.slice(p1.idx, p2.idx+1));
         patterns.push({ type:'double_top', name:'┳ Double Top — Scalping Bajista', direction:'SHORT', probability:Math.min(92,prob), entry:price, tp:neckline-(p2.price-neckline)*0.8, sl:p2.price*1.002, description:`Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal bajista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
       }
     }
-    let troughs = [];
-    for (let i = n - lookback; i < n - 1; i++) { if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) troughs.push({ idx: i, price: lows[i], vol: volumes[i] }); }
     if (troughs.length >= 2) {
       const t1 = troughs[troughs.length-2], t2 = troughs[troughs.length-1];
       const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100;
       const volDivergence = t2.vol < t1.vol * 0.85;
       const rsi1 = calcRSI(closes.slice(0, t1.idx+1)), rsi2 = calcRSI(closes.slice(0, t2.idx+1));
       const rsiDivergence = rsi2 > rsi1 + 3;
-      if (priceDiff < 0.4 && (volDivergence || rsiDivergence)) {
+      const neckline = Math.max(...highs.slice(t1.idx, t2.idx+1));
+      // Invalidar si precio ya se alejó >1.5% del fondo O si ya cayó por debajo del neckline
+      const priceAbovePattern = price > t2.price * 1.015;
+      const priceBelowNeckline = price < neckline * 0.998;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence) && !priceAbovePattern && !priceBelowNeckline) {
         let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price > t2.price*1.001) prob+=7;
-        const neckline = Math.max(...highs.slice(t1.idx, t2.idx+1));
         patterns.push({ type:'double_bottom', name:'▲ Double Bottom — Scalping Alcista', direction:'LONG', probability:Math.min(92,prob), entry:price, tp:neckline+(neckline-t2.price)*0.8, sl:t2.price*0.998, description:`Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal alcista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
       }
     }
@@ -1898,6 +1916,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.10 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.11 corriendo en puerto ${PORT}`);
   startAlertJob();
 });
