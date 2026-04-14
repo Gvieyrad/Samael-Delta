@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.12' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.13' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -301,13 +301,10 @@ async function evaluateAnomaly(symbol) {
   // Ballena sola: SOLO alerta informativa, sin kill switch ni sweep trade
 
   // ── ALERTA TELEGRAM ─────────────────────────────────────────
-  if (process.env.TELEGRAM_CHAT_ID) {
-    const emoji = direction === 'SHORT' ? '🔴' : '🟢';
-    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : isRealBullishSweep ? '🟢 BARRIDA ALCISTA' : `${emoji} Ballena detectada`;
-    const actionNote = isSweep
-      ? `\n🛡️ Kill Switch activado — posiciones contrarias cerradas\n⚡ Sweep trade abierto en dirección ${direction}`
-      : `\nℹ️ Solo informativo — sin acción automática`;
-    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}${actionNote}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+  // Solo notificar si es barrida real — ballenas solas se muestran en el panel pero no generan alerta
+  if (isSweep && process.env.TELEGRAM_CHAT_ID) {
+    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : '🟢 BARRIDA ALCISTA';
+    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}\n🛡️ Kill Switch + Sweep trade abierto\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
   }
 }
@@ -838,7 +835,14 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const wsAnomaly = wsState[Object.keys(wsState).find(k => k.startsWith(price > 10000 ? 'BTC' : 'ETH'))]?.anomaly;
   const wsAnomalyBonus = (dir) => {
     if (!wsAnomaly || Date.now() - wsAnomaly.time > 5 * 60 * 1000) return 0;
-    return wsAnomaly.direction === dir ? 10 : 0;
+    if (wsAnomaly.isSweep) {
+      // Barrida real: +10 a favor, -8 en contra
+      return wsAnomaly.direction === dir ? 10 : -8;
+    } else if (wsAnomaly.isWhale) {
+      // Ballena sola: +5 a favor, -5 en contra
+      return wsAnomaly.direction === dir ? 5 : -5;
+    }
+    return 0;
   };
 
   if(priceUp&&cvdRising&&cvdAgressive){
@@ -1643,7 +1647,7 @@ app.get('/api/ml/insights', async (req, res) => {
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
     const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
     const bySource = {};
-    for (const src of ['scalping','auto','manual','sweep','backtest']) {
+    for (const src of ['scalping','auto','manual','backtest']) {
       const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
       if (!st.length) continue;
       bySource[src] = { total:st.length, won:sw.length, lost:st.length-sw.length, winRate:parseFloat(((sw.length/Math.max(st.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(st.length,1)).toFixed(2)) };
@@ -1857,7 +1861,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.12 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.13 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
