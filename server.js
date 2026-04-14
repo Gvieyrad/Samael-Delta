@@ -398,22 +398,19 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const entry = parseFloat(trade.entry);
       const sl = parseFloat(trade.sl);
 
-      // ── KILL SWITCH CONSERVADOR ─────────────────────────────────
-      // Solo cerrar si el precio ya recorrió >60% del camino hacia el SL
-      // Así no cerramos trades que tienen margen suficiente
+      // Solo actuar si precio ya recorrió >60% del camino hacia el SL
       const totalDistance = Math.abs(sl - entry);
       const currentDistance = Math.abs(currentPrice - entry);
       const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
 
       if (slProgress < 0.6) {
-        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} solo al ${(slProgress*100).toFixed(0)}% del SL (precio: $${currentPrice}, entry: $${entry}, SL: $${sl})`);
+        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL`);
         if (process.env.TELEGRAM_CHAT_ID) {
-          const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nPrecio al ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nEntry: $${parseInt(entry).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()} | Precio: $${parseInt(currentPrice).toLocaleString()}`;
+          const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nAl ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nPrecio: $${parseInt(currentPrice).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}`;
           try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
         }
         continue;
       }
-      // ────────────────────────────────────────────────────────────
 
       const priceDiff = trade.direction === 'LONG'
         ? (currentPrice - entry) / entry
@@ -430,7 +427,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
         closed_at: new Date().toISOString()
       }).eq('id', trade.id);
 
-      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} — ${reason} (${(slProgress*100).toFixed(0)}% hacia SL)`);
+      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} (${(slProgress*100).toFixed(0)}% hacia SL)`);
 
       if (process.env.TELEGRAM_CHAT_ID) {
         const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
@@ -1720,7 +1717,7 @@ app.get('/api/ml/insights', async (req, res) => {
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
     const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
     const bySource = {};
-    for (const src of ['scalping','auto','manual','backtest']) {
+    for (const src of ['scalping','auto','manual','sweep','backtest']) {
       const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
       if (!st.length) continue;
       bySource[src] = { total:st.length, won:sw.length, lost:st.length-sw.length, winRate:parseFloat(((sw.length/Math.max(st.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(st.length,1)).toFixed(2)) };
