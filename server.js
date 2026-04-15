@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.13' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.14' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1936,7 +1936,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.13 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.14 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
