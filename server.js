@@ -1825,6 +1825,37 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       if (wsM.anomaly.direction === 'LONG') longScore += 20;
       if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
     }
+
+    // ── PENALIZACIONES DE BIAS — evita abrir contra tendencia ──
+    // Obtener bias 1H y 4H en tiempo real
+    let bias1hScalp = null, bias4hScalp2 = null;
+    try {
+      const [k1hSc, k4hSc, oi1hSc, oi4hSc] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        fetchOIHistory(symbol,'1h',5),
+        fetchOIHistory(symbol,'4h',5),
+      ]);
+      bias1hScalp  = calcBias(k1hSc.data, oi1hSc, fundingRate);
+      bias4hScalp2 = calcBias(k4hSc.data, oi4hSc, fundingRate);
+    } catch(_) {}
+
+    // bias 1H — penalización fuerte (contexto inmediato)
+    if (bias1hScalp?.bias === 'short') longScore  -= 15;
+    if (bias1hScalp?.bias === 'long')  shortScore -= 15;
+    // bias 4H — penalización media (tendencia mayor)
+    if (bias4hScalp2?.bias === 'short') longScore  -= 10;
+    if (bias4hScalp2?.bias === 'long')  shortScore -= 10;
+    // Bloquear si ambos 1H y 4H van en contra — señal muy débil
+    if (bias1hScalp?.bias === 'short' && bias4hScalp2?.bias === 'short' && longScore > shortScore) {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H y 4H bajistas`);
+      return;
+    }
+    if (bias1hScalp?.bias === 'long' && bias4hScalp2?.bias === 'long' && shortScore > longScore) {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`);
+      return;
+    }
+
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
@@ -1869,8 +1900,10 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       funding_rate: fundingScalp,
       oi_trend_15m: oiTrend15mScalp?.trend || 'flat',
       oi_delta_15m: oiTrend15mScalp?.deltaPct || '0',
-      bias_4h: bias4hScalp?.bias || 'neutral',
-      bias_4h_score: bias4hScalp?.score || 50,
+      bias_1h: bias1hScalp?.bias || 'neutral',
+      bias_1h_score: bias1hScalp?.score || 50,
+      bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral',
+      bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50,
       fib_level: fib3m?.nearestRetrace?.label || null,
       fib_dist: fib3m?.nearestRetrace?.dist || null,
       fib_signal: fib3m?.retImpact?.signal || null,
