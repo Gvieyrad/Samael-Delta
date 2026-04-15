@@ -1441,14 +1441,14 @@ Responde SOLO JSON sin markdown:
 function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas');
-    setInterval(monitorPaperTrades, 5 * 60 * 1000);
+    setInterval(monitorPaperTrades, 2 * 60 * 1000); // cada 2 min — más rápido para scalping
     setTimeout(monitorPaperTrades, 15000);
     return;
   }
   const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15');
   const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
   console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
-  setInterval(monitorPaperTrades, 5 * 60 * 1000);
+  setInterval(monitorPaperTrades, 2 * 60 * 1000); // cada 2 min — más rápido para scalping
   setTimeout(monitorPaperTrades, 15000);
   setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
   setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
