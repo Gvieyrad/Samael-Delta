@@ -328,6 +328,8 @@ async function evaluateAnomaly(symbol) {
     await killSwitchOpposite(symbol, direction, reason);
     await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
   } else if (isMassiveWhale) {
+    // Kill Switch si hay trade contrario abierto
+    await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
     await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
   }
   // Ballena normal: solo influye en señales
@@ -361,7 +363,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     const atr5m   = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
     const atr = Math.max(atr5m, price * 0.004);
     const isLong = direction === 'LONG';
-    const tp1 = isLong ? price + atr * 2.0 : price - atr * 2.0;
+    const tp1 = isLong ? price + atr * 1.2 : price - atr * 1.2; // TP rápido — capturar antes de corrección
     const sl  = isLong ? price - atr * 0.8 : price + atr * 0.8;
     if (isLong && sl >= price) return;
     if (!isLong && sl <= price) return;
