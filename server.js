@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.14' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.15' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1855,6 +1855,22 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`);
       return;
     }
+    // Bloquear si bias score es muy débil (<20) — señal sin convicción
+    if (bias1hScalp && bias1hScalp.score < 20 && bias1hScalp.score > 80) {
+      // score entre 20-80 = zona muerta sin dirección clara
+    }
+    // Bloquear mercado lateral: bias4H neutral Y bias1H score entre 40-60
+    const bias1hScore = bias1hScalp?.score || 50;
+    const bias4hScore = bias4hScalp2?.score || 50;
+    if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
+      console.log(`⛔ Scalp ${symbol} bloqueado — mercado lateral (4H neutral, 1H score ${bias1hScore})`);
+      return;
+    }
+    // Bloquear si bias 1H score < 20 (dirección con muy poca convicción)
+    if (bias1hScalp?.bias !== 'neutral' && bias1hScore < 20) {
+      console.log(`⛔ Scalp ${symbol} bloqueado — bias 1H score muy bajo: ${bias1hScore}`);
+      return;
+    }
 
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
@@ -1865,7 +1881,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20;
     const atr3m = Math.max(rawAtr, price*0.008); // mínimo 0.8% — evita SL = entry
     const isLong = scalpDir==='LONG';
-    const tp1 = isLong ? price+atr3m*2 : price-atr3m*2;
+    const tp1 = isLong ? price+atr3m*1.5 : price-atr3m*1.5; // 1.5x ATR — más alcanzable en mercado lateral
     const sl  = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
     if (isLong && sl >= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
@@ -1936,7 +1952,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.14 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.15 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
