@@ -205,17 +205,13 @@ function getWsMetrics(symbol) {
   const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
 
-  // Calcular avgVolume1m en tiempo real — ventana de 2 a 10 minutos atrás
-  // Evita depender del timer externo que tarda 5 min en arrancar
-  const last600s = state.trades.filter(t => now - t.time < 600000); // últimos 10 min
-  const last120s = state.trades.filter(t => now - t.time < 120000 && now - t.time >= 60000); // 1-2 min atrás
-  let dynamicAvg = state.avgVolume1m; // fallback al valor externo
+  const last600s = state.trades.filter(t => now - t.time < 600000);
+  const last120s = state.trades.filter(t => now - t.time < 120000 && now - t.time >= 60000);
+  let dynamicAvg = state.avgVolume1m;
   if (last600s.length >= 10) {
-    // Calcular promedio por minuto en los últimos 10 min
-    const totalVol600s = last600s.reduce((s, t) => s + t.usdVal, 0);
-    dynamicAvg = totalVol600s / 10; // promedio por minuto en ventana de 10 min
+    dynamicAvg = last600s.reduce((s, t) => s + t.usdVal, 0) / 10;
   } else if (last120s.length >= 5) {
-    dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0); // vol del minuto anterior
+    dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0);
   }
   const effectiveAvg = Math.max(dynamicAvg, state.avgVolume1m);
   const volumeMultiplier = effectiveAvg > 0 ? totalVol60s / effectiveAvg : 1;
@@ -260,14 +256,12 @@ async function evaluateAnomaly(symbol) {
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
 
-  // ── DETECCIÓN 4: Ballena — individual o acumulada ─────────────
-  // Nivel 1 — Ballena normal: BTC ≥$10M, ETH ≥$5M en UNA transacción (últimos 30s)
+  // ── DETECCIÓN 4: Ballena única — una sola transacción real ─────
+  // BTC: ≥$10M, ETH: ≥$3M en UNA sola transacción (no suma)
   const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
   const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
 
-  // Nivel 2 — Ballena masiva: acumulado en 10s o transacción individual enorme
-  // BTC: acumulado ≥$30M en 10s, o individual ≥$20M
-  // ETH: acumulado ≥$10M en 10s, o individual ≥$8M
+  // Ballena masiva — acumulada en 10s o transacción individual enorme
   const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
   const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 10000000 : 5000000;
   const last10sTrades = state.trades.filter(t => now - t.time < 10000);
@@ -331,14 +325,12 @@ async function evaluateAnomaly(symbol) {
   console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
 
   if (isSweep) {
-    // ── BARRIDA REAL: Kill switch + Sweep trade ──
     await killSwitchOpposite(symbol, direction, reason);
     await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
   } else if (isMassiveWhale) {
-    // ── BALLENA MASIVA: Abre trade en dirección de la ballena ──
     await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
   }
-  // Ballena normal: SOLO influye en señales, sin acción automática
+  // Ballena normal: solo influye en señales
 
   // ── ALERTA TELEGRAM ─────────────────────────────────────────
   if (process.env.TELEGRAM_CHAT_ID) {
@@ -353,86 +345,45 @@ async function evaluateAnomaly(symbol) {
     }
     // Ballena normal — sin notificación, solo influye en señales
   }
+}
 
 
-// ── ABRIR TRADE EN DIRECCIÓN DE BALLENA MASIVA ──────────────────
 async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
-    // No abrir si ya hay trade abierto en ese par
     const { data: existing } = await supabase.from('paper_trades')
       .select('id').eq('symbol', symbol).eq('status', 'open');
-    if (existing?.length) {
-      console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`);
-      return;
-    }
-
+    if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const price = metrics.lastPrice;
     if (!price) return;
-
-    // Usar klines 5m para ATR — ballenas tienen movimiento más lento que barridas
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2]));
     const lows5m  = k5m.data.map(k => parseFloat(k[3]));
     const atr5m   = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
-    const atr = Math.max(atr5m, price * 0.004); // mínimo 0.4%
-
+    const atr = Math.max(atr5m, price * 0.004);
     const isLong = direction === 'LONG';
-
-    // TP más amplio que scalping — ballena mueve el precio gradualmente
     const tp1 = isLong ? price + atr * 2.0 : price - atr * 2.0;
     const sl  = isLong ? price - atr * 0.8 : price + atr * 0.8;
-
     if (isLong && sl >= price) return;
     if (!isLong && sl <= price) return;
-
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
-    if (rrVal < 1.5) {
-      console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`);
-      return;
-    }
-
-    // Confianza basada en tamaño de la ballena
-    const whaleConfidence = Math.min(92, Math.round(
-      72 +
-      (metrics.volumeMultiplier >= 5 ? 10 : 5) +
-      liqBonus
-    ));
-
+    if (rrVal < 1.5) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
+    const whaleConfidence = Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus));
     await supabase.from('paper_trades').insert({
-      symbol,
-      direction,
-      entry: price,
-      tp1,
+      symbol, direction, entry: price, tp1,
       tp2: isLong ? price + atr * 3.5 : price - atr * 3.5,
-      sl,
-      rr: `1:${rrVal.toFixed(1)}`,
-      confidence: whaleConfidence,
+      sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence,
       size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
       leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
-      source: 'sweep', // reutiliza source sweep para ML
-      status: 'open',
-      opened_at: new Date().toISOString(),
-      market_data: {
-        mode: 'whale',
-        reason,
-        cvd_live: metrics.cvdLive,
-        volume_multiplier: metrics.volumeMultiplier,
-        whale_count: metrics.whaleCount,
-        liq_bonus: liqBonus,
-        timestamp: new Date().toISOString()
-      }
+      source: 'sweep', status: 'open', opened_at: new Date().toISOString(),
+      market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString() }
     });
-
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
-
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
       const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
     }
-  } catch(e) {
-    console.error('Whale trade error:', e.message);
-  }
+  } catch(e) { console.error('Whale trade error:', e.message); }
 }
 
 async function killSwitchOpposite(symbol, sweepDirection, reason) {
@@ -961,11 +912,8 @@ function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oi
   const wsAnomaly = wsState[Object.keys(wsState).find(k => k.startsWith(price > 10000 ? 'BTC' : 'ETH'))]?.anomaly;
   const wsAnomalyBonus = (dir) => {
     if (!wsAnomaly || Date.now() - wsAnomaly.time > 5 * 60 * 1000) return 0;
-    if (wsAnomaly.isSweep) {
-      return wsAnomaly.direction === dir ? 10 : -8;
-    } else if (wsAnomaly.isWhale) {
-      return wsAnomaly.direction === dir ? 5 : -5;
-    }
+    if (wsAnomaly.isSweep) return wsAnomaly.direction === dir ? 10 : -8;
+    if (wsAnomaly.isWhale) return wsAnomaly.direction === dir ? 5 : -5;
     return 0;
   };
 
@@ -1549,14 +1497,14 @@ Responde SOLO JSON sin markdown:
 function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas');
-    setInterval(monitorPaperTrades, 2 * 60 * 1000); // cada 2 min — más rápido para scalping
+    setInterval(monitorPaperTrades, 2 * 60 * 1000);
     setTimeout(monitorPaperTrades, 15000);
     return;
   }
   const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15');
   const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
   console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
-  setInterval(monitorPaperTrades, 2 * 60 * 1000); // cada 2 min — más rápido para scalping
+  setInterval(monitorPaperTrades, 2 * 60 * 1000);
   setTimeout(monitorPaperTrades, 15000);
   setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
   setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
@@ -1706,27 +1654,23 @@ async function monitorPaperTrades() {
           sl = newSlRounded;
           console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(0)} → ${newSlRounded.toFixed(0)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
         }
-
-        // ── TP DINÁMICO — mover TP hacia siguiente zona de liquidación ──
-        // Solo cuando el precio avanza +1% — nunca acercar el TP
+        // ── TP DINÁMICO ──────────────────────────────────────────
         if (priceDiffPct >= 1.0) {
           try {
             const liqRes = await fetchForceOrders(trade.symbol);
             const currentTp1 = parseFloat(trade.tp1);
             if (liqRes?.zones?.length) {
-              // Buscar zona de liquidación más cercana en dirección del trade
               const relevantZones = liqRes.zones
                 .filter(z => isLong ? z.price > currentPrice : z.price < currentPrice)
-                .filter(z => isLong ? z.price > currentTp1 : z.price < currentTp1) // más lejos que TP actual
+                .filter(z => isLong ? z.price > currentTp1 : z.price < currentTp1)
                 .sort((a, b) => isLong ? a.price - b.price : b.price - a.price);
               if (relevantZones.length) {
-                const nextZone = relevantZones[0];
-                const newTp1 = parseFloat(nextZone.price.toFixed(1));
+                const newTp1 = parseFloat(relevantZones[0].price.toFixed(1));
                 await supabase.from('paper_trades').update({ tp1: newTp1 }).eq('id', trade.id);
-                console.log(`🎯 TP dinámico: ${trade.direction} ${trade.symbol} TP ${currentTp1.toFixed(0)} → ${newTp1.toFixed(0)} (zona liq $${nextZone.total}K)`);
+                console.log(`🎯 TP dinámico: ${trade.direction} ${trade.symbol} TP ${currentTp1.toFixed(0)} → ${newTp1.toFixed(0)}`);
               }
             }
-          } catch(_) {} // silencioso — no interrumpir el monitor si falla
+          } catch(_) {}
         }
         // ────────────────────────────────────────────────────────
 
@@ -1889,12 +1833,8 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
     let longScore = longs.reduce((s,d)=>s+d.probability,0)/Math.max(longs.length,1);
     let shortScore = shorts.reduce((s,d)=>s+d.probability,0)/Math.max(shorts.length,1);
     if(bias15m?.bias==='long') longScore+=12; if(bias15m?.bias==='short') shortScore+=12;
-    if(bias15m?.bias==='short') longScore-=10; if(bias15m?.bias==='long') shortScore-=10;
     if(bias1h?.bias==='long') longScore+=8; if(bias1h?.bias==='short') shortScore+=8;
-    // Penalizar scalping contra tendencia 1H — evita abrir contra la corriente
-    if(bias1h?.bias==='short') longScore-=15; if(bias1h?.bias==='long') shortScore-=15;
     if(bias4h?.bias==='long') longScore+=4; if(bias4h?.bias==='short') shortScore+=4;
-    if(bias4h?.bias==='short') longScore-=8; if(bias4h?.bias==='long') shortScore-=8;
     if(divergences.some(d=>d.type==='double_top')) shortScore+=15;
     if(divergences.some(d=>d.type==='double_bottom')) longScore+=15;
     const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
@@ -1933,9 +1873,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       if (wsM.anomaly.direction === 'LONG') longScore += 20;
       if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
     }
-
-    // ── PENALIZACIONES DE BIAS — evita abrir contra tendencia ──
-    // Obtener bias 1H y 4H en tiempo real
+    // Penalizaciones bias — evita abrir contra tendencia
     let bias1hScalp = null, bias4hScalp2 = null;
     try {
       const [k1hSc, k4hSc, oi1hSc, oi4hSc] = await Promise.all([
@@ -1947,39 +1885,20 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       bias1hScalp  = calcBias(k1hSc.data, oi1hSc, fundingRate);
       bias4hScalp2 = calcBias(k4hSc.data, oi4hSc, fundingRate);
     } catch(_) {}
-
-    // bias 1H — penalización fuerte (contexto inmediato)
     if (bias1hScalp?.bias === 'short') longScore  -= 15;
     if (bias1hScalp?.bias === 'long')  shortScore -= 15;
-    // bias 4H — penalización media (tendencia mayor)
     if (bias4hScalp2?.bias === 'short') longScore  -= 10;
     if (bias4hScalp2?.bias === 'long')  shortScore -= 10;
-    // Bloquear si ambos 1H y 4H van en contra — señal muy débil
     if (bias1hScalp?.bias === 'short' && bias4hScalp2?.bias === 'short' && longScore > shortScore) {
-      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H y 4H bajistas`);
-      return;
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H y 4H bajistas`); return;
     }
     if (bias1hScalp?.bias === 'long' && bias4hScalp2?.bias === 'long' && shortScore > longScore) {
-      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`);
-      return;
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`); return;
     }
-    // Bloquear si bias score es muy débil (<20) — señal sin convicción
-    if (bias1hScalp && bias1hScalp.score < 20 && bias1hScalp.score > 80) {
-      // score entre 20-80 = zona muerta sin dirección clara
-    }
-    // Bloquear mercado lateral: bias4H neutral Y bias1H score entre 40-60
     const bias1hScore = bias1hScalp?.score || 50;
-    const bias4hScore = bias4hScalp2?.score || 50;
     if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
-      console.log(`⛔ Scalp ${symbol} bloqueado — mercado lateral (4H neutral, 1H score ${bias1hScore})`);
-      return;
+      console.log(`⛔ Scalp ${symbol} bloqueado — mercado lateral`); return;
     }
-    // Bloquear si bias 1H score < 20 (dirección con muy poca convicción)
-    if (bias1hScalp?.bias !== 'neutral' && bias1hScore < 20) {
-      console.log(`⛔ Scalp ${symbol} bloqueado — bias 1H score muy bajo: ${bias1hScore}`);
-      return;
-    }
-
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
@@ -1989,7 +1908,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20;
     const atr3m = Math.max(rawAtr, price*0.008); // mínimo 0.8% — evita SL = entry
     const isLong = scalpDir==='LONG';
-    const tp1 = isLong ? price+atr3m*1.5 : price-atr3m*1.5; // 1.5x ATR — más alcanzable en mercado lateral
+    const tp1 = isLong ? price+atr3m*1.5 : price-atr3m*1.5;
     const sl  = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
     if (isLong && sl >= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
@@ -2056,8 +1975,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
   } catch(e) { console.error('Scalping error:', e.message); }
   finally { scalpingInProgress[symbol] = false; }
-}
-
 }
 
 const PORT = process.env.PORT || 3000;
