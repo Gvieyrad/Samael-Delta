@@ -2058,6 +2058,8 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   finally { scalpingInProgress[symbol] = false; }
 }
 
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Panel Futuros LO v4.4.15 corriendo en puerto ${PORT}`);
