@@ -260,10 +260,29 @@ async function evaluateAnomaly(symbol) {
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
 
-  // ── DETECCIÓN 4: Ballena única — una sola transacción real ─────
-  // BTC: ≥$10M, ETH: ≥$3M en UNA sola transacción (no suma)
-  const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
+  // ── DETECCIÓN 4: Ballena — individual o acumulada ─────────────
+  // Nivel 1 — Ballena normal: BTC ≥$10M, ETH ≥$5M en UNA transacción (últimos 30s)
+  const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
   const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
+
+  // Nivel 2 — Ballena masiva: acumulado en 10s o transacción individual enorme
+  // BTC: acumulado ≥$30M en 10s, o individual ≥$20M
+  // ETH: acumulado ≥$10M en 10s, o individual ≥$8M
+  const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
+  const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 10000000 : 5000000;
+  const last10sTrades = state.trades.filter(t => now - t.time < 10000);
+  const last10sBuyVol  = last10sTrades.filter(t => t.isBuy).reduce((s,t) => s + t.usdVal, 0);
+  const last10sSellVol = last10sTrades.filter(t => !t.isBuy).reduce((s,t) => s + t.usdVal, 0);
+  const massiveWhaleSingle = state.trades.find(t => t.usdVal >= massiveWhaleThreshold && now - t.time < 30000);
+  const massiveWhaleBuyAccum  = last10sBuyVol  >= massiveAccumThreshold;
+  const massiveWhaleSellAccum = last10sSellVol >= massiveAccumThreshold;
+  const isMassiveWhale = !!(massiveWhaleSingle || massiveWhaleBuyAccum || massiveWhaleSellAccum);
+  const massiveWhaleDirection = massiveWhaleSingle
+    ? (massiveWhaleSingle.isBuy ? 'LONG' : 'SHORT')
+    : massiveWhaleBuyAccum ? 'LONG' : 'SHORT';
+  const massiveWhaleVol = massiveWhaleSingle
+    ? massiveWhaleSingle.usdVal
+    : Math.max(last10sBuyVol, last10sSellVol);
 
   // Reemplazar referencias a isBearishSweep/isBullishSweep con las versiones "real"
   const _isBearishSweep = isRealBearishSweep;
@@ -272,13 +291,16 @@ async function evaluateAnomaly(symbol) {
   // ── DETECCIÓN 4: Zona de liquidación cercana ─────────────────
   const liqZoneBonus = calcLiqZoneBonus(symbol, metrics.lastPrice);
 
-  if (!isRealBearishSweep && !isRealBullishSweep && !bigWhale) return;
+  if (!isRealBearishSweep && !isRealBullishSweep && !bigWhale && !isMassiveWhale) return;
 
   const isSweep = isRealBearishSweep || isRealBullishSweep;
-  const isWhaleOnly = !isSweep && !!bigWhale;
-  const direction = isRealBearishSweep ? 'SHORT' : isRealBullishSweep ? 'LONG' : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
+  const isWhaleOnly = !isSweep && !!bigWhale && !isMassiveWhale;
+  const direction = isRealBearishSweep ? 'SHORT' : isRealBullishSweep ? 'LONG'
+    : isMassiveWhale ? massiveWhaleDirection
+    : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
   const reason = isRealBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio -${priceMove60s.toFixed(2)}%` :
                  isRealBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio +${priceMove60s.toFixed(2)}%` :
+                 isMassiveWhale ? `🐋 Ballena masiva $${(massiveWhaleVol/1e6).toFixed(1)}M ${massiveWhaleDirection === 'LONG' ? 'comprando' : 'vendiendo'}${massiveWhaleSingle ? ' (orden única)' : ' (acumulada 10s)'}` :
                  `Ballena $${(bigWhale.usdVal/1e6).toFixed(2)}M ${bigWhale.isBuy ? 'comprando' : 'vendiendo'}`;
 
   // Evitar spam — cooldown de 3 minutos por símbolo+dirección
@@ -309,21 +331,107 @@ async function evaluateAnomaly(symbol) {
   console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
 
   if (isSweep) {
-    // ── BARRIDA REAL (bajista o alcista): Kill switch + Sweep trade ──
+    // ── BARRIDA REAL: Kill switch + Sweep trade ──
     await killSwitchOpposite(symbol, direction, reason);
     await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
+  } else if (isMassiveWhale) {
+    // ── BALLENA MASIVA: Abre trade en dirección de la ballena ──
+    await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
   }
-  // Ballena sola: SOLO alerta informativa, sin kill switch ni sweep trade
+  // Ballena normal: SOLO influye en señales, sin acción automática
 
   // ── ALERTA TELEGRAM ─────────────────────────────────────────
   if (process.env.TELEGRAM_CHAT_ID) {
-    const emoji = direction === 'SHORT' ? '🔴' : '🟢';
-    const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : isRealBullishSweep ? '🟢 BARRIDA ALCISTA' : `${emoji} Ballena detectada`;
-    const actionNote = isSweep
-      ? `\n🛡️ Kill Switch activado — posiciones contrarias cerradas\n⚡ Sweep trade abierto en dirección ${direction}`
-      : `\nℹ️ Solo informativo — sin acción automática`;
-    const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}${actionNote}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
-    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    if (isSweep) {
+      const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : '🟢 BARRIDA ALCISTA';
+      const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}\n🛡️ Kill Switch + Sweep trade abierto\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    } else if (isMassiveWhale) {
+      const emoji = massiveWhaleDirection === 'LONG' ? '🟢' : '🔴';
+      const msg = `${emoji} 🐋 BALLENA MASIVA — ${symbol}\n${reason}\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n⚡ Trade automático abierto en dirección ${massiveWhaleDirection}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+    // Ballena normal — sin notificación, solo influye en señales
+  }
+
+
+// ── ABRIR TRADE EN DIRECCIÓN DE BALLENA MASIVA ──────────────────
+async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonus) {
+  try {
+    // No abrir si ya hay trade abierto en ese par
+    const { data: existing } = await supabase.from('paper_trades')
+      .select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) {
+      console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`);
+      return;
+    }
+
+    const price = metrics.lastPrice;
+    if (!price) return;
+
+    // Usar klines 5m para ATR — ballenas tienen movimiento más lento que barridas
+    const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
+    const highs5m = k5m.data.map(k => parseFloat(k[2]));
+    const lows5m  = k5m.data.map(k => parseFloat(k[3]));
+    const atr5m   = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr = Math.max(atr5m, price * 0.004); // mínimo 0.4%
+
+    const isLong = direction === 'LONG';
+
+    // TP más amplio que scalping — ballena mueve el precio gradualmente
+    const tp1 = isLong ? price + atr * 2.0 : price - atr * 2.0;
+    const sl  = isLong ? price - atr * 0.8 : price + atr * 0.8;
+
+    if (isLong && sl >= price) return;
+    if (!isLong && sl <= price) return;
+
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    if (rrVal < 1.5) {
+      console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`);
+      return;
+    }
+
+    // Confianza basada en tamaño de la ballena
+    const whaleConfidence = Math.min(92, Math.round(
+      72 +
+      (metrics.volumeMultiplier >= 5 ? 10 : 5) +
+      liqBonus
+    ));
+
+    await supabase.from('paper_trades').insert({
+      symbol,
+      direction,
+      entry: price,
+      tp1,
+      tp2: isLong ? price + atr * 3.5 : price - atr * 3.5,
+      sl,
+      rr: `1:${rrVal.toFixed(1)}`,
+      confidence: whaleConfidence,
+      size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+      leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+      source: 'sweep', // reutiliza source sweep para ML
+      status: 'open',
+      opened_at: new Date().toISOString(),
+      market_data: {
+        mode: 'whale',
+        reason,
+        cvd_live: metrics.cvdLive,
+        volume_multiplier: metrics.volumeMultiplier,
+        whale_count: metrics.whaleCount,
+        liq_bonus: liqBonus,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
+
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'SHORT' ? '▼' : '▲';
+      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+  } catch(e) {
+    console.error('Whale trade error:', e.message);
   }
 }
 
