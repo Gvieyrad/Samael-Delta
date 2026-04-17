@@ -355,8 +355,28 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     const { data: existing } = await supabase.from('paper_trades')
       .select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
-    const price = metrics.lastPrice;
-    if (!price) return;
+    const detectionPrice = metrics.lastPrice;
+    if (!detectionPrice) return;
+
+    // ── VERIFICAR LATENCIA — si el precio ya rebotó >0.3%, no abrir ──
+    // Evita quedar atrapado cuando la ballena ya actuó y el precio revirtió
+    let currentPriceCheck = detectionPrice;
+    try {
+      const tickerCheck = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${symbol}`);
+      currentPriceCheck = parseFloat(tickerCheck.data.price);
+    } catch(_) {}
+    const priceMoveFromDetection = Math.abs(currentPriceCheck - detectionPrice) / detectionPrice * 100;
+    // Para SHORT: si el precio ya subió >0.3% desde detección, la ballena ya actuó → no abrir
+    // Para LONG: si el precio ya bajó >0.3% desde detección → no abrir
+    const priceMovedAgainstUs = direction === 'SHORT'
+      ? currentPriceCheck > detectionPrice * 1.003
+      : currentPriceCheck < detectionPrice * 0.997;
+    if (priceMovedAgainstUs) {
+      console.log(`⏭ Whale trade omitido — precio ya rebotó ${priceMoveFromDetection.toFixed(2)}% desde detección (${symbol})`);
+      return;
+    }
+    const price = currentPriceCheck; // usar precio actual, no el de detección
+
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2]));
     const lows5m  = k5m.data.map(k => parseFloat(k[3]));
