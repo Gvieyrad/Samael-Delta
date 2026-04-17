@@ -1898,8 +1898,17 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`); return;
     }
     const bias1hScore = bias1hScalp?.score || 50;
+    // Bloquear mercado lateral
     if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
       console.log(`⛔ Scalp ${symbol} bloqueado — mercado lateral`); return;
+    }
+    // Bloquear si bias 4H va en contra del trade — 4H tiene más peso que 1H
+    const scalpDirPreview = longScore > shortScore ? 'LONG' : 'SHORT';
+    if (scalpDirPreview === 'LONG' && bias4hScalp2?.bias === 'short') {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 4H bajista`); return;
+    }
+    if (scalpDirPreview === 'SHORT' && bias4hScalp2?.bias === 'long') {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 4H alcista`); return;
     }
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
