@@ -1907,29 +1907,69 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       bias1hScalp  = calcBias(k1hSc.data, oi1hSc, fundingRate);
       bias4hScalp2 = calcBias(k4hSc.data, oi4hSc, fundingRate);
     } catch(_) {}
-    if (bias1hScalp?.bias === 'short') longScore  -= 15;
-    if (bias1hScalp?.bias === 'long')  shortScore -= 15;
-    if (bias4hScalp2?.bias === 'short') longScore  -= 10;
-    if (bias4hScalp2?.bias === 'long')  shortScore -= 10;
-    if (bias1hScalp?.bias === 'short' && bias4hScalp2?.bias === 'short' && longScore > shortScore) {
-      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H y 4H bajistas`); return;
-    }
-    if (bias1hScalp?.bias === 'long' && bias4hScalp2?.bias === 'long' && shortScore > longScore) {
-      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H y 4H alcistas`); return;
-    }
     const bias1hScore = bias1hScalp?.score || 50;
-    // Bloquear mercado lateral
-    if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
-      console.log(`⛔ Scalp ${symbol} bloqueado — mercado lateral`); return;
-    }
-    // Bloquear si bias 4H va en contra del trade — 4H tiene más peso que 1H
+    const bias4hScore = bias4hScalp2?.score || 50;
     const scalpDirPreview = longScore > shortScore ? 'LONG' : 'SHORT';
-    if (scalpDirPreview === 'LONG' && bias4hScalp2?.bias === 'short') {
-      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 4H bajista`); return;
+
+    // ── LÓGICA DE BIAS BASADA EN DATOS ──────────────────────────
+    // Dato clave: 4H_long + 1H_short = 100% WR (pullback en tendencia = entrada óptima)
+    // Dato clave: 4H_long + 1H_long = 25% WR (sobreextendido = mala entrada)
+
+    // PREMIAR pullback: 4H alineado + 1H en contra = señal de entrada óptima
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'LONG') {
+      longScore += 20; // pullback alcista — entrada óptima
+      console.log("✅ Pullback alcista detectado " + symbol + " — bonus +20");
     }
-    if (scalpDirPreview === 'SHORT' && bias4hScalp2?.bias === 'long') {
-      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 4H alcista`); return;
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'SHORT') {
+      shortScore += 20; // pullback bajista — entrada óptima
+      console.log("✅ Pullback bajista detectado " + symbol + " — bonus +20");
     }
+
+    // PENALIZAR sobreextensión: 4H y 1H ambos en misma dirección = precio ya corrió mucho
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'LONG') {
+      longScore -= 20; // precio ya subió mucho, riesgo de reversión
+    }
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'SHORT') {
+      shortScore -= 20; // precio ya bajó mucho, riesgo de reversión
+    }
+
+    // BLOQUEAR si ambos 4H y 1H van en contra del trade
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'LONG') {
+      console.log("⛔ Scalp LONG " + symbol + " bloqueado — 4H y 1H bajistas"); return;
+    }
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'SHORT') {
+      console.log("⛔ Scalp SHORT " + symbol + " bloqueado — 4H y 1H alcistas"); return;
+    }
+
+    // BLOQUEAR mercado lateral: 4H neutral + 1H sin convicción
+    if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
+      console.log("⛔ Scalp " + symbol + " bloqueado — mercado lateral"); return;
+    }
+    // ── BONUS ZONAS DE LIQUIDACIÓN ──────────────────────────────
+    // Si hay zona de liq arriba → suma al LONG (precio va a barrer stops de shorts)
+    // Si hay zona de liq abajo → suma al SHORT (precio va a barrer stops de longs)
+    try {
+      const liqData = await fetchForceOrders(symbol);
+      if (liqData?.zones?.length) {
+        const nearUp = liqData.zones
+          .filter(z => z.price > price && ((z.price - price) / price * 100) <= 1.5)
+          .sort((a,b) => a.price - b.price)[0];
+        const nearDown = liqData.zones
+          .filter(z => z.price < price && ((price - z.price) / price * 100) <= 1.5)
+          .sort((a,b) => b.price - a.price)[0];
+        if (nearUp) {
+          const bonus = nearUp.total > 500 ? 20 : nearUp.total > 200 ? 12 : 6;
+          longScore += bonus;
+          console.log("🧲 Liq zona arriba $" + nearUp.price + " (+" + bonus + " LONG) " + symbol);
+        }
+        if (nearDown) {
+          const bonus = nearDown.total > 500 ? 20 : nearDown.total > 200 ? 12 : 6;
+          shortScore += bonus;
+          console.log("🧲 Liq zona abajo $" + nearDown.price + " (+" + bonus + " SHORT) " + symbol);
+        }
+      }
+    } catch(_) {} // silencioso si falla
+
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
