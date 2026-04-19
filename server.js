@@ -446,12 +446,14 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const sl = parseFloat(trade.sl);
 
       // Solo actuar si precio ya recorrió >60% del camino hacia el SL
+      // ETH: umbral 40% — se mueve más rápido, evita cierres con pérdida grande
+      const slThreshold = symbol.includes('ETH') ? 0.40 : 0.60;
       const totalDistance = Math.abs(sl - entry);
       const currentDistance = Math.abs(currentPrice - entry);
       const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
 
-      if (slProgress < 0.6) {
-        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL`);
+      if (slProgress < slThreshold) {
+        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL (umbral: ${(slThreshold*100).toFixed(0)}%)`);
         if (process.env.TELEGRAM_CHAT_ID) {
           const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nAl ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nPrecio: $${parseInt(currentPrice).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}`;
           try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
