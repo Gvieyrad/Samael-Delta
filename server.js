@@ -263,17 +263,28 @@ async function evaluateAnomaly(symbol) {
 
   // Ballena masiva — acumulada en 10s o transacción individual enorme
   const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
-  const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 10000000 : 5000000;
+  // ETH umbral subido a $20M acumulado (antes $10M) — reduce ruido en mercado volátil
+  const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 20000000 : 5000000;
   const last10sTrades = state.trades.filter(t => now - t.time < 10000);
   const last10sBuyVol  = last10sTrades.filter(t => t.isBuy).reduce((s,t) => s + t.usdVal, 0);
   const last10sSellVol = last10sTrades.filter(t => !t.isBuy).reduce((s,t) => s + t.usdVal, 0);
   const massiveWhaleSingle = state.trades.find(t => t.usdVal >= massiveWhaleThreshold && now - t.time < 30000);
   const massiveWhaleBuyAccum  = last10sBuyVol  >= massiveAccumThreshold;
   const massiveWhaleSellAccum = last10sSellVol >= massiveAccumThreshold;
-  const isMassiveWhale = !!(massiveWhaleSingle || massiveWhaleBuyAccum || massiveWhaleSellAccum);
+
+  // Filtro dominancia: la ballena dominante debe ser 1.5x mayor que la contraria
+  // Evita abrir cuando institucionales pelean en ambas direcciones (equilibrio)
+  const dominanciaRatioBuy  = last10sSellVol > 0 ? last10sBuyVol / last10sSellVol : 99;
+  const dominanciaRatioSell = last10sBuyVol  > 0 ? last10sSellVol / last10sBuyVol : 99;
+  const hayDominanciaCompra = dominanciaRatioBuy  >= 1.5;
+  const hayDominanciaVenta  = dominanciaRatioSell >= 1.5;
+
+  const isMassiveWhale = !!(massiveWhaleSingle ||
+    (massiveWhaleBuyAccum  && hayDominanciaCompra) ||
+    (massiveWhaleSellAccum && hayDominanciaVenta));
   const massiveWhaleDirection = massiveWhaleSingle
     ? (massiveWhaleSingle.isBuy ? 'LONG' : 'SHORT')
-    : massiveWhaleBuyAccum ? 'LONG' : 'SHORT';
+    : massiveWhaleBuyAccum && hayDominanciaCompra ? 'LONG' : 'SHORT';
   const massiveWhaleVol = massiveWhaleSingle
     ? massiveWhaleSingle.usdVal
     : Math.max(last10sBuyVol, last10sSellVol);
@@ -355,6 +366,20 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     const { data: existing } = await supabase.from('paper_trades')
       .select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
+
+    // Cooldown 15 min entre whale trades del mismo símbolo — evita cambiar de lado por ruido
+    const { data: recentWhale } = await supabase.from('paper_trades')
+      .select('opened_at').eq('symbol', symbol).eq('source', 'sweep')
+      .order('opened_at', { ascending: false }).limit(1);
+    if (recentWhale?.length) {
+      const lastOpened = new Date(recentWhale[0].opened_at).getTime();
+      const cooldownMs = 15 * 60 * 1000; // 15 minutos
+      if (Date.now() - lastOpened < cooldownMs) {
+        const waitMin = Math.ceil((cooldownMs - (Date.now() - lastOpened)) / 60000);
+        console.log("⏳ Whale cooldown " + symbol + " — esperar " + waitMin + " min más");
+        return;
+      }
+    }
     const detectionPrice = metrics.lastPrice;
     if (!detectionPrice) return;
 
