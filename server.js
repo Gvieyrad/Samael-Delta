@@ -605,6 +605,51 @@ ${e} ${direction} @ $${parseInt(price).toLocaleString()}
 
 // ── LIQUIDEZ COMO SEÑAL ACTIVA ────────────────────────────────────
 // Calcula bonus/penalty según cercanía a zonas de liquidación
+
+// ── ORDER BOOK DINÁMICO — zonas de liquidación reales ────────────
+// Reemplaza zonas estáticas por datos reales de Binance
+// BTC: concentración ≥$15M en un nivel, ETH: ≥$8M
+// Además debe ser 3x el promedio de niveles cercanos (concentración relativa)
+async function calcDynamicLiqZones(symbol, price) {
+  try {
+    const book = await fetchDeepOrderBook(symbol);
+    if (!book?.bidClusters?.length && !book?.askClusters?.length) return null;
+
+    const absThreshold = symbol.includes('BTC') ? 15000000 : symbol.includes('ETH') ? 8000000 : 3000000;
+    const relMultiplier = 3.0; // 3x el promedio = concentración inusual
+
+    const zones = [];
+
+    // BIDs (soporte) → zona de liq abajo del precio → atrae SHORT
+    for (const cluster of book.bidClusters) {
+      const usdVal = cluster.usdVal;
+      const distPct = Math.abs(price - cluster.price) / price * 100;
+      if (distPct > 2.0) continue; // solo dentro del 2%
+      if (usdVal < absThreshold) continue; // umbral absoluto
+      if (cluster.strength < relMultiplier) continue; // umbral relativo
+
+      const bonus = usdVal > absThreshold * 3 ? 20 : usdVal > absThreshold * 1.5 ? 12 : 6;
+      zones.push({ price: cluster.price, side: 'bid', usdVal, distPct, bonus, strength: cluster.strength });
+    }
+
+    // ASKs (resistencia) → zona de liq arriba del precio → atrae LONG
+    for (const cluster of book.askClusters) {
+      const usdVal = cluster.usdVal;
+      const distPct = Math.abs(price - cluster.price) / price * 100;
+      if (distPct > 2.0) continue;
+      if (usdVal < absThreshold) continue;
+      if (cluster.strength < relMultiplier) continue;
+
+      const bonus = usdVal > absThreshold * 3 ? 20 : usdVal > absThreshold * 1.5 ? 12 : 6;
+      zones.push({ price: cluster.price, side: 'ask', usdVal, distPct, bonus, strength: cluster.strength });
+    }
+
+    return zones.length ? zones : null;
+  } catch(e) {
+    return null;
+  }
+}
+
 function calcLiqZoneBonus(symbol, price) {
   if (!price) return 0;
   // Zonas estáticas calibradas para BTC (ajustables por ML en el futuro)
@@ -1975,27 +2020,47 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) {
       console.log("⛔ Scalp " + symbol + " bloqueado — mercado lateral"); return;
     }
-    // ── BONUS ZONAS DE LIQUIDACIÓN ──────────────────────────────
-    // Si hay zona de liq arriba → suma al LONG (precio va a barrer stops de shorts)
-    // Si hay zona de liq abajo → suma al SHORT (precio va a barrer stops de longs)
+    // ── BONUS ZONAS DE LIQUIDACIÓN DINÁMICAS ────────────────────
+    // Usa order book real de Binance — reemplaza zonas estáticas
+    // BTC ≥$15M, ETH ≥$8M + 3x concentración relativa = zona real
+    // Fallback a zonas estáticas si falla el book
     try {
-      const liqData = await fetchForceOrders(symbol);
-      if (liqData?.zones?.length) {
-        const nearUp = liqData.zones
-          .filter(z => z.price > price && ((z.price - price) / price * 100) <= 1.5)
-          .sort((a,b) => a.price - b.price)[0];
-        const nearDown = liqData.zones
-          .filter(z => z.price < price && ((price - z.price) / price * 100) <= 1.5)
-          .sort((a,b) => b.price - a.price)[0];
-        if (nearUp) {
-          const bonus = nearUp.total > 500 ? 20 : nearUp.total > 200 ? 12 : 6;
-          longScore += bonus;
-          console.log("🧲 Liq zona arriba $" + nearUp.price + " (+" + bonus + " LONG) " + symbol);
+      const dynZones = await calcDynamicLiqZones(symbol, price);
+      if (dynZones?.length) {
+        // ASK arriba del precio → atrae LONG
+        const askZones = dynZones.filter(z => z.side === 'ask' && z.price > price);
+        if (askZones.length) {
+          const best = askZones.sort((a,b) => a.distPct - b.distPct)[0];
+          longScore += best.bonus;
+          console.log("🧲 Book real ASK $" + best.price.toFixed(0) + " $" + (best.usdVal/1e6).toFixed(1) + "M " + best.strength.toFixed(1) + "x (+" + best.bonus + " LONG) " + symbol);
         }
-        if (nearDown) {
-          const bonus = nearDown.total > 500 ? 20 : nearDown.total > 200 ? 12 : 6;
-          shortScore += bonus;
-          console.log("🧲 Liq zona abajo $" + nearDown.price + " (+" + bonus + " SHORT) " + symbol);
+        // BID abajo del precio → atrae SHORT
+        const bidZones = dynZones.filter(z => z.side === 'bid' && z.price < price);
+        if (bidZones.length) {
+          const best = bidZones.sort((a,b) => a.distPct - b.distPct)[0];
+          shortScore += best.bonus;
+          console.log("🧲 Book real BID $" + best.price.toFixed(0) + " $" + (best.usdVal/1e6).toFixed(1) + "M " + best.strength.toFixed(1) + "x (+" + best.bonus + " SHORT) " + symbol);
+        }
+      } else {
+        // Fallback: zonas estáticas si book no tiene concentración suficiente
+        const liqData = await fetchForceOrders(symbol);
+        if (liqData?.zones?.length) {
+          const nearUp = liqData.zones
+            .filter(z => z.price > price && ((z.price - price) / price * 100) <= 1.5)
+            .sort((a,b) => a.price - b.price)[0];
+          const nearDown = liqData.zones
+            .filter(z => z.price < price && ((price - z.price) / price * 100) <= 1.5)
+            .sort((a,b) => b.price - a.price)[0];
+          if (nearUp) {
+            const bonus = nearUp.total > 500 ? 12 : nearUp.total > 200 ? 8 : 4;
+            longScore += bonus;
+            console.log("🧲 Liq estática arriba $" + nearUp.price + " (+" + bonus + " LONG) " + symbol);
+          }
+          if (nearDown) {
+            const bonus = nearDown.total > 500 ? 12 : nearDown.total > 200 ? 8 : 4;
+            shortScore += bonus;
+            console.log("🧲 Liq estática abajo $" + nearDown.price + " (+" + bonus + " SHORT) " + symbol);
+          }
         }
       }
     } catch(_) {} // silencioso si falla
