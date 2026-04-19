@@ -1925,12 +1925,17 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       console.log("✅ Pullback bajista detectado " + symbol + " — bonus +20");
     }
 
-    // PENALIZAR sobreextensión: 4H y 1H ambos en misma dirección = precio ya corrió mucho
-    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'LONG') {
-      longScore -= 20; // precio ya subió mucho, riesgo de reversión
+    // BLOQUEAR sobreextensión: 4H y 1H ambos en misma dirección = precio ya corrió mucho
+    // Datos históricos: 25% WR, -$158 PnL — no vale la pena entrar
+    // Excepción: si hay barrida real simultánea (evento extraordinario)
+    const hasSweep = wsAnomaly?.isSweep && Date.now() - wsAnomaly.time < 3 * 60 * 1000;
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'LONG' && !hasSweep) {
+      console.log("⛔ Scalp LONG " + symbol + " bloqueado — sobreextendido 4H+1H alcistas");
+      return;
     }
-    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'SHORT') {
-      shortScore -= 20; // precio ya bajó mucho, riesgo de reversión
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'SHORT' && !hasSweep) {
+      console.log("⛔ Scalp SHORT " + symbol + " bloqueado — sobreextendido 4H+1H bajistas");
+      return;
     }
 
     // BLOQUEAR si ambos 4H y 1H van en contra del trade
