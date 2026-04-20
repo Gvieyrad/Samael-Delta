@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.16' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.17' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -284,6 +284,23 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       }
     }
     const price = currentPriceCheck;
+    // v4.4.17 C3-whale: bloquear si bias_1d es contrario al trade
+    // Fix: C3 solo estaba en openSweepCounterTrade — los whale trades no lo tenían
+    // Causa de pérdidas: ETH SHORT -$16, BTC SHORT -$31, BTC LONG -$28 con mercado en tendencia opuesta
+    try {
+      const k1dWh = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+      const bias1dWh = calcBias(k1dWh.data, null, 0);
+      if (bias1dWh) {
+        if (direction === 'SHORT' && bias1dWh.bias === 'long') {
+          console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+          return;
+        }
+        if (direction === 'LONG' && bias1dWh.bias === 'short') {
+          console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+          return;
+        }
+      }
+    } catch(_) {}
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
@@ -1568,7 +1585,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.16 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.17 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
