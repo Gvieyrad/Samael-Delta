@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.15' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros LO activo', version: '4.4.16' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -269,6 +269,20 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     try { const tickerCheck = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${symbol}`); currentPriceCheck = parseFloat(tickerCheck.data.price); } catch(_) {}
     const priceMovedAgainstUs = direction === 'SHORT' ? currentPriceCheck > detectionPrice * 1.003 : currentPriceCheck < detectionPrice * 0.997;
     if (priceMovedAgainstUs) { console.log(`⏭ Whale trade omitido — precio ya rebotó desde detección (${symbol})`); return; }
+    // v4.4.16 C2: confirmación precio 5min — si ballena vendió pero precio no cayó = absorción compradora
+    // Los 3 perdedores ETH SHORT ($10.1M, $10.3M, $15.2M) tenían este patrón exacto
+    const prices5mWh = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
+    if (prices5mWh.length >= 5) {
+      const priceMove5m = (prices5mWh[prices5mWh.length-1] - prices5mWh[0]) / prices5mWh[0] * 100;
+      if (direction === 'SHORT' && priceMove5m > -0.1) {
+        console.log(`⏭ Whale SHORT omitido — precio no confirma bajada en 5min (${priceMove5m.toFixed(2)}%) — absorción compradora (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && priceMove5m < 0.1) {
+        console.log(`⏭ Whale LONG omitido — precio no confirma subida en 5min (${priceMove5m.toFixed(2)}%) — absorción vendedora (${symbol})`);
+        return;
+      }
+    }
     const price = currentPriceCheck;
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
@@ -281,7 +295,8 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (!isLong && sl <= price) return;
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.5) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
-    const whaleConfidence = Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus));
+    // v4.4.16 C1: confianza mínima 82 — conf=77 tenía WR 40% y PnL negativo
+    const whaleConfidence = Math.max(82, Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus)));
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString() } });
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
@@ -333,6 +348,19 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const price = metrics.lastPrice;
     if (!price) return;
+    // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
+    const prices5mSw = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
+    if (prices5mSw.length >= 5) {
+      const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
+      if (direction === 'SHORT' && priceMove5mSw > -0.1) {
+        console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}%) — absorción compradora (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && priceMove5mSw < 0.1) {
+        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}%) — absorción vendedora (${symbol})`);
+        return;
+      }
+    }
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
@@ -358,6 +386,18 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       oiTrend15mSweep = calcOITrend(oi15mSw);
       fib15mSweep = calcFibonacci(k15mSw.data, price);
     } catch(_) {}
+    // v4.4.16 C3: bloquear sweep si bias_1d es contrario — mercado diario manda
+    // ETH estaba en acumulación (bias_1d=long), ballenas SHORT de $10-15M no podían revertirlo
+    if (bias1dSweep) {
+      if (direction === 'SHORT' && bias1dSweep.bias === 'long') {
+        console.log(`⏭ Sweep SHORT omitido — bias_1d alcista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && bias1dSweep.bias === 'short') {
+        console.log(`⏭ Sweep LONG omitido — bias_1d bajista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
+        return;
+      }
+    }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
     console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
@@ -1382,6 +1422,17 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const price = parseFloat(tickerRes.data.lastPrice), fundingRate = parseFloat(fundingRes.data.lastFundingRate);
     const ob = analyzeOB(obRes.data.bids, obRes.data.asks), cvd3m = calcCVD(k3m.data), rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
     const fib3m = calcFibonacci(k3m.data, price), wsM = getWsMetrics(symbol);
+
+    // v4.4.16 C4: filtros duros de scalping — basados en análisis de ganadores vs perdedores
+    // Ganadores: RSI prom 49, |imb| 56%, OI falling 2/3
+    // Perdedores: RSI prom 61, |imb| 44%, OI falling 1/4
+    // Calcular OI 15m para el filtro (ya se calcula abajo para mlData, anticipamos aquí)
+    let oi15mForFilter = null;
+    try {
+      const oi15mPre = await fetchOIHistory(symbol, '15m', 5);
+      oi15mForFilter = calcOITrend(oi15mPre);
+    } catch(_) {}
+
     let longScore = 0, shortScore = 0;
     const imb = parseFloat(ob.imbalance||0);
     if (imb > 20) longScore += 30; if (imb < -20) shortScore += 30;
@@ -1444,6 +1495,43 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT', scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
     if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '88')) return;
+
+    // v4.4.16 C4b: 3 filtros duros — sólo pasan trades con ventaja estadística real
+    // Filtro 1: RSI entre 35-65 (no entrar con momentum extremo)
+    if (rsi3m > 65 && scalpDir === 'SHORT') {
+      console.log(`⛔ Scalp SHORT bloqueado — RSI ${rsi3m} > 65, momentum sobreextendido (${symbol})`);
+      return;
+    }
+    if (rsi3m < 35 && scalpDir === 'LONG') {
+      console.log(`⛔ Scalp LONG bloqueado — RSI ${rsi3m} < 35, momentum sobreextendido (${symbol})`);
+      return;
+    }
+    // Filtro 2: imbalance mínimo 30% en dirección del trade
+    const absImb = Math.abs(imb);
+    if (absImb < 30) {
+      console.log(`⛔ Scalp ${scalpDir} bloqueado — imbalance ${imb.toFixed(1)}% insuficiente (<30%) (${symbol})`);
+      return;
+    }
+    if (scalpDir === 'SHORT' && imb > 0) {
+      console.log(`⛔ Scalp SHORT bloqueado — imbalance positivo (bids dominan) ${imb.toFixed(1)}% (${symbol})`);
+      return;
+    }
+    if (scalpDir === 'LONG' && imb < 0) {
+      console.log(`⛔ Scalp LONG bloqueado — imbalance negativo (asks dominan) ${imb.toFixed(1)}% (${symbol})`);
+      return;
+    }
+    // Filtro 3: OI falling confirma presión real (no obligatorio pero suma — si OI rising en contra, bloquear)
+    if (oi15mForFilter && oi15mForFilter.trend === 'rising') {
+      if (scalpDir === 'SHORT' && parseFloat(oi15mForFilter.deltaPct) > 0.2) {
+        console.log(`⛔ Scalp SHORT bloqueado — OI rising ${oi15mForFilter.deltaPct}% (nuevos longs entrando) (${symbol})`);
+        return;
+      }
+      if (scalpDir === 'LONG' && parseFloat(oi15mForFilter.deltaPct) > 0.2) {
+        console.log(`⛔ Scalp LONG bloqueado — OI rising ${oi15mForFilter.deltaPct}% con precio bajando (nuevos shorts) (${symbol})`);
+        // Solo bloquear LONG si OI sube Y precio baja (short buildup)
+        // No bloquear si OI sube Y precio sube (long buildup = señal válida)
+      }
+    }
     const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2])), lows3m = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
     const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20, atr3m = Math.max(rawAtr, price*0.008);
     const isLong = scalpDir==='LONG', tp1 = isLong ? price+atr3m*1.5 : price-atr3m*1.5, sl = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
@@ -1451,6 +1539,15 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
+    // v4.4.16 C5: bloquear scalping si hay sweep/anomalía activa en dirección contraria
+    // Elimina colisiones scalping↔sweep que generaban kill_switch pérdidas (4/6 lost)
+    const activeAnomaly = wsState[symbol]?.anomaly;
+    if (activeAnomaly && Date.now() - activeAnomaly.time < 5 * 60 * 1000) {
+      if (activeAnomaly.direction !== scalpDir) {
+        console.log(`⛔ Scalp ${scalpDir} ${symbol} bloqueado — sweep/anomalía activa en dirección contraria (${activeAnomaly.direction}): ${activeAnomaly.reason}`);
+        return;
+      }
+    }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
     if (existing?.length) return;
     let bias4hScalp = null, oiTrend15mScalp = null, fundingScalp = 0, whaleDataScalp = null;
@@ -1471,7 +1568,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros LO v4.4.15 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros LO v4.4.16 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
