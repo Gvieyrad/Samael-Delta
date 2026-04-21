@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.17' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.18' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -291,16 +291,24 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const k1dWh = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
       const bias1dWh = calcBias(k1dWh.data, null, 0);
       if (bias1dWh) {
-        if (direction === 'SHORT' && bias1dWh.bias === 'long') {
+        // v4.4.18 Fix B: neutral con score tendencial también bloquea
+        const blockShortWh = bias1dWh.bias === 'long' || bias1dWh.score > 58;
+        const blockLongWh  = bias1dWh.bias === 'short' || bias1dWh.score < 42;
+        if (direction === 'SHORT' && blockShortWh) {
           console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
           return;
         }
-        if (direction === 'LONG' && bias1dWh.bias === 'short') {
+        if (direction === 'LONG' && blockLongWh) {
           console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
           return;
         }
       }
     } catch(_) {}
+    // v4.4.18 Fix A: vol_multiplier mínimo 4x — ballenas débiles (<4x) tienen WR bajo
+    if (metrics.volumeMultiplier < 4) {
+      console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<4x) — señal débil (${symbol})`);
+      return;
+    }
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
@@ -406,11 +414,14 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.4.16 C3: bloquear sweep si bias_1d es contrario — mercado diario manda
     // ETH estaba en acumulación (bias_1d=long), ballenas SHORT de $10-15M no podían revertirlo
     if (bias1dSweep) {
-      if (direction === 'SHORT' && bias1dSweep.bias === 'long') {
+      // v4.4.18 Fix B: neutral con score tendencial también bloquea
+      const blockShortSw = bias1dSweep.bias === 'long' || bias1dSweep.score > 58;
+      const blockLongSw  = bias1dSweep.bias === 'short' || bias1dSweep.score < 42;
+      if (direction === 'SHORT' && blockShortSw) {
         console.log(`⏭ Sweep SHORT omitido — bias_1d alcista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
         return;
       }
-      if (direction === 'LONG' && bias1dSweep.bias === 'short') {
+      if (direction === 'LONG' && blockLongSw) {
         console.log(`⏭ Sweep LONG omitido — bias_1d bajista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
         return;
       }
@@ -1572,6 +1583,18 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       const [k4hS, oi15mS, fundS, oi4hS] = await Promise.all([axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`), fetchOIHistory(symbol,'15m',5), axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`), fetchOIHistory(symbol,'4h',5)]);
       fundingScalp = parseFloat(fundS.data.lastFundingRate); bias4hScalp = calcBias(k4hS.data, oi4hS, fundingScalp); oiTrend15mScalp = calcOITrend(oi15mS); whaleDataScalp = await detectWhales(symbol, price);
     } catch(_) {}
+    // v4.4.18 Fix C: confirmación de momentum — precio debe moverse en dirección en los últimos 60s
+    const prices60sScalp = (wsState[symbol]?.trades || []).filter(t => Date.now() - t.time < 60000).map(t => t.price);
+    if (prices60sScalp.length >= 5) {
+      const priceNow60  = prices60sScalp[prices60sScalp.length - 1];
+      const price60ago  = prices60sScalp[0];
+      const movePct60s  = (priceNow60 - price60ago) / price60ago * 100;
+      const noMomentum  = (scalpDir === 'LONG' && movePct60s < 0.05) || (scalpDir === 'SHORT' && movePct60s > -0.05);
+      if (noMomentum) {
+        console.log(`⛔ Scalp ${scalpDir} bloqueado — sin momentum en 60s (${movePct60s.toFixed(3)}%) — ${symbol}`);
+        return;
+      }
+    }
     const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'), leverage:parseInt(process.env.PAPER_LEVERAGE||'10'), source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
     if (process.env.TELEGRAM_CHAT_ID) {
@@ -1585,7 +1608,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.17 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.18 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
 });
