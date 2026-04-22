@@ -1622,6 +1622,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 const bookState = {};       // order book en tiempo real por símbolo
 const wallTracker = {};     // paredes detectadas con timestamp
 const wallAbsorptionCooldown = {};
+const wallOpeningLock = {};  // lock en memoria para evitar trades duplicados
 const wsDepthConnections = {};
 
 // ── Conectar WebSocket depth20 para cada símbolo ─────────────────
@@ -1792,12 +1793,18 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
   try {
     const now = Date.now();
 
+    // Lock en memoria — evita trades duplicados simultáneos
+    if (wallOpeningLock[symbol]) return;
+    wallOpeningLock[symbol] = true;
+
     // Cooldown 10 min por símbolo
-    if (wallAbsorptionCooldown[symbol] && now - wallAbsorptionCooldown[symbol] < 10 * 60 * 1000) return;
+    if (wallAbsorptionCooldown[symbol] && now - wallAbsorptionCooldown[symbol] < 10 * 60 * 1000) {
+      wallOpeningLock[symbol] = false; return;
+    }
 
     // No abrir si ya hay trade abierto
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
-    if (existing?.length) return;
+    if (existing?.length) { wallOpeningLock[symbol] = false; return; }
 
     // Fix 1 — bias_1d bloquea si mercado en tendencia contraria
     try {
@@ -1847,6 +1854,7 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
     }
 
     wallAbsorptionCooldown[symbol] = now;
+    wallOpeningLock[symbol] = false;
 
     const wallUsd = wall.price * wall.qty;
     const wallUsdStr = wallUsd >= 1e6 ? `$${(wallUsd/1e6).toFixed(1)}M` : `$${(wallUsd/1e3).toFixed(0)}K`;
@@ -1880,7 +1888,7 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
     }
 
-  } catch(_) {}
+  } catch(_) { wallOpeningLock[symbol] = false; }
 }
 
 // Endpoint para ver estado del módulo Wall v2
