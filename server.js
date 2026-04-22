@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.26' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.28' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2142,12 +2142,52 @@ function simulateTrade(klines, trade, startIdx) {
   return { status: 'timeout', exitIdx: startIdx + 100, exitPrice: parseFloat(klines[Math.min(startIdx + 99, klines.length - 1)][4]) };
 }
 
+// ── Backtest modo BASE — volume spike + tendencia en 15m ──────────
+// Usa velas de 15m para capturar mejor el timing del sweep/wall
+// Tendencia 1D como contexto macro — mean reversion como edge
+function simulateBaseEntry(klines15m, klines1d, idx, params = {}) {
+  const { baseVolMult = 5 } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 30) return null;
+
+  const volumes = window.map(k => parseFloat(k[5]));
+  const closes  = window.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  // Volume spike: última vela > baseVolMult x promedio últimas 20 velas
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  // Tendencia 1D — 1 vela diaria = 96 velas de 15m
+  const d1idx = Math.floor(idx / 96);
+  const bias1d = btCalcBias1d(klines1d.slice(0, Math.max(d1idx + 1, 5)));
+
+  // Mean reversion: spike en downtrend → LONG, en uptrend → SHORT
+  let dir = null;
+  if (bias1d.bias === 'short' || bias1d.score < 42) dir = 'LONG';
+  else if (bias1d.bias === 'long' || bias1d.score > 58) dir = 'SHORT';
+  else return null;
+
+  // SL y TP basados en ATR de 15m
+  const atr = btCalcATR(window, 14);
+  const sl  = dir === 'LONG' ? price - atr * 1.0 : price + atr * 1.0;
+  const tp  = dir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.2) return null;
+
+  return { dir, entry: price, tp, sl, rr, volMult, bias1dScore: bias1d.score, idx };
+}
+
+
 app.post('/api/backtest', async (req, res) => {
   try {
     const {
       symbol = 'BTCUSDT',
       days = 30,
       module = 'both',
+      baseVolMult = 5,
       // Parámetros ajustables scalping
       scalpRsiMin = 35, scalpRsiMax = 65,
       scalpMinImbalance = 30, scalpMomentumPct = 0.05,
@@ -2156,20 +2196,38 @@ app.post('/api/backtest', async (req, res) => {
       sweepBias1dScore = 58,
     } = req.body;
 
-    const limit = Math.min(days * 96, 1500); // 96 velas de 15m por día
-    const limit3m = Math.min(days * 480, 1500);
+    // Descargar hasta 365 días de velas 15m con múltiples requests
+    const VELAS_POR_DIA_15M = 96; // 96 velas de 15m por día
+    const totalVelas15m = Math.min(days * VELAS_POR_DIA_15M, 35040); // máx 365 días
+    const requestsNeeded = Math.ceil(totalVelas15m / 1500);
 
-    // Descargar datos históricos
-    const [k15m, k3m, k4h, k1h, k1d] = await Promise.all([
-      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=${limit}`),
+    // Descargar velas 15m en múltiples batches desde el más antiguo al más reciente
+    let klines15m = [];
+    let endTime = Date.now();
+    for (let r = 0; r < requestsNeeded; r++) {
+      try {
+        const res = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=1500&endTime=${endTime}`);
+        if (!res.data?.length) break;
+        klines15m = [...res.data, ...klines15m]; // prepend — más antiguo primero
+        endTime = res.data[0][0] - 1; // siguiente batch termina antes del primero actual
+      } catch(_) { break; }
+    }
+    // Limitar al período solicitado
+    klines15m = klines15m.slice(-totalVelas15m);
+
+    // Datos auxiliares para scalping y sweep (período más corto)
+    const limitShort = Math.min(days * 96, 1500);
+    const limit3m = Math.min(days * 480, 1500);
+    const [k3m, k4h, k1h, k1d] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=${limit3m}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=200`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=500`),
-      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=400`),
     ]);
 
-    const klines15m = k15m.data, klines3m = k3m.data;
+    const klines3m = k3m.data;
     const klines4h = k4h.data, klines1h = k1h.data, klines1d = k1d.data;
+    console.log(`Backtest ${symbol}: ${klines15m.length} velas 15m (${(klines15m.length/96).toFixed(0)} días)`);
 
     const scalpParams = { rsiMin: scalpRsiMin, rsiMax: scalpRsiMax, minImbalance: scalpMinImbalance, momentumPct: scalpMomentumPct };
     const sweepParams = { minVolMult: sweepMinVolMult, minCVD: sweepMinCVD, bias1dScoreBlock: sweepBias1dScore };
@@ -2249,10 +2307,51 @@ app.post('/api/backtest', async (req, res) => {
       };
     }
 
+    // ── BACKTEST BASE (volume spike + mean reversion en 15m)
+    if (module === 'base' || module === 'both') {
+      let skipUntilBase = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilBase) continue;
+        const entry = simulateBaseEntry(klines15m, klines1d, i, { baseVolMult });
+        if (!entry) continue;
+        const result = simulateTrade(klines15m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.base = results.base || [];
+        results.base.push({
+          time: new Date(klines1h[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status,
+          pnl: parseFloat(pnl.toFixed(2)),
+          volMult: entry.volMult.toFixed(1),
+          bias1dScore: entry.bias1dScore,
+        });
+        skipUntilBase = result.exitIdx + 2;
+      }
+    }
+
+    // Calcular z-score para validación estadística
+    function calcZScore(trades) {
+      if (!trades || trades.length < 30) return null;
+      const n = trades.length;
+      const won = trades.filter(t => t.status === 'won').length;
+      const wr = won / n;
+      const p0 = 0.5; // hipótesis nula: 50% WR
+      const z = (wr - p0) / Math.sqrt(p0 * (1 - p0) / n);
+      return parseFloat(z.toFixed(2));
+    }
+
     const response = {
-      symbol, days, params: { scalping: scalpParams, sweep: sweepParams },
+      symbol, days, params: { scalping: scalpParams, sweep: sweepParams, baseVolMult },
       scalping: { stats: calcStats(results.scalping), trades: results.scalping.slice(-50) },
       sweep: { stats: calcStats(results.sweep), trades: results.sweep.slice(-50) },
+      base: results.base ? {
+        stats: { ...calcStats(results.base), zScore: calcZScore(results.base), n: results.base.length },
+        trades: results.base.slice(-50)
+      } : null,
     };
 
     console.log(`Backtest ${symbol} ${days}d — Scalp: ${results.scalping.length} trades WR${calcStats(results.scalping).winRate}% | Sweep: ${results.sweep.length} trades WR${calcStats(results.sweep).winRate}%`);
@@ -2267,7 +2366,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.26 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.28 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
