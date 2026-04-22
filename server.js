@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.23' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.24' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1606,133 +1606,301 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   finally { scalpingInProgress[symbol] = false; }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// ─── MÓDULO WALL ABSORPTION — Absorción de paredes del order book ─
-// ══════════════════════════════════════════════════════════════════
-const wallAbsorptionCooldown = {};
-let wallAbsorptionRunning = false;
 
-async function detectWallAbsorption(symbol) {
+// ══════════════════════════════════════════════════════════════════
+// ─── WALL ABSORPTION v2 — Streaming depth20 + Anti-spoof ─────────
+// ══════════════════════════════════════════════════════════════════
+// Arquitectura:
+//   WebSocket depth20@100ms → bookState → wallTracker → absorción → trade
+// Basado en la estrategia de Luis con LBOrderPulse:
+//   1. Detectar pared grande en el book
+//   2. Verificar que no es spoof (>10s)
+//   3. Medir absorción: ¿rebotó o está perforando?
+//   4. Si rebotó (<30% comida) → entrar dirección contraria
+//   5. Si perforando (>50% comida) → no entrar
+
+const bookState = {};       // order book en tiempo real por símbolo
+const wallTracker = {};     // paredes detectadas con timestamp
+const wallAbsorptionCooldown = {};
+const wsDepthConnections = {};
+
+// ── Conectar WebSocket depth20 para cada símbolo ─────────────────
+function connectDepthWebSocket(symbol) {
+  if (wsDepthConnections[symbol]) return;
+
+  const stream = `${symbol.toLowerCase()}@depth20@100ms`;
+  const url = `${BINANCE_WS}/ws/${stream}`;
+  console.log(`📊 Depth WS conectando: ${symbol}`);
+
+  const ws = new (require('ws'))(url);
+  wsDepthConnections[symbol] = ws;
+
+  ws.on('open', () => console.log(`✅ Depth WS conectado: ${symbol}`));
+
+  ws.on('message', (data) => {
+    try {
+      const book = JSON.parse(data);
+      bookState[symbol] = {
+        bids: (book.b || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })),
+        asks: (book.a || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })),
+        ts: Date.now(),
+      };
+      // Evaluar paredes en cada actualización del book
+      evaluateWalls(symbol);
+    } catch(_) {}
+  });
+
+  ws.on('close', () => {
+    console.log(`⚠️ Depth WS desconectado: ${symbol} — reconectando en 5s`);
+    delete wsDepthConnections[symbol];
+    setTimeout(() => connectDepthWebSocket(symbol), 5000);
+  });
+
+  ws.on('error', (e) => {
+    console.log(`❌ Depth WS error ${symbol}: ${e.message}`);
+    ws.terminate();
+  });
+}
+
+// ── PASO 2: Detectar paredes grandes en el book ───────────────────
+function findBigWalls(symbol) {
+  const book = bookState[symbol];
+  if (!book || !book.bids.length || !book.asks.length) return [];
+
+  const walls = [];
+
+  // Calcular promedio de qty en bids y asks
+  const bidAvg = book.bids.reduce((s, b) => s + b.qty, 0) / book.bids.length;
+  const askAvg = book.asks.reduce((s, a) => s + a.qty, 0) / book.asks.length;
+
+  // Umbral mínimo absoluto — BTC: 1 BTC, ETH: 10 ETH
+  const minQty = symbol.includes('BTC') ? 1 : symbol.includes('ETH') ? 10 : 1;
+
+  // Pared = qty > 5x el promedio Y > umbral mínimo
+  for (const bid of book.bids) {
+    if (bid.qty >= minQty && bid.qty > bidAvg * 5) {
+      walls.push({ price: bid.price, qty: bid.qty, side: 'bid', avgQty: bidAvg });
+    }
+  }
+  for (const ask of book.asks) {
+    if (ask.qty >= minQty && ask.qty > askAvg * 5) {
+      walls.push({ price: ask.price, qty: ask.qty, side: 'ask', avgQty: askAvg });
+    }
+  }
+
+  return walls;
+}
+
+// ── PASO 3 + 4: Evaluar paredes — anti-spoof + absorción ─────────
+function evaluateWalls(symbol) {
+  const now = Date.now();
+  const walls = findBigWalls(symbol);
+  const currentPrice = wsState[symbol]?.lastPrice;
+  if (!currentPrice) return;
+
+  // Limpiar paredes viejas (>60s sin aparecer)
+  if (wallTracker[symbol]) {
+    for (const key of Object.keys(wallTracker[symbol])) {
+      if (now - wallTracker[symbol][key].lastSeen > 60000) {
+        delete wallTracker[symbol][key];
+      }
+    }
+  } else {
+    wallTracker[symbol] = {};
+  }
+
+  // Actualizar tracker con paredes actuales
+  for (const wall of walls) {
+    const key = `${wall.side}_${Math.round(wall.price)}`;
+    if (!wallTracker[symbol][key]) {
+      // Primera vez que vemos esta pared
+      wallTracker[symbol][key] = {
+        price: wall.price,
+        qty: wall.qty,
+        side: wall.side,
+        firstSeen: now,
+        lastSeen: now,
+        maxQty: wall.qty,
+        minQty: wall.qty,
+      };
+    } else {
+      // Actualizar pared existente
+      const w = wallTracker[symbol][key];
+      w.lastSeen = now;
+      w.qty = wall.qty;
+      w.minQty = Math.min(w.minQty, wall.qty);
+      w.maxQty = Math.max(w.maxQty, wall.qty);
+    }
+  }
+
+  // Evaluar paredes confirmadas (>10s en el book = anti-spoof)
+  const ANTISPOOF_MS = 10000;
+  const NEAR_THRESHOLD = symbol.includes('BTC') ? 0.0008 : 0.0012;
+
+  for (const [key, wall] of Object.entries(wallTracker[symbol] || {})) {
+    const age = now - wall.firstSeen;
+    if (age < ANTISPOOF_MS) continue; // aún en período anti-spoof
+
+    // ¿El precio está cerca de la pared?
+    const distPct = Math.abs(currentPrice - wall.price) / currentPrice;
+    if (distPct > NEAR_THRESHOLD) continue;
+
+    // PASO 4: Medir absorción
+    // ¿Cuánto volumen agresivo golpeó este nivel en los últimos 10s?
+    const recentTrades = wsState[symbol]?.trades?.filter(t => now - t.time < 10000) || [];
+    const wallPriceRange = wall.price * 0.0005; // ±0.05% del nivel
+
+    let aggressiveVol = 0;
+    for (const trade of recentTrades) {
+      if (Math.abs(trade.price - wall.price) <= wallPriceRange) {
+        // Trade agresivo en el nivel de la pared
+        if (wall.side === 'bid' && !trade.isBuy) aggressiveVol += trade.usdVal; // vendedores golpeando bid
+        if (wall.side === 'ask' && trade.isBuy)  aggressiveVol += trade.usdVal; // compradores golpeando ask
+      }
+    }
+
+    const wallUsdVal = wall.price * wall.qty;
+    const absorptionPct = wallUsdVal > 0 ? (aggressiveVol / wallUsdVal) * 100 : 0;
+
+    // Decisión de absorción:
+    // < 30% comida → pared sostuvo → rebote → ENTRAR
+    // > 50% comida → pared perforando → NO entrar
+    // 30-50%       → indefinido → NO entrar
+
+    if (absorptionPct > 30) {
+      if (absorptionPct > 50) {
+        console.log(`Wall ${wall.side.toUpperCase()} ${symbol} $${wall.price} — PERFORANDO (${absorptionPct.toFixed(0)}% comida) — no entrar`);
+      }
+      continue; // no entrar si hay absorción significativa o perforación
+    }
+
+    // Pared sostuvo con <30% absorción → rebote confirmado
+    const direction = wall.side === 'bid' ? 'LONG' : 'SHORT';
+    const strength = wall.qty / wall.avgQty;
+
+    // Disparar señal de entrada (async, no bloquea el loop)
+    processWallSignal(symbol, wall, direction, strength, absorptionPct, currentPrice).catch(() => {});
+
+    // Marcar pared como procesada para evitar doble entrada
+    delete wallTracker[symbol][key];
+  }
+}
+
+// ── PASO 5: Procesar señal y abrir trade ─────────────────────────
+async function processWallSignal(symbol, wall, direction, strength, absorptionPct, price) {
   try {
-    const state = wsState[symbol];
-    if (!state || !state.lastPrice) return;
-    const price = state.lastPrice;
     const now = Date.now();
+
     // Cooldown 10 min por símbolo
     if (wallAbsorptionCooldown[symbol] && now - wallAbsorptionCooldown[symbol] < 10 * 60 * 1000) return;
+
     // No abrir si ya hay trade abierto
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) return;
-    // PASO 1 — Clusters del order book (las paredes grandes = burbujas LBOrderPulse)
-    const book = await fetchDeepOrderBook(symbol);
-    if (!book) return;
-    const allClusters = [
-      ...(book.bidClusters || []).map(cl => ({ ...cl, side: 'bid' })),
-      ...(book.askClusters || []).map(cl => ({ ...cl, side: 'ask' })),
-    ].sort((a, b) => b.usdVal - a.usdVal);
-    if (!allClusters.length) return;
-    // Top 20% por tamaño = lineas amarillas mas grandes
-    const topN = Math.max(1, Math.ceil(allClusters.length * 0.2));
-    // Fix 2 — strength mínimo 2.6 (paredes débiles tienen WR peor)
-    const bigWalls = allClusters.slice(0, topN).filter(w => w.strength >= 2.6);
-    if (!bigWalls.length) return;
-    // PASO 2 — Precio tocando una pared (<0.08% distancia)
-    const touchThreshold = symbol.includes('BTC') ? 0.0008 : 0.0010;
-    const touchedWall = bigWalls.find(wall => Math.abs(price - wall.price) / price < touchThreshold);
-    if (!touchedWall) return;
 
-    // Fix 1 — bias_1d bloquea Wall si mercado en tendencia contraria
+    // Fix 1 — bias_1d bloquea si mercado en tendencia contraria
     try {
       const k1dWall = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
       const bias1dWall = calcBias(k1dWall.data, null, 0);
       if (bias1dWall) {
-        const blockShortWall = bias1dWall.bias === 'long' || bias1dWall.score > 58;
-        const blockLongWall  = bias1dWall.bias === 'short' || bias1dWall.score < 42;
-        // ASK wall → SHORT — bloquear si mercado alcista
-        if (touchedWall.side === 'ask' && blockShortWall) {
-          console.log(`Wall SHORT omitido — bias_1d alcista (score:${bias1dWall.score}) (${symbol})`);
+        const blockShort = bias1dWall.bias === 'long' || bias1dWall.score > 58;
+        const blockLong  = bias1dWall.bias === 'short' || bias1dWall.score < 42;
+        if (direction === 'SHORT' && blockShort) {
+          console.log(`Wall v2 SHORT omitido — bias_1d alcista (score:${bias1dWall.score}) (${symbol})`);
           return;
         }
-        // BID wall → LONG — bloquear si mercado bajista
-        if (touchedWall.side === 'bid' && blockLongWall) {
-          console.log(`Wall LONG omitido — bias_1d bajista (score:${bias1dWall.score}) (${symbol})`);
+        if (direction === 'LONG' && blockLong) {
+          console.log(`Wall v2 LONG omitido — bias_1d bajista (score:${bias1dWall.score}) (${symbol})`);
           return;
         }
       }
     } catch(_) {}
 
-    // PASO 3 — Confirmar absorción en 5 segundos con volumen real
-    const last5s = state.trades.filter(t => now - t.time < 5000);
-    if (last5s.length < 3) return;
-    const prices5s = last5s.map(t => t.price);
-    const minP = Math.min(...prices5s), maxP = Math.max(...prices5s);
-    const vol5s = last5s.reduce((s, t) => s + t.usdVal, 0);
-    const minVol5s = symbol.includes('BTC') ? 500000 : 200000;
-    if (vol5s < minVol5s) return;
-    // PASO 4 — Determinar dirección
-    let direction = null;
-    const wallLevel = touchedWall.price;
-    if (touchedWall.side === 'ask') {
-      // Pared ask absorbida → precio no cruzó hacia arriba → SHORT
-      if (maxP >= wallLevel * (1 - touchThreshold) && maxP < wallLevel * 1.0005) direction = 'SHORT';
-    } else {
-      // Pared bid absorbida → precio no cruzó hacia abajo → LONG
-      if (minP <= wallLevel * (1 + touchThreshold) && minP > wallLevel * 0.9995) direction = 'LONG';
+    // Fix 2 — strength mínimo 5x (pared debe ser grande vs el resto del book)
+    if (strength < 5) {
+      console.log(`Wall v2 omitido — strength ${strength.toFixed(1)}x < 5x (${symbol})`);
+      return;
     }
-    if (!direction) return;
-    // PASO 5 — Calcular SL y TP
+
+    // Calcular SL y TP
     const slPct = symbol.includes('BTC') ? 0.0012 : 0.0015;
+    const wallLevel = wall.price;
     const sl = direction === 'LONG' ? wallLevel * (1 - slPct) : wallLevel * (1 + slPct);
+
+    // TP = nivel significativo más cercano en la dirección del trade
+    const book = bookState[symbol];
     let tp1 = null;
-    if (direction === 'LONG') {
-      const nextAsk = (book.askClusters || []).filter(cl => cl.price > price * 1.002).sort((a, b) => a.price - b.price)[0];
+    if (direction === 'LONG' && book?.asks?.length) {
+      const nextAsk = book.asks.filter(a => a.price > price * 1.001 && a.qty > 0.5).sort((a, b) => a.price - b.price)[0];
       tp1 = nextAsk ? nextAsk.price : price * (1 + slPct * 2.5);
-    } else {
-      const nextBid = (book.bidClusters || []).filter(cl => cl.price < price * 0.998).sort((a, b) => b.price - a.price)[0];
+    } else if (book?.bids?.length) {
+      const nextBid = book.bids.filter(b => b.price < price * 0.999 && b.qty > 0.5).sort((a, b) => b.price - a.price)[0];
       tp1 = nextBid ? nextBid.price : price * (1 - slPct * 2.5);
     }
-    if (!tp1) return;
+    if (!tp1) tp1 = direction === 'LONG' ? price * (1 + slPct * 2.5) : price * (1 - slPct * 2.5);
+
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
-    if (rrVal < 1.2) { console.log(`Wall Absorption descartado RR ${rrVal.toFixed(2)} (${symbol})`); return; }
-    // PASO 6 — Abrir trade
+    if (rrVal < 1.2) {
+      console.log(`Wall v2 descartado — RR ${rrVal.toFixed(2)} < 1.2 (${symbol})`);
+      return;
+    }
+
     wallAbsorptionCooldown[symbol] = now;
-    const wallSide = touchedWall.side === 'ask' ? 'ASK' : 'BID';
-    const wallUsd = touchedWall.usdVal >= 1e6 ? `$${(touchedWall.usdVal/1e6).toFixed(1)}M` : `$${(touchedWall.usdVal/1e3).toFixed(0)}K`;
-    const wallConf = Math.min(88, Math.round(75 + (rrVal >= 1.5 ? 8 : 3) + (vol5s > minVol5s * 2 ? 5 : 0)));
+
+    const wallUsd = wall.price * wall.qty;
+    const wallUsdStr = wallUsd >= 1e6 ? `$${(wallUsd/1e6).toFixed(1)}M` : `$${(wallUsd/1e3).toFixed(0)}K`;
+    const wallConf = Math.min(88, Math.round(75 + (rrVal >= 1.5 ? 8 : 3) + (strength >= 8 ? 5 : 0)));
+    const wallSide = wall.side === 'ask' ? 'ASK' : 'BID';
+
     await supabase.from('paper_trades').insert({
       symbol, direction, entry: price, tp1, tp2: tp1, sl,
       rr: `1:${rrVal.toFixed(1)}`, confidence: wallConf,
       size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
       leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
-      source: 'wall', status: 'open', opened_at: new Date().toISOString(),
-      market_data: { mode: 'wall_absorption', wall_side: wallSide, wall_price: wallLevel, wall_usd: touchedWall.usdVal, wall_strength: touchedWall.strength, vol_5s: vol5s, timestamp: new Date().toISOString() }
+      source: 'wall', status: 'open',
+      opened_at: new Date().toISOString(),
+      market_data: {
+        mode: 'wall_absorption_v2',
+        wall_side: wallSide,
+        wall_price: wallLevel,
+        wall_usd: wallUsd,
+        wall_strength: strength,
+        wall_age_ms: now - wall.firstSeen,
+        absorption_pct: parseFloat(absorptionPct.toFixed(1)),
+        timestamp: new Date().toISOString(),
+      }
     });
-    console.log(`Wall Absorption: ${direction} ${symbol} @ $${price.toFixed(1)} pared ${wallSide} $${wallLevel} (${wallUsd}) RR 1:${rrVal.toFixed(1)}`);
+
+    console.log(`Wall v2: ${direction} ${symbol} @ $${price.toFixed(1)} pared ${wallSide} $${wallLevel} (${wallUsdStr}) strength:${strength.toFixed(1)}x absorcion:${absorptionPct.toFixed(0)}% RR 1:${rrVal.toFixed(1)}`);
+
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'LONG' ? 'LONG' : 'SHORT';
-      const msg = `Wall Absorption - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsd})\n${new Date().toLocaleTimeString('es-PE')}`;
+      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${new Date().toLocaleTimeString('es-PE')}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
     }
+
   } catch(_) {}
 }
 
-async function runWallAbsorptionMonitor() {
-  if (wallAbsorptionRunning) return;
-  wallAbsorptionRunning = true;
-  try {
-    for (const symbol of Object.keys(wsState).filter(s => wsState[s]?.lastPrice > 0)) {
-      await detectWallAbsorption(symbol);
-    }
-  } catch(_) {} finally { wallAbsorptionRunning = false; }
-}
-
+// Endpoint para ver estado del módulo Wall v2
 app.get('/api/wall/status', (req, res) => {
   const status = {};
   for (const symbol of Object.keys(wsState)) {
-    const cdMs = wallAbsorptionCooldown[symbol] ? Math.max(0, 10*60*1000 - (Date.now() - wallAbsorptionCooldown[symbol])) : 0;
-    status[symbol] = { lastPrice: wsState[symbol]?.lastPrice || 0, cooldownMin: (cdMs/60000).toFixed(1), active: cdMs === 0 };
+    const cdMs = wallAbsorptionCooldown[symbol]
+      ? Math.max(0, 10*60*1000 - (Date.now() - wallAbsorptionCooldown[symbol]))
+      : 0;
+    const walls = Object.values(wallTracker[symbol] || {});
+    const confirmed = walls.filter(w => Date.now() - w.firstSeen >= 10000);
+    status[symbol] = {
+      lastPrice: wsState[symbol]?.lastPrice || 0,
+      depthConnected: !!wsDepthConnections[symbol],
+      wallsTracked: walls.length,
+      wallsConfirmed: confirmed.length,
+      cooldownMin: (cdMs/60000).toFixed(1),
+      active: cdMs === 0,
+    };
   }
-  res.json({ module: 'Wall Absorption', version: '4.4.19', status });
+  res.json({ module: 'Wall Absorption v2', version: '4.4.24', status });
 });
 
 
@@ -2073,10 +2241,11 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.23 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.24 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
-  // ── Wall Absorption monitor — cada 3 segundos
-  setInterval(runWallAbsorptionMonitor, 3000);
-  console.log('🧱 Wall Absorption monitor iniciado — cada 3s');
+  // ── Wall Absorption v2 — WebSocket depth20 streaming
+  connectDepthWebSocket('BTCUSDT');
+  connectDepthWebSocket('ETHUSDT');
+  console.log('🧱 Wall Absorption v2 iniciado — streaming depth20 100ms');
 });
