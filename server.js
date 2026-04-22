@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.28' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.29' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2161,8 +2161,9 @@ function simulateBaseEntry(klines15m, klines1d, idx, params = {}) {
   if (volMult < baseVolMult) return null;
 
   // Tendencia 1D — 1 vela diaria = 96 velas de 15m
-  const d1idx = Math.floor(idx / 96);
-  const bias1d = btCalcBias1d(klines1d.slice(0, Math.max(d1idx + 1, 5)));
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
 
   // Mean reversion: spike en downtrend → LONG, en uptrend → SHORT
   let dir = null;
@@ -2222,7 +2223,7 @@ app.post('/api/backtest', async (req, res) => {
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=${limit3m}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=200`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=500`),
-      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=400`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=500`),
     ]);
 
     const klines3m = k3m.data;
@@ -2322,7 +2323,7 @@ app.post('/api/backtest', async (req, res) => {
           : 0;
         results.base = results.base || [];
         results.base.push({
-          time: new Date(klines1h[i][0]).toISOString(),
+          time: new Date(klines15m[i][0]).toISOString(),
           dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
           rr: entry.rr.toFixed(2), status: result.status,
           pnl: parseFloat(pnl.toFixed(2)),
@@ -2366,7 +2367,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.28 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.29 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
