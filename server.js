@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.19' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.20' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1713,9 +1713,344 @@ app.get('/api/wall/status', (req, res) => {
 });
 
 
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO BACKTEST — Scalping y Sweep sobre datos históricos ────
+// ══════════════════════════════════════════════════════════════════
+
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  const avgGain = gains / period, avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Math.round(100 - 100 / (1 + rs));
+}
+
+function calcCVD(klines) {
+  // CVD aproximado: si close > open → compra, sino venta
+  const recent = klines.slice(-10);
+  let buyVol = 0, sellVol = 0;
+  for (const k of recent) {
+    const vol = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += vol;
+    else sellVol += vol;
+  }
+  const total = buyVol + sellVol;
+  return total > 0 ? ((buyVol - sellVol) / total * 100) : 0;
+}
+
+function calcImbalance(klines) {
+  const recent = klines.slice(-5);
+  let buyVol = 0, sellVol = 0;
+  for (const k of recent) {
+    const vol = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += vol;
+    else sellVol += vol;
+  }
+  const total = buyVol + sellVol;
+  return total > 0 ? ((buyVol - sellVol) / total * 100) : 0;
+}
+
+function calcATR(klines, period = 10) {
+  if (klines.length < period + 1) return parseFloat(klines[0][4]) * 0.005;
+  let atrSum = 0;
+  for (let i = klines.length - period; i < klines.length; i++) {
+    const high = parseFloat(klines[i][2]), low = parseFloat(klines[i][3]);
+    const prevClose = parseFloat(klines[i - 1][4]);
+    atrSum += Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+  }
+  return atrSum / period;
+}
+
+function calcBias1d(klines1d) {
+  if (!klines1d || klines1d.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines1d.map(k => parseFloat(k[4]));
+  const rsi = calcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev5 = closes[closes.length - 6];
+  const pricePct = (last - prev5) / prev5 * 100;
+  let score = 50;
+  if (pricePct > 3) score += 20; else if (pricePct > 1) score += 10;
+  else if (pricePct < -3) score -= 20; else if (pricePct < -1) score -= 10;
+  if (rsi > 60) score += 15; else if (rsi < 40) score -= 15;
+  score = Math.max(0, Math.min(100, score));
+  const bias = score > 58 ? 'long' : score < 42 ? 'short' : 'neutral';
+  return { bias, score };
+}
+
+function calcBias4h(klines4h) {
+  if (!klines4h || klines4h.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines4h.map(k => parseFloat(k[4]));
+  const rsi = calcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 5];
+  const pricePct = (last - prev) / prev * 100;
+  let score = 50;
+  if (pricePct > 1) score += 15; else if (pricePct < -1) score -= 15;
+  if (rsi > 60) score += 10; else if (rsi < 40) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+  return { bias: score > 58 ? 'long' : score < 42 ? 'short' : 'neutral', score };
+}
+
+function calcBias1h(klines1h) {
+  if (!klines1h || klines1h.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines1h.map(k => parseFloat(k[4]));
+  const rsi = calcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 4];
+  const pricePct = (last - prev) / prev * 100;
+  let score = 50;
+  if (pricePct > 0.5) score += 15; else if (pricePct < -0.5) score -= 15;
+  if (rsi > 60) score += 10; else if (rsi < 40) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+  return { bias: score > 55 ? 'long' : score < 45 ? 'short' : 'neutral', score };
+}
+
+function simulateScalpEntry(klines3m, klines4h, klines1h, idx, params) {
+  const { rsiMin, rsiMax, minImbalance, momentumPct, volMultMin } = params;
+  const window3m = klines3m.slice(0, idx + 1);
+  if (window3m.length < 20) return null;
+
+  const closes = window3m.map(k => parseFloat(k[4]));
+  const rsi = calcRSI(closes, 14);
+  const cvd = calcCVD(window3m);
+  const imb = calcImbalance(window3m);
+  const price = parseFloat(window3m[window3m.length - 1][4]);
+
+  // Simular momentum con diferencia de precio en últimas 20 velas de 3m = 60s
+  const prevPrice = parseFloat(window3m[window3m.length - 5]?.[4] || window3m[0][4]);
+  const movePct = (price - prevPrice) / prevPrice * 100;
+
+  const bias4h = calcBias4h(klines4h.slice(0, Math.floor(idx / 80) + 1));
+  const bias1h = calcBias1h(klines1h.slice(0, Math.floor(idx / 20) + 1));
+
+  // Determinar dirección
+  let longScore = 50, shortScore = 50;
+  if (cvd > 10) longScore += 25; else if (cvd < -10) shortScore += 25;
+  if (imb > 20) longScore += 30; else if (imb < -20) shortScore += 30;
+  if (rsi < 40) longScore += 15; else if (rsi > 60) shortScore += 15;
+
+  const totalScore = longScore + shortScore;
+  const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
+  const scalpProb = Math.round((Math.max(longScore, shortScore) / Math.max(totalScore, 1)) * 100);
+
+  if (scalpProb < 88) return null;
+  if (rsi > rsiMax && scalpDir === 'SHORT') return null;
+  if (rsi < rsiMin && scalpDir === 'LONG') return null;
+  if (Math.abs(imb) < minImbalance) return null;
+  if (scalpDir === 'LONG' && imb < 0) return null;
+  if (scalpDir === 'SHORT' && imb > 0) return null;
+
+  // Fix C — momentum
+  const needsUp = scalpDir === 'LONG' && movePct < momentumPct;
+  const needsDown = scalpDir === 'SHORT' && movePct > -momentumPct;
+  if (needsUp || needsDown) return null;
+
+  // Pullback 4H+1H
+  const isPullback = (bias4h.bias === 'long' && bias1h.bias === 'short') ||
+                     (bias4h.bias === 'short' && bias1h.bias === 'long');
+  if (!isPullback && (bias4h.score > 70 || bias4h.score < 30)) return null;
+
+  const atr = calcATR(window3m);
+  const sl = scalpDir === 'LONG' ? price - Math.max(atr * 0.8, price * 0.008)
+                                  : price + Math.max(atr * 0.8, price * 0.008);
+  const tp = scalpDir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.5) return null;
+
+  return { dir: scalpDir, entry: price, tp, sl, rr, idx };
+}
+
+function simulateSweepEntry(klines15m, klines1d, idx, params) {
+  const { minVolMult, minCVD, bias1dScoreBlock } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 20) return null;
+
+  const closes = window.map(k => parseFloat(k[4]));
+  const volumes = window.map(k => parseFloat(k[5]));
+  const cvd = calcCVD(window);
+  const price = parseFloat(window[window.length - 1][4]);
+  const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = lastVol / Math.max(avgVol, 0.001);
+
+  if (volMult < minVolMult) return null;
+  if (Math.abs(cvd) < minCVD) return null;
+
+  // Verificar precio moviéndose
+  const prev = parseFloat(window[window.length - 4]?.[4] || window[0][4]);
+  const movePct = Math.abs((price - prev) / prev * 100);
+  if (movePct < 0.5) return null;
+
+  const dir = cvd > 0 ? 'LONG' : 'SHORT';
+
+  // Fix B — bias_1d bloquea
+  const bias1d = calcBias1d(klines1d.slice(0, Math.floor(idx / 96) + 1));
+  const blockShort = bias1d.bias === 'long' || bias1d.score > bias1dScoreBlock;
+  const blockLong = bias1d.bias === 'short' || bias1d.score < (100 - bias1dScoreBlock);
+  if (dir === 'SHORT' && blockShort) return null;
+  if (dir === 'LONG' && blockLong) return null;
+
+  // Fix C2 — confirmación precio 5 velas (75min ~ 5min original)
+  const prev5 = parseFloat(window[window.length - 5]?.[4] || window[0][4]);
+  const move5 = (price - prev5) / prev5 * 100;
+  if (dir === 'SHORT' && move5 > -0.1) return null;
+  if (dir === 'LONG' && move5 < 0.1) return null;
+
+  const atr = calcATR(window);
+  const sl = dir === 'LONG' ? price - atr * 0.8 : price + atr * 0.8;
+  const tp = dir === 'LONG' ? price + atr * 1.2 : price - atr * 1.2;
+  const rr = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.5) return null;
+
+  return { dir, entry: price, tp, sl, rr, idx };
+}
+
+function simulateTrade(klines, trade, startIdx) {
+  for (let i = startIdx + 1; i < Math.min(startIdx + 100, klines.length); i++) {
+    const high = parseFloat(klines[i][2]);
+    const low = parseFloat(klines[i][3]);
+    if (trade.dir === 'LONG') {
+      if (high >= trade.tp) return { status: 'won', exitIdx: i, exitPrice: trade.tp };
+      if (low <= trade.sl) return { status: 'lost', exitIdx: i, exitPrice: trade.sl };
+    } else {
+      if (low <= trade.tp) return { status: 'won', exitIdx: i, exitPrice: trade.tp };
+      if (high >= trade.sl) return { status: 'lost', exitIdx: i, exitPrice: trade.sl };
+    }
+  }
+  return { status: 'timeout', exitIdx: startIdx + 100, exitPrice: parseFloat(klines[Math.min(startIdx + 99, klines.length - 1)][4]) };
+}
+
+app.post('/api/backtest', async (req, res) => {
+  try {
+    const {
+      symbol = 'BTCUSDT',
+      days = 30,
+      module = 'both',
+      // Parámetros ajustables scalping
+      scalpRsiMin = 35, scalpRsiMax = 65,
+      scalpMinImbalance = 30, scalpMomentumPct = 0.05,
+      // Parámetros ajustables sweep
+      sweepMinVolMult = 4, sweepMinCVD = 40,
+      sweepBias1dScore = 58,
+    } = req.body;
+
+    const limit = Math.min(days * 96, 1500); // 96 velas de 15m por día
+    const limit3m = Math.min(days * 480, 1500);
+
+    // Descargar datos históricos
+    const [k15m, k3m, k4h, k1h, k1d] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=${limit}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=${limit3m}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=200`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=500`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=60`),
+    ]);
+
+    const klines15m = k15m.data, klines3m = k3m.data;
+    const klines4h = k4h.data, klines1h = k1h.data, klines1d = k1d.data;
+
+    const scalpParams = { rsiMin: scalpRsiMin, rsiMax: scalpRsiMax, minImbalance: scalpMinImbalance, momentumPct: scalpMomentumPct };
+    const sweepParams = { minVolMult: sweepMinVolMult, minCVD: sweepMinCVD, bias1dScoreBlock: sweepBias1dScore };
+
+    const results = { scalping: [], sweep: [] };
+    const SIZE_USD = 1000, LEVERAGE = 5;
+
+    // ── BACKTEST SCALPING (velas 3m)
+    if (module === 'scalping' || module === 'both') {
+      let inTrade = false, skipUntil = 0;
+      for (let i = 50; i < klines3m.length - 10; i++) {
+        if (i < skipUntil) continue;
+        if (inTrade) continue;
+        const entry = simulateScalpEntry(klines3m, klines4h, klines1h, i, scalpParams);
+        if (!entry) continue;
+        const result = simulateTrade(klines3m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.scalping.push({
+          time: new Date(klines3m[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status, pnl: parseFloat(pnl.toFixed(2)),
+        });
+        skipUntil = result.exitIdx + 5;
+      }
+    }
+
+    // ── BACKTEST SWEEP (velas 15m)
+    if (module === 'sweep' || module === 'both') {
+      let skipUntil = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntil) continue;
+        const entry = simulateSweepEntry(klines15m, klines1d, i, sweepParams);
+        if (!entry) continue;
+        const result = simulateTrade(klines15m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.sweep.push({
+          time: new Date(klines15m[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status, pnl: parseFloat(pnl.toFixed(2)),
+        });
+        skipUntil = result.exitIdx + 3;
+      }
+    }
+
+    // ── Calcular estadísticas
+    function calcStats(trades) {
+      if (!trades.length) return { total: 0, won: 0, lost: 0, winRate: 0, totalPnl: 0, profitFactor: 0, avgWin: 0, avgLoss: 0, maxDrawdown: 0 };
+      const won = trades.filter(t => t.status === 'won');
+      const lost = trades.filter(t => t.status === 'lost');
+      const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+      const grossWin = won.reduce((s, t) => s + t.pnl, 0);
+      const grossLoss = Math.abs(lost.reduce((s, t) => s + t.pnl, 0));
+      let peak = 0, equity = 0, maxDD = 0;
+      for (const t of trades) {
+        equity += t.pnl;
+        if (equity > peak) peak = equity;
+        const dd = peak - equity;
+        if (dd > maxDD) maxDD = dd;
+      }
+      return {
+        total: trades.length,
+        won: won.length, lost: lost.length,
+        winRate: Math.round(won.length / trades.length * 100),
+        totalPnl: parseFloat(totalPnl.toFixed(2)),
+        profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : grossWin > 0 ? 99 : 0,
+        avgWin: won.length ? parseFloat((grossWin / won.length).toFixed(2)) : 0,
+        avgLoss: lost.length ? parseFloat((grossLoss / lost.length).toFixed(2)) : 0,
+        maxDrawdown: parseFloat(maxDD.toFixed(2)),
+      };
+    }
+
+    const response = {
+      symbol, days, params: { scalping: scalpParams, sweep: sweepParams },
+      scalping: { stats: calcStats(results.scalping), trades: results.scalping.slice(-50) },
+      sweep: { stats: calcStats(results.sweep), trades: results.sweep.slice(-50) },
+    };
+
+    console.log(`Backtest ${symbol} ${days}d — Scalp: ${results.scalping.length} trades WR${calcStats(results.scalping).winRate}% | Sweep: ${results.sweep.length} trades WR${calcStats(results.sweep).winRate}%`);
+    res.json(response);
+
+  } catch(e) {
+    console.error('Backtest error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.19 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.20 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption monitor — cada 3 segundos
