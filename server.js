@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.22' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.23' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1633,11 +1633,34 @@ async function detectWallAbsorption(symbol) {
     if (!allClusters.length) return;
     // Top 20% por tamaño = lineas amarillas mas grandes
     const topN = Math.max(1, Math.ceil(allClusters.length * 0.2));
-    const bigWalls = allClusters.slice(0, topN);
+    // Fix 2 — strength mínimo 2.6 (paredes débiles tienen WR peor)
+    const bigWalls = allClusters.slice(0, topN).filter(w => w.strength >= 2.6);
+    if (!bigWalls.length) return;
     // PASO 2 — Precio tocando una pared (<0.08% distancia)
     const touchThreshold = symbol.includes('BTC') ? 0.0008 : 0.0010;
     const touchedWall = bigWalls.find(wall => Math.abs(price - wall.price) / price < touchThreshold);
     if (!touchedWall) return;
+
+    // Fix 1 — bias_1d bloquea Wall si mercado en tendencia contraria
+    try {
+      const k1dWall = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+      const bias1dWall = calcBias(k1dWall.data, null, 0);
+      if (bias1dWall) {
+        const blockShortWall = bias1dWall.bias === 'long' || bias1dWall.score > 58;
+        const blockLongWall  = bias1dWall.bias === 'short' || bias1dWall.score < 42;
+        // ASK wall → SHORT — bloquear si mercado alcista
+        if (touchedWall.side === 'ask' && blockShortWall) {
+          console.log(`Wall SHORT omitido — bias_1d alcista (score:${bias1dWall.score}) (${symbol})`);
+          return;
+        }
+        // BID wall → LONG — bloquear si mercado bajista
+        if (touchedWall.side === 'bid' && blockLongWall) {
+          console.log(`Wall LONG omitido — bias_1d bajista (score:${bias1dWall.score}) (${symbol})`);
+          return;
+        }
+      }
+    } catch(_) {}
+
     // PASO 3 — Confirmar absorción en 5 segundos con volumen real
     const last5s = state.trades.filter(t => now - t.time < 5000);
     if (last5s.length < 3) return;
@@ -1651,10 +1674,10 @@ async function detectWallAbsorption(symbol) {
     const wallLevel = touchedWall.price;
     if (touchedWall.side === 'ask') {
       // Pared ask absorbida → precio no cruzó hacia arriba → SHORT
-      if (maxP >= wallLevel * (1 - touchThreshold) && maxP < wallLevel * 1.001) direction = 'SHORT';
+      if (maxP >= wallLevel * (1 - touchThreshold) && maxP < wallLevel * 1.0005) direction = 'SHORT';
     } else {
       // Pared bid absorbida → precio no cruzó hacia abajo → LONG
-      if (minP <= wallLevel * (1 + touchThreshold) && minP > wallLevel * 0.999) direction = 'LONG';
+      if (minP <= wallLevel * (1 + touchThreshold) && minP > wallLevel * 0.9995) direction = 'LONG';
     }
     if (!direction) return;
     // PASO 5 — Calcular SL y TP
@@ -2050,7 +2073,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.22 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.23 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption monitor — cada 3 segundos
