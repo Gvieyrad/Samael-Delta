@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.20' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.21' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1681,7 +1681,7 @@ async function detectWallAbsorption(symbol) {
       rr: `1:${rrVal.toFixed(1)}`, confidence: wallConf,
       size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
       leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
-      source: 'sweep', status: 'open', opened_at: new Date().toISOString(),
+      source: 'wall', status: 'open', opened_at: new Date().toISOString(),
       market_data: { mode: 'wall_absorption', wall_side: wallSide, wall_price: wallLevel, wall_usd: touchedWall.usdVal, wall_strength: touchedWall.strength, vol_5s: vol5s, timestamp: new Date().toISOString() }
     });
     console.log(`Wall Absorption: ${direction} ${symbol} @ $${price.toFixed(1)} pared ${wallSide} $${wallLevel} (${wallUsd}) RR 1:${rrVal.toFixed(1)}`);
@@ -2050,7 +2050,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.20 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.21 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption monitor — cada 3 segundos
