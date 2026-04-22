@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.24' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.25' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1806,20 +1806,30 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { wallOpeningLock[symbol] = false; return; }
 
-    // Fix 1 — bias_1d bloquea si mercado en tendencia contraria
+    // Fix 1 — bias_1d + bias_1h: permite pullbacks en tendencia
+    // bias_1d define contexto macro, bias_1h confirma si hay corrección activa
     try {
-      const k1dWall = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+      const [k1dWall, k1hWall] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=50`),
+      ]);
       const bias1dWall = calcBias(k1dWall.data, null, 0);
-      if (bias1dWall) {
-        const blockShort = bias1dWall.bias === 'long' || bias1dWall.score > 58;
-        const blockLong  = bias1dWall.bias === 'short' || bias1dWall.score < 42;
-        if (direction === 'SHORT' && blockShort) {
-          console.log(`Wall v2 SHORT omitido — bias_1d alcista (score:${bias1dWall.score}) (${symbol})`);
-          return;
+      const bias1hWall = calcBias(k1hWall.data, null, 0);
+      if (bias1dWall && bias1hWall) {
+        const trend1d_up   = bias1dWall.bias === 'long'  || bias1dWall.score > 58;
+        const trend1d_down = bias1dWall.bias === 'short' || bias1dWall.score < 42;
+        const pullback_down = bias1hWall.score < 40;  // 1H claramente bajista = pullback en alcista
+        const pullback_up   = bias1hWall.score > 60;  // 1H claramente alcista = rebote en bajista
+
+        // SHORT bloqueado si: 1D alcista Y 1H también alcista (no hay pullback)
+        if (direction === 'SHORT' && trend1d_up && !pullback_down) {
+          console.log(`Wall v2 SHORT omitido — bias_1d alcista (${bias1dWall.score}) sin pullback 1H (${bias1hWall.score}) (${symbol})`);
+          wallOpeningLock[symbol] = false; return;
         }
-        if (direction === 'LONG' && blockLong) {
-          console.log(`Wall v2 LONG omitido — bias_1d bajista (score:${bias1dWall.score}) (${symbol})`);
-          return;
+        // LONG bloqueado si: 1D bajista Y 1H también bajista (no hay rebote)
+        if (direction === 'LONG' && trend1d_down && !pullback_up) {
+          console.log(`Wall v2 LONG omitido — bias_1d bajista (${bias1dWall.score}) sin rebote 1H (${bias1hWall.score}) (${symbol})`);
+          wallOpeningLock[symbol] = false; return;
         }
       }
     } catch(_) {}
@@ -2250,7 +2260,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.24 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.25 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
