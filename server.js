@@ -1692,8 +1692,12 @@ function findBigWalls(symbol) {
 }
 
 // ── PASO 3 + 4: Evaluar paredes — anti-spoof + absorción ─────────
+const wallEvalThrottle = {};
 function evaluateWalls(symbol) {
   const now = Date.now();
+  // Throttle — evaluar máximo cada 2 segundos por símbolo
+  if (wallEvalThrottle[symbol] && now - wallEvalThrottle[symbol] < 2000) return;
+  wallEvalThrottle[symbol] = now;
   const walls = findBigWalls(symbol);
   const currentPrice = wsState[symbol]?.lastPrice;
   if (!currentPrice) return;
@@ -1768,10 +1772,7 @@ function evaluateWalls(symbol) {
     // 30-50%       → indefinido → NO entrar
 
     if (absorptionPct > 30) {
-      if (absorptionPct > 50) {
-        console.log(`Wall ${wall.side.toUpperCase()} ${symbol} $${wall.price} — PERFORANDO (${absorptionPct.toFixed(0)}% comida) — no entrar`);
-      }
-      continue; // no entrar si hay absorción significativa o perforación
+      continue; // perforando o absorción significativa — no entrar
     }
 
     // Pared sostuvo con <30% absorción → rebote confirmado
