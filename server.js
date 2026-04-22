@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.18' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.19' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1606,9 +1606,119 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   finally { scalpingInProgress[symbol] = false; }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO WALL ABSORPTION — Absorción de paredes del order book ─
+// ══════════════════════════════════════════════════════════════════
+const wallAbsorptionCooldown = {};
+let wallAbsorptionRunning = false;
+
+async function detectWallAbsorption(symbol) {
+  try {
+    const state = wsState[symbol];
+    if (!state || !state.lastPrice) return;
+    const price = state.lastPrice;
+    const now = Date.now();
+    // Cooldown 10 min por símbolo
+    if (wallAbsorptionCooldown[symbol] && now - wallAbsorptionCooldown[symbol] < 10 * 60 * 1000) return;
+    // No abrir si ya hay trade abierto
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) return;
+    // PASO 1 — Clusters del order book (las paredes grandes = burbujas LBOrderPulse)
+    const book = await fetchDeepOrderBook(symbol);
+    if (!book) return;
+    const allClusters = [
+      ...(book.bidClusters || []).map(cl => ({ ...cl, side: 'bid' })),
+      ...(book.askClusters || []).map(cl => ({ ...cl, side: 'ask' })),
+    ].sort((a, b) => b.usdVal - a.usdVal);
+    if (!allClusters.length) return;
+    // Top 20% por tamaño = lineas amarillas mas grandes
+    const topN = Math.max(1, Math.ceil(allClusters.length * 0.2));
+    const bigWalls = allClusters.slice(0, topN);
+    // PASO 2 — Precio tocando una pared (<0.08% distancia)
+    const touchThreshold = symbol.includes('BTC') ? 0.0008 : 0.0010;
+    const touchedWall = bigWalls.find(wall => Math.abs(price - wall.price) / price < touchThreshold);
+    if (!touchedWall) return;
+    // PASO 3 — Confirmar absorción en 5 segundos con volumen real
+    const last5s = state.trades.filter(t => now - t.time < 5000);
+    if (last5s.length < 3) return;
+    const prices5s = last5s.map(t => t.price);
+    const minP = Math.min(...prices5s), maxP = Math.max(...prices5s);
+    const vol5s = last5s.reduce((s, t) => s + t.usdVal, 0);
+    const minVol5s = symbol.includes('BTC') ? 500000 : 200000;
+    if (vol5s < minVol5s) return;
+    // PASO 4 — Determinar dirección
+    let direction = null;
+    const wallLevel = touchedWall.price;
+    if (touchedWall.side === 'ask') {
+      // Pared ask absorbida → precio no cruzó hacia arriba → SHORT
+      if (maxP >= wallLevel * (1 - touchThreshold) && maxP < wallLevel * 1.001) direction = 'SHORT';
+    } else {
+      // Pared bid absorbida → precio no cruzó hacia abajo → LONG
+      if (minP <= wallLevel * (1 + touchThreshold) && minP > wallLevel * 0.999) direction = 'LONG';
+    }
+    if (!direction) return;
+    // PASO 5 — Calcular SL y TP
+    const slPct = symbol.includes('BTC') ? 0.0012 : 0.0015;
+    const sl = direction === 'LONG' ? wallLevel * (1 - slPct) : wallLevel * (1 + slPct);
+    let tp1 = null;
+    if (direction === 'LONG') {
+      const nextAsk = (book.askClusters || []).filter(cl => cl.price > price * 1.002).sort((a, b) => a.price - b.price)[0];
+      tp1 = nextAsk ? nextAsk.price : price * (1 + slPct * 2.5);
+    } else {
+      const nextBid = (book.bidClusters || []).filter(cl => cl.price < price * 0.998).sort((a, b) => b.price - a.price)[0];
+      tp1 = nextBid ? nextBid.price : price * (1 - slPct * 2.5);
+    }
+    if (!tp1) return;
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    if (rrVal < 1.2) { console.log(`Wall Absorption descartado RR ${rrVal.toFixed(2)} (${symbol})`); return; }
+    // PASO 6 — Abrir trade
+    wallAbsorptionCooldown[symbol] = now;
+    const wallSide = touchedWall.side === 'ask' ? 'ASK' : 'BID';
+    const wallUsd = touchedWall.usdVal >= 1e6 ? `$${(touchedWall.usdVal/1e6).toFixed(1)}M` : `$${(touchedWall.usdVal/1e3).toFixed(0)}K`;
+    const wallConf = Math.min(88, Math.round(75 + (rrVal >= 1.5 ? 8 : 3) + (vol5s > minVol5s * 2 ? 5 : 0)));
+    await supabase.from('paper_trades').insert({
+      symbol, direction, entry: price, tp1, tp2: tp1, sl,
+      rr: `1:${rrVal.toFixed(1)}`, confidence: wallConf,
+      size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+      leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+      source: 'sweep', status: 'open', opened_at: new Date().toISOString(),
+      market_data: { mode: 'wall_absorption', wall_side: wallSide, wall_price: wallLevel, wall_usd: touchedWall.usdVal, wall_strength: touchedWall.strength, vol_5s: vol5s, timestamp: new Date().toISOString() }
+    });
+    console.log(`Wall Absorption: ${direction} ${symbol} @ $${price.toFixed(1)} pared ${wallSide} $${wallLevel} (${wallUsd}) RR 1:${rrVal.toFixed(1)}`);
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'LONG' ? 'LONG' : 'SHORT';
+      const msg = `Wall Absorption - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsd})\n${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+    }
+  } catch(_) {}
+}
+
+async function runWallAbsorptionMonitor() {
+  if (wallAbsorptionRunning) return;
+  wallAbsorptionRunning = true;
+  try {
+    for (const symbol of Object.keys(wsState).filter(s => wsState[s]?.lastPrice > 0)) {
+      await detectWallAbsorption(symbol);
+    }
+  } catch(_) {} finally { wallAbsorptionRunning = false; }
+}
+
+app.get('/api/wall/status', (req, res) => {
+  const status = {};
+  for (const symbol of Object.keys(wsState)) {
+    const cdMs = wallAbsorptionCooldown[symbol] ? Math.max(0, 10*60*1000 - (Date.now() - wallAbsorptionCooldown[symbol])) : 0;
+    status[symbol] = { lastPrice: wsState[symbol]?.lastPrice || 0, cooldownMin: (cdMs/60000).toFixed(1), active: cdMs === 0 };
+  }
+  res.json({ module: 'Wall Absorption', version: '4.4.19', status });
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.18 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.19 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
+  // ── Wall Absorption monitor — cada 3 segundos
+  setInterval(runWallAbsorptionMonitor, 3000);
+  console.log('🧱 Wall Absorption monitor iniciado — cada 3s');
 });
