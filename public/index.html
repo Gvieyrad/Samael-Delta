@@ -274,10 +274,17 @@ input[type=number]:focus{border-color:#f59e0b}
           <option value="ETHUSDT">ETH</option>
         </select>
         <select id="bt-days" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
-          <option value="7">7d</option>
-          <option value="14">14d</option>
-          <option value="30" selected>30d</option>
+          <option value="30">30d</option>
           <option value="60">60d</option>
+          <option value="90">90d</option>
+          <option value="180">180d</option>
+          <option value="365" selected>365d ★</option>
+        </select>
+        <select id="bt-mode" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
+          <option value="both">Scalp+Sweep</option>
+          <option value="base">📊 Base</option>
+          <option value="scalping">Scalping</option>
+          <option value="sweep">Sweep</option>
         </select>
         <button class="btn" onclick="runBacktest()" id="bt-btn" style="padding:3px 8px;font-size:10px;background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.3);color:#8b5cf6">▶ Correr</button>
       </div>
@@ -1370,7 +1377,8 @@ async function runBacktest() {
     const body = {
       symbol: document.getElementById('bt-symbol').value,
       days: parseInt(document.getElementById('bt-days').value),
-      module: 'both',
+      module: document.getElementById('bt-mode').value,
+      baseVolMult: 5,
       scalpRsiMin: parseFloat(document.getElementById('bt-rsi-min').value),
       scalpRsiMax: parseFloat(document.getElementById('bt-rsi-max').value),
       scalpMinImbalance: parseFloat(document.getElementById('bt-imb').value),
@@ -1409,14 +1417,28 @@ function renderBacktestResults(d) {
       </div>
     </div>`;
   }
-  el.innerHTML = `
-    <div style="font-size:10px;color:#4b5563;margin-bottom:8px;text-align:center">${d.symbol} · últimos ${d.days} días · $1,000 x5 por trade</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      ${statsHtml(d.scalping.stats, '#8b5cf6', 'Scalping', '⚡')}
-      ${statsHtml(d.sweep.stats, '#38bdf8', 'Sweep', '🌊')}
-    </div>
-    <div style="margin-top:8px;font-size:9px;color:#2a3040;text-align:center">⚠ Backtest no incluye slippage ni fees. Los resultados son orientativos.</div>
-  `;
+  const mode = document.getElementById('bt-mode')?.value || 'both';
+  let html = `<div style="font-size:10px;color:#4b5563;margin-bottom:8px;text-align:center">${d.symbol} · últimos ${d.days} días · $1,000 x5 por trade</div><div style="display:flex;flex-direction:column;gap:8px">`;
+  if (mode === 'base' && d.base) {
+    const s = d.base.stats;
+    const zCol = Math.abs(s.zScore||0) >= 5 ? '#00d68f' : Math.abs(s.zScore||0) >= 1.96 ? '#f59e0b' : '#ff4d6d';
+    const zLabel = Math.abs(s.zScore||0) >= 5 ? '★★★ Muy significativo' : Math.abs(s.zScore||0) >= 1.96 ? '★ Significativo' : '✗ No significativo';
+    html += `${statsHtml(s, '#f59e0b', 'Base (vol spike + mean reversion)', '📊')}`;
+    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(245,158,11,.3)">
+      <div style="font-size:10px;color:#f59e0b;font-weight:700;margin-bottom:6px">📈 Validación estadística</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#4b5563">Z-Score</span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
+      </div>
+      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
+      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · z>1.96 = significativo · z>5 = muy significativo</div>
+    </div>`;
+  } else {
+    if (d.scalping) html += statsHtml(d.scalping.stats, '#8b5cf6', 'Scalping', '⚡');
+    if (d.sweep) html += statsHtml(d.sweep.stats, '#38bdf8', 'Sweep', '🌊');
+  }
+  html += `</div><div style="margin-top:8px;font-size:9px;color:#2a3040;text-align:center">⚠ Backtest no incluye slippage ni fees. Los resultados son orientativos.</div>`;
+  el.innerHTML = html;
 }
 
 </script>
