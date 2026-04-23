@@ -1,1574 +1,2843 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Futuros EL CHIMUELO v4.4.16</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size:13px;line-height:1.4}
-.mono{font-family:'SF Mono',monospace}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
-@keyframes glow-red{0%,100%{box-shadow:0 0 6px rgba(255,77,109,.4)}50%{box-shadow:0 0 14px rgba(255,77,109,.9)}}
-@keyframes glow-green{0%,100%{box-shadow:0 0 6px rgba(0,214,143,.4)}50%{box-shadow:0 0 14px rgba(0,214,143,.9)}}
-.blink-red{animation:blink .6s infinite,glow-red 1s infinite}
-@keyframes blink-urgent{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.2;transform:scale(1.04)}}
-@keyframes glow-urgent-green{0%,100%{box-shadow:0 0 12px rgba(0,214,143,.6)}50%{box-shadow:0 0 28px rgba(0,214,143,1),0 0 50px rgba(0,214,143,.4)}}
-@keyframes glow-urgent-red{0%,100%{box-shadow:0 0 12px rgba(255,77,109,.6)}50%{box-shadow:0 0 28px rgba(255,77,109,1),0 0 50px rgba(255,77,109,.4)}}
-.blink-urgent-long{animation:blink-urgent .4s infinite,glow-urgent-green .6s infinite}
-.blink-urgent-short{animation:blink-urgent .4s infinite,glow-urgent-red .6s infinite}
-.blink-green{animation:blink .6s infinite,glow-green 1s infinite}
-.hdr{background:#0d1017;border-bottom:1px solid #1e2330;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:100}
-.logo{font-family:monospace;font-size:13px;font-weight:700;letter-spacing:2px;color:#f59e0b}
-.price-big{font-family:monospace;font-size:22px;font-weight:700}
-.chg{font-size:12px;font-weight:600;padding:2px 8px;border-radius:4px}
-.up{color:#00d68f;background:rgba(0,214,143,.12)}.dn{color:#ff4d6d;background:rgba(255,77,109,.12)}.nt{color:#f59e0b;background:rgba(245,158,11,.1)}
-.dot{width:7px;height:7px;border-radius:50%;background:#00d68f;animation:pulse 2s infinite;display:inline-block;margin-right:5px}
-.pairbtn{background:transparent;border:1px solid #1e2330;color:#6b7280;font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:monospace;font-weight:700;transition:all .15s}
-.pairbtn.on{background:#f59e0b;border-color:#f59e0b;color:#000}
-.btn{background:transparent;border:1px solid #1e2330;color:#e2e4ea;font-size:11px;padding:5px 11px;border-radius:4px;cursor:pointer;transition:all .15s;font-family:inherit}
-.btn:hover{border-color:#f59e0b;color:#f59e0b}
-.layout{display:grid;grid-template-columns:1fr 320px;gap:1px;background:#1e2330;margin-top:1px}
-.lcol,.rcol{background:#080a0d;display:flex;flex-direction:column;gap:1px}
-.card{background:#0d1017}
-.ch{padding:9px 14px;border-bottom:1px solid #1e2330;display:flex;align-items:center;justify-content:space-between}
-.ct{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#4b5563;font-weight:600}
-.cb{padding:11px 14px}
-.tf-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.tf-card{background:#111520;border:1px solid #1e2330;border-radius:6px;padding:10px;position:relative}
-.tf-label{font-size:10px;font-weight:700;color:#4b5563;letter-spacing:.8px;margin-bottom:8px}
-.tf-bias{font-size:13px;font-weight:700;margin-bottom:6px}
-.tf-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.tf-key{font-size:10px;color:#4b5563}
-.tf-val{font-size:11px;font-weight:600;font-family:monospace}
-.tf-bar{height:3px;border-radius:2px;margin-top:5px;overflow:hidden;background:#1e2330}
-.tf-fill{height:100%;border-radius:2px;transition:width .5s}
-.div-section{display:flex;flex-direction:column;gap:10px}
-.div-card{border-radius:8px;padding:13px;border:1px solid transparent;position:relative}
-.div-short{background:rgba(255,77,109,.06);border-color:rgba(255,77,109,.3)}
-.div-long{background:rgba(0,214,143,.06);border-color:rgba(0,214,143,.3)}
-.div-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.div-name{font-size:12px;font-weight:700}
-.div-prob{font-family:monospace;font-size:15px;font-weight:700}
-.div-desc{font-size:11px;color:#6b7280;margin-bottom:7px;line-height:1.5}
-.div-confluence{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
-.div-conf-tag{font-size:9px;padding:2px 7px;border-radius:3px;background:rgba(245,158,11,.12);color:#f59e0b;font-weight:600;letter-spacing:.3px}
-.div-body{display:flex;align-items:center;gap:10px;justify-content:space-between}
-.div-levels{display:flex;gap:6px;flex:1}
-.div-level{background:rgba(0,0,0,.35);border-radius:5px;padding:5px 8px;text-align:center;flex:1}
-.div-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px}
-.div-level-val{font-family:monospace;font-size:11px;font-weight:700}
-.div-dir-indicator{display:flex;align-items:center;justify-content:center;min-width:48px;padding-left:8px;border-left:1px solid rgba(255,255,255,.06)}
-.div-dir-arrow{font-size:32px;line-height:1}
-.div-dir-prob{font-size:11px;font-weight:700}
-.div-action-btn{border-radius:7px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;border:none;font-family:inherit;min-width:100px;text-align:center;flex-shrink:0;transition:all .15s;letter-spacing:.5px}
-.div-action-btn:hover{opacity:.85;transform:scale(1.03)}
-.div-action-btn:active{transform:scale(.97)}
-.btn-long{background:#00d68f;color:#000;box-shadow:0 0 12px rgba(0,214,143,.35)}
-.btn-short{background:#ff4d6d;color:#fff;box-shadow:0 0 12px rgba(255,77,109,.35)}
-.btn-wait-long{background:rgba(0,214,143,.15);color:#00d68f;border:2px solid rgba(0,214,143,.4);font-size:13px}
-.btn-wait-short{background:rgba(255,77,109,.15);color:#ff4d6d;border:2px solid rgba(255,77,109,.4);font-size:13px}
-.btn-no{background:rgba(255,255,255,.05);color:#4b5563;border:1px solid #1e2330;font-size:13px}
-.btn-exec{border-radius:7px;padding:10px 16px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;min-width:90px;text-align:center;transition:all .15s;letter-spacing:.3px;border:none}
-.btn-exec:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
-.btn-exec-long{background:#00d68f;color:#000;box-shadow:0 0 10px rgba(0,214,143,.3)}
-.btn-exec-short{background:#ff4d6d;color:#fff;box-shadow:0 0 10px rgba(255,77,109,.3)}
-.btn-exec-lock{background:rgba(255,255,255,.05);color:#4b5563;border:1px solid #1e2330!important}
-.action-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:4px}
-.act-enter{background:rgba(0,214,143,.15);color:#00d68f}
-.act-wait{background:rgba(245,158,11,.15);color:#f59e0b}
-.act-no{background:rgba(255,77,109,.15);color:#ff4d6d}
-.combined-box{border-radius:8px;padding:13px;border:1px solid transparent;margin-bottom:8px}
-.comb-long{background:rgba(0,214,143,.08);border-color:rgba(0,214,143,.3)}
-.comb-short{background:rgba(255,77,109,.08);border-color:rgba(255,77,109,.3)}
-.comb-wait{background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25)}
-.comb-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.comb-dir{font-size:18px;font-weight:700}
-.comb-prob{font-family:monospace;font-size:22px;font-weight:700}
-.ai-box{border-radius:8px;padding:12px 13px;border:1px solid transparent}
-.ai-long{background:rgba(0,214,143,.07);border-color:rgba(0,214,143,.25)}
-.ai-short{background:rgba(255,77,109,.07);border-color:rgba(255,77,109,.25)}
-.ai-wait{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.2)}
-.ai-error{background:rgba(255,77,109,.07);border-color:rgba(255,77,109,.2)}
-.ai-loading{background:rgba(139,92,246,.07);border-color:rgba(139,92,246,.2)}
-.ai-hdr{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-.ai-reasoning{font-size:11px;line-height:1.65;color:#6b7280;margin-bottom:9px}
-.ai-levels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px}
-.ai-level{background:rgba(0,0,0,.25);border-radius:5px;padding:6px 8px;text-align:center}
-.ai-level-lbl{font-size:9px;color:#4b5563;margin-bottom:2px}
-.ai-level-val{font-family:monospace;font-size:12px;font-weight:700}
-.scalp-active{animation:pulse .8s infinite}
-.badge-confirmed{background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
-.badge-pending{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
-.badge-scalp{background:rgba(139,92,246,.15);color:#8b5cf6;border:1px solid rgba(139,92,246,.3);font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700}
-.btn-ai{background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.35);color:#8b5cf6;font-size:12px;padding:5px 13px;border-radius:5px;cursor:pointer;font-weight:600;font-family:inherit;display:flex;align-items:center;gap:5px}
-.btn-ai:hover{background:rgba(139,92,246,.18)}
-.btn-ai:disabled{opacity:.5;cursor:not-allowed}
-.ob-wrap{padding:8px 14px}
-.wall-badge{font-size:10px;font-family:monospace;padding:1px 5px;border-radius:3px;font-weight:700}
-.wall-bid{background:rgba(0,214,143,.12);color:#00d68f}
-.wall-ask{background:rgba(255,77,109,.12);color:#ff4d6d}
-.liq-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.liq-major{background:rgba(245,158,11,.08);border-radius:4px;padding:4px 8px;margin:2px 0}
-.calc-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
-.calc-lbl{font-size:11px;color:#4b5563;width:50px;flex-shrink:0}
-input[type=number]{background:#111520;border:1px solid #1e2330;border-radius:4px;color:#e2e4ea;font-family:monospace;font-size:12px;padding:5px 8px;width:100%;outline:none}
-input[type=number]:focus{border-color:#f59e0b}
-.res-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.res-lbl{font-size:11px;color:#4b5563}
-.res-val{font-family:monospace;font-size:12px;font-weight:700}
-.vrvp-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.thinking{display:inline-block;animation:pulse .7s infinite}
-.no-div{text-align:center;padding:20px;color:#4b5563;font-size:12px}
-</style>
-</head>
-<body>
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const Anthropic = require('@anthropic-ai/sdk');
+const { createClient } = require('@supabase/supabase-js');
+const TelegramBot = require('node-telegram-bot-api');
 
-<div class="hdr">
-  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <div class="logo">⬡ PANEL FUTUROS EL CHIMUELO</div>
-    <span class="price-big mono" id="price">–</span>
-    <span class="chg" id="chg">–%</span>
-    <div style="display:flex;gap:4px">
-      <button class="pairbtn on" onclick="setPair('BTCUSDT',this)">BTC</button>
-      <button class="pairbtn" onclick="setPair('ETHUSDT',this)">ETH</button>
-      <button class="pairbtn" onclick="setPair('SOLUSDT',this)">SOL</button>
-      <button class="pairbtn" onclick="setPair('XAUUSDT',this)" style="color:#f59e0b">XAU</button>
-    </div>
-  </div>
-  <div style="display:flex;align-items:center;gap:10px">
-    <span><span class="dot"></span><span style="font-size:10px;color:#2a3040" id="upd">conectando...</span></span>
-    <button class="btn" onclick="fetchAll()">↻</button>
-  </div>
-</div>
+const app = express();
+app.use(cors({ origin: '*' }));
+app.use(express.json());
 
-<!-- 📊 Dashboard Macro -->
-<div id="macro-dashboard" style="padding:5px 16px;border-bottom:1px solid #0d1420;background:#060a12;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-  <span style="font-size:8px;color:#1e2330;font-family:monospace;text-transform:uppercase;letter-spacing:1px;font-weight:700">MACRO</span>
-  <div id="macro-cvd1h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 1H: —</div>
-  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-cvd4h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 4H: —</div>
-  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-funding" style="font-size:10px;font-family:monospace;color:#2a3040">FR: —</div>
-  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-oi" style="font-size:10px;font-family:monospace;color:#2a3040">OI 4H: —</div>
-  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-score" style="font-size:10px;font-family:monospace;font-weight:700;padding:1px 8px;border-radius:3px;background:rgba(30,35,48,.5);color:#4b5563">Score: —</div>
-</div>
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY });
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
+const BINANCE = 'https://fapi.binance.com';
+const BINANCE_WS = 'wss://fstream.binance.com';
+// ── Filtro de horario — análisis estadístico 256 trades ─────────────────────
+// Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
+// Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
+// Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
+const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 13, 15, 16, 17, 18, 19, 21, 23]);
 
-<!-- ⚡ Widget WebSocket Tiempo Real -->
-<div id="ws-widget" style="background:#080e18;border-bottom:2px solid #1e2330;padding:8px 16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap">
-  <span style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#f59e0b;font-weight:700;display:flex;align-items:center;gap:5px">
-    <span style="width:6px;height:6px;border-radius:50%;background:#f59e0b;animation:pulse 1s infinite;display:inline-block"></span>
-    Flujo en vivo
-  </span>
-  <div id="ws-btc" style="display:flex;align-items:center;gap:8px;background:#0d1520;padding:5px 10px;border-radius:6px;border:1px solid #1e2330">
-    <span style="font-size:11px;font-weight:800;color:#f59e0b;font-family:monospace;letter-spacing:1px">BTC</span>
-    <span id="ws-btc-cvd" style="font-size:13px;font-family:monospace;font-weight:800">–</span>
-    <span id="ws-btc-vol" style="font-size:10px;color:#4b5563;font-family:monospace">vol –x</span>
-    <span id="ws-btc-status" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700">–</span>
-  </div>
-  <div id="ws-eth" style="display:flex;align-items:center;gap:8px;background:#0d1520;padding:5px 10px;border-radius:6px;border:1px solid #1e2330">
-    <span style="font-size:11px;font-weight:800;color:#8b5cf6;font-family:monospace;letter-spacing:1px">ETH</span>
-    <span id="ws-eth-cvd" style="font-size:13px;font-family:monospace;font-weight:800">–</span>
-    <span id="ws-eth-vol" style="font-size:10px;color:#4b5563;font-family:monospace">vol –x</span>
-    <span id="ws-eth-status" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700">–</span>
-  </div>
-  <div id="ws-anomaly-banner" style="display:none;margin-left:auto;font-size:11px;font-weight:800;padding:4px 14px;border-radius:6px"></div>
-</div>
-
-<div class="layout">
-<div class="lcol">
-
-  <div class="card">
-    <div class="ch"><span class="ct">Análisis por temporalidad</span></div>
-    <div class="cb"><div class="tf-grid" id="tf-grid"></div></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">⚡ Análisis técnico — indicadores</span></div>
-    <div class="cb"><div class="div-section" id="div-section"></div></div>
-  </div>
-
-  <div class="card">
-    <div class="ch">
-      <span class="ct">🤖 Señal IA — Claude</span>
-      <div style="display:flex;gap:6px;align-items:center">
-        <button class="btn-ai" id="ai-btn" onclick="runAI()"><span id="ai-icon">✦</span> Analizar</button>
-        <button class="btn-ai" id="alert-btn" onclick="triggerAlert()" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);color:#f59e0b" title="Disparar alerta Telegram ahora"><span id="alert-icon">🔔</span></button>
-        <button class="btn-ai" id="scalp-btn" onclick="toggleScalping()" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.35);color:#8b5cf6" title="Modo Scalping — análisis cada 3 min"><span id="scalp-icon">⚡</span> Scalp</button>
-        <span id="scalp-signal-badge" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700;display:none;margin-left:4px"></span>
-        <button id="lock-btn" onclick="toggleLock()" title="Candado — desbloquear para modo prueba/clases" style="background:transparent;border:1px solid #1e2330;color:#4b5563;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:13px">🔒</button>
-      </div>
-    </div>
-    <div class="cb">
-      <div id="combined-box" class="combined-box comb-wait" style="display:none"></div>
-      <div id="ai-result" class="ai-box ai-wait">
-        <div class="ai-hdr"><span>◆</span><span style="font-size:13px;font-weight:700;color:#f59e0b">Esperando análisis</span></div>
-        <div class="ai-reasoning">Presiona "Analizar" — Claude con divergencias, imanes y sesgo multi-TF.</div>
-      </div>
-      <div id="ai-exec-row" style="display:none;margin-top:10px;gap:8px;flex-direction:column">
-        <div style="display:flex;gap:8px">
-          <button id="exec-long-btn" class="btn-exec btn-exec-long" style="flex:1" onclick="openPaperTradeFromAI('LONG')">▲ Ejecutar LONG</button>
-          <button id="exec-short-btn" class="btn-exec btn-exec-short" style="flex:1" onclick="openPaperTradeFromAI('SHORT')">▼ Ejecutar SHORT</button>
-        </div>
-        <div id="exec-status" style="font-size:10px;color:#4b5563;text-align:center"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Calculadora de posición</span></div>
-    <div class="cb">
-      <div class="calc-row"><span class="calc-lbl">Capital $</span><input type="number" id="c-cap" value="1000" oninput="calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">Leverage</span><input type="number" id="c-lev" value="10" oninput="calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">Entry $</span><input type="number" id="c-ent" placeholder="auto" oninput="calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">TP $</span><input type="number" id="c-tp" oninput="aiRR=null;calc()"></div>
-      <div class="calc-row"><span class="calc-lbl">SL $</span><input type="number" id="c-sl" oninput="aiRR=null;calc()"></div>
-      <div style="margin-top:5px">
-        <div class="res-row"><span class="res-lbl">Tamaño</span><span class="res-val" id="r-sz" style="color:#f59e0b">–</span></div>
-        <div class="res-row"><span class="res-lbl">Profit</span><span class="res-val" id="r-pr" style="color:#00d68f">–</span></div>
-        <div class="res-row"><span class="res-lbl">Pérdida</span><span class="res-val" id="r-ls" style="color:#ff4d6d">–</span></div>
-        <div class="res-row"><span class="res-lbl">R:R</span><span class="res-val" id="r-rr">–</span></div>
-        <div class="res-row"><span class="res-lbl">Liquidación</span><span class="res-val" id="r-lq" style="color:#ff4d6d">–</span></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="ch">
-      <span class="ct">📰 Noticias — Impacto en tiempo real</span>
-      <button class="btn" onclick="refreshNews()" style="padding:3px 8px;font-size:10px">↻</button>
-    </div>
-    <div id="news-panel" style="padding:0">
-      <div style="padding:12px 14px;text-align:center;font-size:11px;color:#2a3040">Cargando noticias...</div>
-    </div>
-  </div>
-
-  <div class="card" id="paper-card">
-    <div class="ch">
-      <span class="ct">Posiciones — Paper Trading</span>
-      <div style="display:flex;gap:6px;align-items:center">
-        <span id="paper-stats-summary" style="font-size:10px;color:#4b5563"></span>
-        <button class="btn" onclick="refreshPaper()" style="padding:3px 8px;font-size:10px">↻</button>
-      </div>
-    </div>
-    <div id="paper-panel" style="padding:0"></div>
-  </div>
-
-  <div class="card" id="binance-account-card">
-    <div class="ch">
-      <span class="ct">💼 Cuenta Binance Real</span>
-      <span id="binance-acct-status" style="font-size:10px;color:#4b5563">—</span>
-    </div>
-    <div id="binance-acct-body" class="cb">
-      <div style="color:#2a3040;font-size:11px;text-align:center">Cargando...</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="ch">
-      <span class="ct">ML Insights</span>
-      <div style="display:flex;gap:5px">
-        <button class="btn" onclick="runMLOptimize()" id="ml-opt-btn" style="padding:3px 8px;font-size:10px;background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.3);color:#8b5cf6">🧠 Optimizar</button>
-        <button class="btn" onclick="refreshML()" style="padding:3px 8px;font-size:10px">↻</button>
-      </div>
-    </div>
-    <div id="ml-panel" style="padding:0"></div>
-  </div>
-
-
-  <div class="card" id="backtest-card">
-    <div class="ch">
-      <span class="ct">🔬 Backtest — Simulación histórica</span>
-      <div style="display:flex;gap:5px;align-items:center">
-        <select id="bt-symbol" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
-          <option value="BTCUSDT">BTC</option>
-          <option value="ETHUSDT">ETH</option>
-        </select>
-        <select id="bt-days" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
-          <option value="30">30d</option>
-          <option value="60">60d</option>
-          <option value="90">90d</option>
-          <option value="180">180d</option>
-          <option value="365" selected>365d ★</option>
-        </select>
-        <select id="bt-mode" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
-          <option value="both">Scalp+Sweep</option>
-          <option value="base">📊 Base</option>
-          <option value="momentum">📈 Momentum</option>
-          <option value="filtered">🔬 Filtered</option>
-          <option value="scalping">Scalping</option>
-          <option value="sweep">Sweep</option>
-        </select>
-        <button class="btn" onclick="runBacktest()" id="bt-btn" style="padding:3px 8px;font-size:10px;background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.3);color:#8b5cf6">▶ Correr</button>
-      </div>
-    </div>
-    <div class="cb" style="padding:10px 14px">
-      <!-- Parámetros ajustables -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚡ Scalping</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:10px;color:#4b5563">RSI min/max</span>
-            <div style="display:flex;gap:4px">
-              <input type="number" id="bt-rsi-min" value="35" style="width:40px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-              <input type="number" id="bt-rsi-max" value="65" style="width:40px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-            </div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:10px;color:#4b5563">Imbalance min %</span>
-            <input type="number" id="bt-imb" value="30" style="width:45px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:10px;color:#4b5563">Momentum % 60s</span>
-            <input type="number" id="bt-mom" value="0.05" step="0.01" style="width:50px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-          </div>
-        </div>
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#38bdf8;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🌊 Sweep</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:10px;color:#4b5563">Vol min x</span>
-            <input type="number" id="bt-vol" value="4" step="0.5" style="width:45px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:10px;color:#4b5563">CVD min %</span>
-            <input type="number" id="bt-cvd" value="40" style="width:45px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:10px;color:#4b5563">Bias1d score</span>
-            <input type="number" id="bt-bias" value="58" style="width:45px;background:#0d1017;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:2px 4px;border-radius:3px;text-align:center">
-          </div>
-        </div>
-      </div>
-      <!-- Resultados -->
-      <div id="bt-results" style="font-size:11px;color:#2a3040;text-align:center;padding:10px">
-        Configura los parámetros y presiona ▶ Correr
-      </div>
-    </div>
-  </div>
-</div>
-<div class="rcol">
-
-  <div class="card">
-    <div class="ch"><span class="ct">Libro de órdenes + CVD</span></div>
-    <div class="ob-wrap" id="ob-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Órdenes pasivas — clusters</span></div>
-    <div class="cb" style="padding:7px 14px" id="deep-ob-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Radar de ballenas</span></div>
-    <div class="cb" style="padding:7px 14px" id="whale-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Mapa de liquidaciones</span><span style="font-size:9px;color:#2a3040">datos reales Binance</span></div>
-    <div class="cb" style="padding:7px 14px" id="liq-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Volume Profile (VRVP)</span></div>
-    <div class="cb" id="vrvp-panel"></div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><span class="ct">Fibonacci — 15m</span><span style="font-size:9px;color:#2a3040">retrocesos y extensiones</span></div>
-    <div class="cb" style="padding:7px 14px" id="fib-panel"></div>
-  </div>
-
-</div>
-</div>
-
-<script>
-(function() {
-  const PASS = 'LO2024$';
-  const saved = sessionStorage.getItem('panel_auth');
-  if (saved !== PASS) {
-    const input = prompt('Panel Futuros EL CHIMUELO — Contraseña:');
-    if (input !== PASS) {
-      document.body.innerHTML = '<div style="background:#080a0d;color:#ff4d6d;height:100vh;display:flex;align-items:center;justify-content:center;font-size:18px;font-family:monospace">⛔ Acceso denegado</div>';
-      throw new Error('Unauthorized');
-    }
-    sessionStorage.setItem('panel_auth', PASS);
-  }
-})();
-
-const API='https://panel-futuros-lo-production.up.railway.app';
-let pair='BTCUSDT',mkt={};
-let aiSignal=null; let aiRR=null;
-let allPrices={};
-let lockUnlocked = false;
-let autoAiTriggered = false;
-let lastAutoAiTime = 0;
-
-function setPair(p,btn){pair=p;document.querySelectorAll('.pairbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');fetchAll();}
-function fmt(n,d=2){if(n===null||n===undefined||isNaN(n))return'–';return parseFloat(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
-function fmtB(n){if(!n&&n!==0)return'–';if(n>=1e9)return(n/1e9).toFixed(2)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(0)+'K';return n.toFixed(0);}
-function pctColor(v,invert=false){const val=parseFloat(v);if(isNaN(val))return'#4b5563';const pos=invert?val<0:val>0,neg=invert?val>0:val<0,strong=Math.abs(val)>5;if(pos&&strong)return'#00d68f';if(pos)return'#34d399';if(neg&&strong)return'#ff4d6d';if(neg)return'#f87171';return'#f59e0b';}
-function pctClass(v,invert=false){const val=parseFloat(v);if(isNaN(val))return'';const pos=invert?val<0:val>0,neg=invert?val>0:val<0,strong=Math.abs(val)>5;if(strong&&pos)return'blink-green';if(strong&&neg)return'blink-red';return'';}
-function frColor(fr){if(fr>0.001)return'#ff4d6d';if(fr<-0.001)return'#00d68f';return'#f59e0b';}
-
-function toggleLock() {
-  lockUnlocked = !lockUnlocked;
-  const btn = document.getElementById('lock-btn');
-  if (lockUnlocked) {
-    btn.textContent = '🔓';
-    btn.style.color = '#f59e0b';
-    btn.style.borderColor = 'rgba(245,158,11,.4)';
-    showToast('🔓 Modo prueba/clases desbloqueado', '#f59e0b');
-  } else {
-    btn.textContent = '🔒';
-    btn.style.color = '#4b5563';
-    btn.style.borderColor = '#1e2330';
-    showToast('🔒 Ejecución bloqueada — solo ≥85%', '#4b5563');
-  }
-  updateExecButtons();
+function isHoraBloqueada() {
+  const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  return !HORAS_ACTIVAS_LIMA.has(horaLima);
 }
 
-function updateExecButtons() {
-  const row = document.getElementById('ai-exec-row');
-  const longBtn = document.getElementById('exec-long-btn');
-  const shortBtn = document.getElementById('exec-short-btn');
-  const status = document.getElementById('exec-status');
-  if (!row || !aiSignal) return;
-  row.style.display = 'flex';
-  const conf = aiSignal.confidence || 0;
-  const dir = aiSignal.direction;
-  const _aiRrVal = (()=>{
-    if(!aiSignal||!aiSignal.entry||!aiSignal.tp1||!aiSignal.sl) return 0;
-    const _r=Math.abs(aiSignal.tp1-aiSignal.entry);
-    const _k=Math.abs(aiSignal.entry-aiSignal.sl);
-    return _k>0?_r/_k:0;
-  })();
-  if (dir === 'ESPERAR' || aiSignal.action === 'NO ENTRAR') {
-    if (!lockUnlocked) {
-      row.style.display = 'none';
-      return;
-    }
-  }
-
-  const canExec = lockUnlocked || (conf >= 90 && _aiRrVal >= 1.5);
-  if (dir === 'LONG') {
-    longBtn.disabled = !canExec;
-    longBtn.className = canExec ? 'btn-exec btn-exec-long' : 'btn-exec btn-exec-lock';
-    shortBtn.disabled = true;
-    shortBtn.className = 'btn-exec btn-exec-lock';
-  } else if (dir === 'SHORT') {
-    shortBtn.disabled = !canExec;
-    shortBtn.className = canExec ? 'btn-exec btn-exec-short' : 'btn-exec btn-exec-lock';
-    longBtn.disabled = true;
-    longBtn.className = 'btn-exec btn-exec-lock';
-  } else {
-    longBtn.disabled = false;
-    shortBtn.disabled = false;
-  }
-  if (lockUnlocked) {
-    status.textContent = '🔓 Modo prueba — ejecución desbloqueada';
-    status.style.color = '#f59e0b';
-  } else if (conf >= 85) {
-    if (_aiRrVal < 1.5) {
-      status.textContent = `⛔ R:R 1:${_aiRrVal.toFixed(1)} insuficiente — mínimo 1:1.5 (desbloquea con 🔓)`;
-      status.style.color = '#ff4d6d';
-    } else {
-      status.textContent = `✅ ${conf}% confianza · R:R 1:${_aiRrVal.toFixed(1)} — ejecución habilitada`;
-      status.style.color = '#00d68f';
-    }
-    status.style.color = '#00d68f';
-  } else {
-    status.textContent = `🔒 ${conf}% confianza — se requiere ≥85% para ejecutar`;
-    status.style.color = '#4b5563';
-  }
+function getSesionActual() {
+  const h = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  if (h >= 7 && h <= 9)   return { nombre: 'Mañana', emoji: '🌅', activa: true };
+  if (h >= 15 && h <= 19) return { nombre: 'Tarde NY', emoji: '🌆', activa: true };
+  if (h === 13)            return { nombre: 'Mediodía', emoji: '☀️', activa: true };
+  if (h === 21 || h === 23) return { nombre: 'Noche', emoji: '🌙', activa: true };
+  return { nombre: 'Fuera de sesión', emoji: '💤', activa: false };
 }
 
-async function openPaperTradeFromAI(directionOverride) {
-  if (!aiSignal) return;
-  const direction = directionOverride || aiSignal.direction;
-  if (!direction || direction === 'ESPERAR') return;
-  await openPaperTrade(direction);
+
+let analyzeCache = {};
+
+// ══════════════════════════════════════════════════════════════════
+// ─── BINANCE ACCOUNT — BALANCE REAL (READ-ONLY) ──────────────────
+// ══════════════════════════════════════════════════════════════════
+const crypto = require('crypto');
+const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
+const BINANCE_SECRET  = process.env.BINANCE_SECRET_KEY;
+
+function binanceSign(timestamp, recvWindow) {
+  const queryString = `timestamp=${timestamp}&recvWindow=${recvWindow}`;
+  const sig = crypto.createHmac('sha256', BINANCE_SECRET || '').update(queryString).digest('hex');
+  return `${queryString}&signature=${sig}`;
 }
 
-function checkAutoAI() {
-  if (!mkt.divergences || mkt.divergences.length < 2) return;
-  const highProb = mkt.divergences.filter(d => d.probability >= 90);
-  if (highProb.length < 2) return;
+let binanceAccountCache = { data: null, ts: 0, lastError: null };
+let binanceTimeOffset = 0;
 
-  const shortDivs = highProb.filter(d => d.direction === 'SHORT').length;
-  const longDivs  = highProb.filter(d => d.direction === 'LONG').length;
-  const dominantDir = shortDivs > longDivs ? 'SHORT' : 'LONG';
-  const dominantCount = Math.max(shortDivs, longDivs);
-  const oppositeCount = Math.min(shortDivs, longDivs);
-  const hasClearMajority = dominantCount >= 2 && dominantCount > oppositeCount * 1.5;
+async function syncBinanceTime() {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/time`, { timeout: 5000 });
+    binanceTimeOffset = res.data.serverTime - Date.now();
+    console.log(`⏱ Binance time sync OK — offset: ${binanceTimeOffset}ms`);
+  } catch(e) { console.log(`⚠️ Binance time sync error: ${e.message}`); }
+}
 
-  if (!hasClearMajority) {
-    console.log('⏭ Auto-análisis omitido — señales divididas: ' + shortDivs + 'S vs ' + longDivs + 'L');
-    return;
-  }
-
+async function fetchBinanceAccount() {
+  if (!BINANCE_API_KEY || !BINANCE_SECRET) return null;
   const now = Date.now();
-  if (now - lastAutoAiTime < 5 * 60 * 1000) return;
-  const btn = document.getElementById('ai-btn');
-  if (btn && btn.disabled) return;
-  lastAutoAiTime = now;
-  console.log('⚡ Auto-análisis: ' + highProb.length + ' divergencias ≥90% — mayoría ' + dominantDir + ' (' + dominantCount + 'vs' + oppositeCount + ')');
-  showToast('⚡ ' + dominantCount + ' señales ' + dominantDir + ' ≥90% — analizando automáticamente...', '#f59e0b');
-  runAI(true);
-}
-
-async function refreshWsWidget() {
+  if (binanceAccountCache.data && now - binanceAccountCache.ts < 30000) return binanceAccountCache.data;
   try {
-    const data = await fetch(`${API}/api/ws/status`).then(r=>r.json());
-    for (const [sym, info] of Object.entries(data)) {
-      const key = sym === 'BTCUSDT' ? 'btc' : sym === 'ETHUSDT' ? 'eth' : null;
-      if (!key || !info.metrics) continue;
-      const cvd = parseFloat(info.metrics.cvdLive);
-      const vol = parseFloat(info.metrics.volumeMultiplier);
-      const anomaly = info.metrics.anomaly;
-      const cvdCol = cvd > 10 ? '#00d68f' : cvd < -10 ? '#ff4d6d' : '#f59e0b';
-      const cvdEl = document.getElementById(`ws-${key}-cvd`);
-      if (cvdEl) { cvdEl.textContent = (cvd>=0?'+':'')+cvd+'%'; cvdEl.style.color = cvdCol; }
-      const volEl = document.getElementById(`ws-${key}-vol`);
-      if (volEl) { volEl.textContent = `vol ${vol.toFixed(1)}x`; volEl.style.color = vol>=5?'#ff4d6d':vol>=2?'#f59e0b':'#4b5563'; }
-      const stEl = document.getElementById(`ws-${key}-status`);
-      if (stEl) {
-        if (anomaly && anomaly.isSweep) {
-          stEl.textContent = anomaly.direction==='SHORT'?'🔴 BARRIDA':'🟢 BARRIDA';
-          stEl.style.background = anomaly.direction==='SHORT'?'rgba(255,77,109,.2)':'rgba(0,214,143,.2)';
-          stEl.style.color = anomaly.direction==='SHORT'?'#ff4d6d':'#00d68f';
-          stEl.style.border = anomaly.direction==='SHORT'?'1px solid rgba(255,77,109,.4)':'1px solid rgba(0,214,143,.4)';
-        } else if (anomaly && anomaly.isWhale) {
-          stEl.textContent = anomaly.direction==='SHORT'?'🐋 Venta':'🐋 Compra';
-          stEl.style.background = 'rgba(245,158,11,.15)';
-          stEl.style.color = '#f59e0b';
-          stEl.style.border = '1px solid rgba(245,158,11,.3)';
-        } else {
-          stEl.textContent = 'Normal'; stEl.style.background='rgba(0,214,143,.15)'; stEl.style.color='#00d68f'; stEl.style.border='1px solid rgba(0,214,143,.3)';
-        }
-      }
-      const banner = document.getElementById('ws-anomaly-banner');
-      if (banner) {
-        const anyAnomaly = Object.values(data).find(i => i.metrics?.anomaly?.isSweep);
-        if (anyAnomaly?.metrics?.anomaly) {
-          const a = anyAnomaly.metrics.anomaly;
-          banner.style.display='block';
-          banner.textContent = `⚡ ${a.direction} — ${a.reason}`;
-          banner.style.background = a.direction==='SHORT'?'rgba(255,77,109,.2)':'rgba(0,214,143,.2)';
-          banner.style.color = a.direction==='SHORT'?'#ff4d6d':'#00d68f';
-          banner.style.border = `1px solid ${a.direction==='SHORT'?'rgba(255,77,109,.4)':'rgba(0,214,143,.4)'}`;
-        } else {
-          banner.style.display='none';
-        }
-      }
-    }
-  } catch(_) {}
-}
-
-async function fetchAll(){
-  document.getElementById('upd').textContent='actualizando...';
-  try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());renderAll(); updateMacroDashboard();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
-  catch(e){document.getElementById('upd').textContent='error — reintentando...';}
-}
-
-function renderAll(){
-  if(!mkt.price)return;
-  const p=mkt.price,ch=mkt.change24h||0;
-  document.getElementById('price').textContent='$'+fmt(p);
-  const cb=document.getElementById('chg');
-  const chVal = parseFloat(ch)||0;
-  cb.textContent=(chVal>=0?'+':'')+chVal.toFixed(2)+'%';
-  cb.className='chg '+(chVal>1?'up':chVal<-1?'dn':'nt');
-  cb.style.display='inline-block';
-  renderTFGrid();renderDivergences();renderCombined();
-  checkAutoAI();renderVRVP();renderOB();renderLiq();renderDeepOB();renderWhales();renderFib();
-  const sb=document.getElementById('scalp-signal-badge');
-  if(sb&&mkt.scalpSignal&&mkt.scalpSignal.direction&&mkt.scalpSignal.direction!=='ESPERAR'){
-    const sc=mkt.scalpSignal;
-    const col=sc.direction==='LONG'?'#00d68f':'#ff4d6d';
-    sb.style.display='inline';sb.style.background=col+'22';sb.style.color=col;sb.style.border='1px solid '+col+'55';
-    sb.textContent='⚡'+sc.direction+' '+sc.probability+'%';
-  } else if(sb){sb.style.display='none';}
-  setTimeout(()=>{const e=document.getElementById('c-ent');if(!e.value&&mkt.price){e.value=mkt.price.toFixed(1);calc();}},300);
-}
-
-function renderTFGrid(){
-  const b=mkt.bias;if(!b)return;
-  const tfs=[{tf:'15m',d:b.tf15m},{tf:'1H',d:b.tf1h},{tf:'4H',d:b.tf4h},{tf:'1D',d:b.tf1d}];
-  document.getElementById('tf-grid').innerHTML=tfs.map(t=>{
-    const d=t.d;if(!d)return'';
-    const bColor=d.bias==='long'?'#00d68f':d.bias==='short'?'#ff4d6d':'#f59e0b';
-    const bLabel=d.bias==='long'?'LONG':d.bias==='short'?'SHORT':'NEUTRO';
-    const rsiColor=d.rsi>70?'#ff4d6d':d.rsi<30?'#00d68f':d.rsi>60?'#34d399':'#e2e4ea';
-    const rsiClass=(d.rsi>75||d.rsi<25)?'blink-red':'';
-    const cvdColor=pctColor(d.cvdPct),cvdClass=pctClass(d.cvdPct);
-    const volColor=pctColor(d.volPct),volClass=pctClass(d.volPct);
-    const pct=d.bias==='long'?d.score:d.bias==='short'?(100-d.score):50;
-    const oiTrend=d.oiTrend||'flat';const oiDelta=d.oiDeltaPct||'0.000';
-    const oiColor=oiTrend==='rising'?'#ff4d6d':oiTrend==='falling'?'#00d68f':'#4b5563';
-    const oiIcon=oiTrend==='rising'?'↑':oiTrend==='falling'?'↓':'→';
-    const fr=d.fundingRate||0;const frCol=frColor(fr);const frStr=(fr>=0?'+':'')+(fr*100).toFixed(4)+'%';
-    const pvp = parseFloat(d.priceVsPrev||0);
-    const pvpStr = (pvp>=0?'+':'')+pvp.toFixed(2)+'%';
-    const pvpCol = pvp>0.3?'#00d68f':pvp<-0.3?'#ff4d6d':'#6b7280';
-    return `<div class="tf-card">
-      <div class="tf-label">${t.tf}</div>
-      <div class="tf-bias" style="color:${bColor};display:flex;justify-content:space-between;align-items:baseline">
-        <span>${bLabel} <span style="font-size:10px;color:#4b5563;font-weight:400">${d.score}/100</span></span>
-        <span style="font-size:12px;font-weight:700;color:${pvpCol}">${pvpStr}</span>
-      </div>
-      <div class="tf-row"><span class="tf-key">RSI</span><span class="tf-val ${rsiClass}" style="color:${rsiColor}">${d.rsi}</span></div>
-      <div class="tf-row"><span class="tf-key">CVD%</span><span class="tf-val ${cvdClass}" style="color:${cvdColor}">${d.cvdPct>=0?'+':''}${d.cvdPct}%</span></div>
-      <div class="tf-row"><span class="tf-key">Vol%</span><span class="tf-val ${volClass}" style="color:${volColor}">${d.volPct>=0?'+':''}${d.volPct}%</span></div>
-      <div class="tf-row"><span class="tf-key">OI</span><span class="tf-val" style="color:${oiColor}">${oiIcon} ${parseFloat(oiDelta)>=0?'+':''}${oiDelta}%</span></div>
-      <div class="tf-row"><span class="tf-key">FR</span><span class="tf-val" style="color:${frCol};font-size:10px">${frStr}</span></div>
-      <div class="tf-bar"><div class="tf-fill" style="width:${pct}%;background:${bColor}"></div></div>
-    </div>`;
-  }).join('');
-}
-
-function calcTP(entry,direction,liqTarget){if(liqTarget)return parseFloat(liqTarget);const p=parseFloat(entry);return direction==='SHORT'?p*0.975:p*1.025;}
-function calcSL(entry,direction){const p=parseFloat(entry);return direction==='SHORT'?p*1.012:p*0.988;}
-
-function renderDivergences(){
-  const divs=mkt.divergences,el=document.getElementById('div-section');
-  if(!divs||!divs.length){el.innerHTML='<div class="no-div">Sin divergencias activas en este momento</div>';return;}
-  el.innerHTML=divs.slice(0,6).map(d=>{
-    const isShort=d.direction==='SHORT',col=isShort?'#ff4d6d':'#00d68f';
-    const tp1=calcTP(d.entry,d.direction,d.liqTarget),sl=calcSL(d.entry,d.direction);
-    const reward = Math.abs(tp1 - d.entry);
-    const risk   = Math.abs(d.entry - sl);
-    const rr     = risk > 0 ? (reward / risk).toFixed(1) : '0';
-    const probClass=d.probability>=90?(isShort?'blink-red':'blink-green'):'';
-    const confluenceHtml=d.confluence?.length?`<div class="div-confluence">${d.confluence.map(c=>`<span class="div-conf-tag">${c}</span>`).join('')}</div>`:'';
-    const arrow = isShort ? '▼' : '▲';
-    return `<div class="div-card ${isShort?'div-short':'div-long'}">
-      <div class="div-header">
-        <span class="div-name" style="color:${col}">${arrow} ${d.name}</span>
-        <span class="div-prob ${probClass}" style="color:${col};font-size:17px;font-weight:800">${d.probability}%</span>
-      </div>
-      <div class="div-desc">${d.description}</div>
-      ${confluenceHtml}
-      <div class="div-body">
-        <div class="div-levels">
-          <div class="div-level">
-            <div class="div-level-lbl">Entry</div>
-            <div class="div-level-val">$${parseInt(d.entry).toLocaleString()}</div>
-          </div>
-          <div class="div-level">
-            <div class="div-level-lbl">TP</div>
-            <div class="div-level-val" style="color:#00d68f">$${parseInt(tp1).toLocaleString()}</div>
-          </div>
-          <div class="div-level">
-            <div class="div-level-lbl">SL</div>
-            <div class="div-level-val" style="color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div>
-          </div>
-          <div class="div-level">
-            <div class="div-level-lbl">R:R</div>
-            <div class="div-level-val" style="color:${parseFloat(rr)>=1.5?'#00d68f':parseFloat(rr)>=1?'#f59e0b':'#ff4d6d'}">1:${rr}</div>
-          </div>
-        </div>
-        <div class="div-dir-indicator">
-          <span class="div-dir-arrow ${probClass}" style="color:${col}">${arrow}</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function prefillCalc(entry,tp,sl){
-  document.getElementById('c-ent').value=parseFloat(entry).toFixed(1);
-  document.getElementById('c-tp').value=parseFloat(tp).toFixed(1);
-  document.getElementById('c-sl').value=parseFloat(sl).toFixed(1);
-  calc();
-  document.getElementById('c-ent').scrollIntoView({behavior:'smooth',block:'center'});
-}
-
-function renderCombined(){
-  const cs=mkt.combinedSignal,box=document.getElementById('combined-box');
-  if(!cs||!mkt.divergences?.length){box.style.display='none';return;}
-  box.style.display='block';
-  const hasActiveAI = aiSignal && aiSignal.confidence >= 90 && aiSignal.direction !== 'ESPERAR' && aiSignal.action !== 'NO ENTRAR';
-  const direction = hasActiveAI ? aiSignal.direction : cs.direction;
-  const probability = hasActiveAI ? aiSignal.confidence : cs.probability;
-  const isAIOverride = hasActiveAI && direction !== cs.direction;
-  const isShort=direction==='SHORT',isLong=direction==='LONG';
-  const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
-  const bgClass=isShort?'comb-short':isLong?'comb-long':'comb-wait';
-  box.className=`combined-box ${bgClass}`;
-  const aiNote = hasActiveAI ? `<span style="font-size:9px;background:rgba(139,92,246,.15);color:#8b5cf6;padding:1px 6px;border-radius:3px;font-weight:700;margin-left:6px">🤖 IA</span>` : '';
-  const overrideNote = isAIOverride ? `<div style="font-size:10px;color:#8b5cf6;margin-top:3px">⚡ IA sobrescribe señal combinada (algoritmo: ${cs.direction} ${cs.probability}%)</div>` : '';
-  box.innerHTML=`
-    <div class="comb-header">
-      <span style="font-size:26px">${isShort?'▼':isLong?'▲':'◆'}</span>
-      <div style="flex:1">
-        <div style="display:flex;align-items:baseline;gap:8px">
-          <span class="comb-dir" style="color:${col}">${direction}</span>
-          <span class="comb-prob" style="color:${col}">${probability}%</span>
-          ${aiNote}
-        </div>
-        <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
-        ${overrideNote}
-      </div>
-      <span id="signal-confirmation-badge"></span>
-    </div>`;
-}
-
-function renderVRVP(){
-  const v=mkt.vrvp,p=mkt.price;if(!v||!p)return;
-  const pocDist=(((p-v.poc)/v.poc)*100).toFixed(2),vahDist=(((p-v.vah)/v.vah)*100).toFixed(2),valDist=(((p-v.val)/v.val)*100).toFixed(2);
-  document.getElementById('vrvp-panel').innerHTML=`<div style="display:flex;flex-direction:column;gap:0">
-    <div class="vrvp-row"><span style="font-size:11px;color:#4b5563">VAH <span style="font-size:9px">(resistencia)</span></span><span class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">$${parseInt(v.vah).toLocaleString()}</span><span style="font-size:10px;color:${parseFloat(vahDist)>0?'#00d68f':'#ff4d6d'}">${vahDist>0?'+':''}${vahDist}%</span></div>
-    <div class="vrvp-row" style="background:rgba(245,158,11,.06);border-radius:4px;padding:6px 0"><span style="font-size:11px;color:#f59e0b;font-weight:700">POC <span style="font-size:9px">(máx. volumen)</span></span><span class="mono" style="font-size:13px;font-weight:700;color:#f59e0b">$${parseInt(v.poc).toLocaleString()}</span><span style="font-size:10px;color:${parseFloat(pocDist)>0?'#00d68f':'#ff4d6d'}">${pocDist>0?'+':''}${pocDist}%</span></div>
-    <div class="vrvp-row"><span style="font-size:11px;color:#4b5563">VAL <span style="font-size:9px">(soporte)</span></span><span class="mono" style="font-size:13px;font-weight:700;color:#00d68f">$${parseInt(v.val).toLocaleString()}</span><span style="font-size:10px;color:${parseFloat(valDist)>0?'#00d68f':'#ff4d6d'}">${valDist>0?'+':''}${valDist}%</span></div>
-    <div style="font-size:10px;color:#2a3040;margin-top:6px;padding-top:5px;border-top:1px solid #1e2330">${p>v.poc?'▲ Precio sobre POC — zona de valor superada':'▼ Precio bajo POC — busca soporte en VAL'}${Math.abs(p-v.vah)/v.vah<0.005?' · ⚠ Precio tocando VAH — resistencia clave':''}</div>
-  </div>`;
-}
-
-function renderOB(){
-  const ob=mkt.orderBook,p=mkt.price,cvd=mkt.cvd15m;if(!ob)return;
-  const imb=parseFloat(ob.imbalance||0);
-  const col=imb>15?'#00d68f':imb<-15?'#ff4d6d':'#f59e0b';
-  const press=ob.pressure==='bid_dominant'?'Presión compradora':ob.pressure==='ask_dominant'?'Presión vendedora':'Equilibrado';
-  const cvdVal=cvd?.cvdPct||0;
-  const cvdCol=cvdVal>5?'#00d68f':cvdVal<-5?'#ff4d6d':cvdVal>0?'#34d399':'#f87171';
-  const cvdTrend=cvd?.trend==='bull'?'▲':'▼';
-  const cvdLabel=cvd?.trend==='bull'?'Compras':'Ventas';
-  const cvdAgresivo=Math.abs(cvdVal)>10;
-  const cvdClass=cvdAgresivo?(cvd?.trend==='bull'?'blink-green':'blink-red'):'';
-  let wallsHtml='';
-  (ob.bidWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-bid">BID WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
-  (ob.askWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-ask">ASK WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
-  document.getElementById('ob-panel').innerHTML=`
-    <div style="background:#111520;border-radius:7px;padding:9px 11px;margin-bottom:10px;border:1px solid #1e2330">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-        <span style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px">CVD 15m</span>
-        <span class="mono ${cvdClass}" style="font-size:16px;font-weight:800;color:${cvdCol}">${cvdTrend} ${cvdVal>=0?'+':''}${cvdVal}%</span>
-      </div>
-      <div style="position:relative;height:8px;background:#1e2330;border-radius:4px;overflow:hidden;margin-bottom:4px">
-        <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#4b5563;z-index:2"></div>
-        ${Math.abs(cvdVal)>2?`<div style="position:absolute;${cvdVal>0?'left:50%':'right:50%'};top:0;height:100%;width:${Math.min(50,Math.abs(cvdVal)*1.2)}%;background:${cvdVal>0?'#00d68f':'#ff4d6d'};border-radius:${cvdVal>0?'0 4px 4px 0':'4px 0 0 4px'};transition:all .5s"></div>`:''}
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:9px;color:#2a3040">
-        <span>Ventas agresivas</span>
-        <span style="color:${Math.abs(cvdVal)<2?'#2a3040':cvdCol};font-weight:600">${Math.abs(cvdVal)<2?'Neutro':cvdLabel}${cvdAgresivo?' ⚡ AGRESIVO':''}</span>
-        <span>Compras agresivas</span>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:11px;color:#4b5563">${press}</span>
-      <span class="mono" style="font-size:12px;font-weight:700;color:${col}">Imb: ${imb}%</span>
-    </div>
-    <div style="height:5px;background:#111520;border-radius:3px;overflow:hidden;margin-bottom:8px">
-      <div style="height:100%;width:${Math.min(100,Math.max(0,50+imb/2))}%;background:${col};border-radius:3px;transition:width .5s"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px">
-      <span style="color:#00d68f">BID ${ob.bidVol} BTC</span>
-      <span class="mono" style="font-weight:700">$${fmt(p)}</span>
-      <span style="color:#ff4d6d">ASK ${ob.askVol} BTC</span>
-    </div>
-    ${wallsHtml||'<div style="font-size:10px;color:#2a3040">Sin paredes significativas</div>'}
-    <div style="font-size:10px;color:#2a3040;margin-top:4px">Spread: $${ob.spread} (${ob.spreadPct}%)</div>`;
-}
-
-function liqProbability(z){
-  const dist=parseFloat(z.dist),size=z.size,isUp=z.direction==='up';
-  let prob=dist<1.5?85:dist<2.5?72:dist<4?58:dist<6?44:dist<8?32:22;
-  if(size>=800)prob+=15;else if(size>=500)prob+=10;else if(size>=300)prob+=5;
-  const b=mkt.bias?.tf15m?.bias||'neutral',b4h=mkt.bias?.tf4h?.bias||'neutral';
-  if(isUp&&(b==='long'||b4h==='long'))prob+=8;if(!isUp&&(b==='short'||b4h==='short'))prob+=8;
-  if(isUp&&b==='short')prob-=10;if(!isUp&&b==='long')prob-=10;
-  const cvdTrend=mkt.cvd15m?.trend;
-  if(isUp&&cvdTrend==='bull')prob+=5;if(!isUp&&cvdTrend==='bear')prob+=5;
-  return Math.min(95,Math.max(8,Math.round(prob)));
-}
-function liqHeatColor(size,alpha=1){
-  if(size>=800)return`rgba(255,59,48,${alpha})`;if(size>=600)return`rgba(255,149,0,${alpha})`;
-  if(size>=400)return`rgba(255,204,0,${alpha})`;if(size>=250)return`rgba(52,199,89,${alpha})`;
-  return`rgba(90,132,255,${alpha})`;
-}
-function renderLiq(){
-  const liq=mkt.liqMagnets,p=mkt.price;if(!liq||!p)return;
-  const above=liq.filter(z=>z.direction==='up').sort((a,b)=>parseFloat(a.dist)-parseFloat(b.dist));
-  const below=liq.filter(z=>z.direction==='down').sort((a,b)=>parseFloat(a.dist)-parseFloat(b.dist));
-  const maxSize=Math.max(...liq.map(z=>z.size));
-  function zoneRow(z){
-    const prob=liqProbability(z);const isUp=z.direction==='up';const isMajor=z.size>=600;
-    const heatCol=liqHeatColor(z.size),heatFaint=liqHeatColor(z.size,0.12);
-    const barW=Math.round((z.size/maxSize)*100);const arrow=isUp?'↑':'↓';
-    const probColor=prob>=75?'#ff4d6d':prob>=55?'#f59e0b':'#4b5563';
-    const priceCol=isMajor?'#f59e0b':isUp?'#ff4d6d':'#00d68f';
-    return`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03);position:relative">
-      <div style="position:absolute;left:0;top:0;height:100%;width:${barW}%;background:${heatFaint};border-radius:2px;pointer-events:none"></div>
-      <div style="width:4px;height:30px;border-radius:2px;background:${heatCol};flex-shrink:0;${isMajor?'box-shadow:0 0 5px '+heatCol:''}"></div>
-      <div style="flex:1;position:relative">
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
-          <span class="mono" style="font-size:12px;font-weight:700;color:${priceCol}">${arrow} $${parseInt(z.price).toLocaleString()}</span>
-          ${isMajor?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">MAYOR</span>':''}
-        </div>
-        <div style="display:flex;gap:5px;align-items:center">
-          <span style="font-size:10px;color:#4b5563">${z.label}</span>
-          <span style="font-size:10px;color:${heatCol};font-weight:600">$${z.size}M</span>
-          <span style="font-size:10px;color:#2a3040">${z.dist}%</span>
-          ${z.isReal?'<span style="font-size:8px;background:rgba(0,214,143,.15);color:#00d68f;padding:1px 4px;border-radius:2px;font-weight:700">REAL</span>':''}
-        </div>
-      </div>
-      <div style="text-align:right;flex-shrink:0;position:relative">
-        <div class="mono" style="font-size:13px;font-weight:700;color:${probColor}">${prob}%</div>
-        <div style="font-size:9px;color:#2a3040">prob</div>
-      </div>
-    </div>`;
-  }
-  const aboveHtml=above.slice(0,4).reverse().map(z=>zoneRow(z)).join('');
-  const belowHtml=below.slice(0,4).map(z=>zoneRow(z)).join('');
-  document.getElementById('liq-panel').innerHTML=`<div style="padding:0 0 4px">
-    ${aboveHtml}
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:5px;margin:4px 0;background:#ffffff;border:none">
-      <div style="width:4px;height:20px;border-radius:2px;background:#080a0d;flex-shrink:0"></div>
-      <span style="font-size:10px;color:#080a0d;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Precio actual</span>
-      <span class="mono" style="font-size:14px;font-weight:800;color:#080a0d;margin-left:auto">$${parseInt(p).toLocaleString()}</span>
-      <span style="font-size:10px;color:#4b5563;background:#e5e7eb;padding:1px 6px;border-radius:3px">◄</span>
-    </div>
-    ${belowHtml}
-    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;padding-top:4px;border-top:1px solid rgba(255,255,255,.03)">
-      <span style="font-size:9px;color:#2a3040">Intensidad:</span>
-      <span style="font-size:9px;color:rgba(90,132,255,1)">■ baja</span>
-      <span style="font-size:9px;color:rgba(52,199,89,1)">■ media</span>
-      <span style="font-size:9px;color:rgba(255,204,0,1)">■ alta</span>
-      <span style="font-size:9px;color:rgba(255,149,0,1)">■ crítica</span>
-      <span style="font-size:9px;color:rgba(255,59,48,1)">■ extrema</span>
-    </div>
-  </div>`;
-}
-
-async function runAI(autoMode=false){
-  const btn=document.getElementById('ai-btn'),icon=document.getElementById('ai-icon'),result=document.getElementById('ai-result');
-  btn.disabled=true;icon.innerHTML='<span class="thinking">●</span>';
-  result.className='ai-box ai-loading';
-  result.innerHTML='<div class="ai-hdr"><span>✦</span><span style="font-size:13px;font-weight:700;color:#8b5cf6">Claude analizando...</span></div><div class="ai-reasoning">Procesando divergencias, OI, funding y sesgo multi-TF...</div>';
-  try{
-    const marketData={price:mkt.price,change24h:mkt.change24h,fundingRate:mkt.fundingRate,openInterest:mkt.openInterest,volume24h:mkt.volume24h,rsi15m:mkt.rsi15m,rsiOverbought:mkt.rsiOverbought,rsiOversold:mkt.rsiOversold,cvd15m:mkt.cvd15m,vrvp:mkt.vrvp,bb15m:mkt.bb15m,vwap15m:mkt.vwap15m,volDeltaPct:mkt.volDeltaPct,orderBook:{pressure:mkt.orderBook?.pressure,imbalance:mkt.orderBook?.imbalance,bidWalls:mkt.orderBook?.bidWalls?.slice(0,2),askWalls:mkt.orderBook?.askWalls?.slice(0,2)},liqMagnets:mkt.liqMagnets?.slice(0,5),divergences:mkt.divergences?.slice(0,4),combinedSignal:mkt.combinedSignal,bias:{tf15m:{bias:mkt.bias?.tf15m?.bias,score:mkt.bias?.tf15m?.score,rsi:mkt.bias?.tf15m?.rsi,oiTrend:mkt.bias?.tf15m?.oiTrend,oiDeltaPct:mkt.bias?.tf15m?.oiDeltaPct,fundingRate:mkt.bias?.tf15m?.fundingRate},tf1h:{bias:mkt.bias?.tf1h?.bias,score:mkt.bias?.tf1h?.score,rsi:mkt.bias?.tf1h?.rsi,oiTrend:mkt.bias?.tf1h?.oiTrend,oiDeltaPct:mkt.bias?.tf1h?.oiDeltaPct},tf4h:{bias:mkt.bias?.tf4h?.bias,score:mkt.bias?.tf4h?.score,rsi:mkt.bias?.tf4h?.rsi,oiTrend:mkt.bias?.tf4h?.oiTrend,oiDeltaPct:mkt.bias?.tf4h?.oiDeltaPct},tf1d:{bias:mkt.bias?.tf1d?.bias,score:mkt.bias?.tf1d?.score,rsi:mkt.bias?.tf1d?.rsi}}};
-    const res=await fetch(`${API}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,marketData})});
-    if(!res.ok){const errData=await res.json().catch(()=>({}));throw new Error(errData.detail||errData.error||`HTTP ${res.status}`);}
-    const d=JSON.parse(await res.text());
-    const isLong=d.direction==='LONG',isShort=d.direction==='SHORT';
-    const col=isLong?'#00d68f':isShort?'#ff4d6d':'#f59e0b';
-    result.className='ai-box '+(isLong?'ai-long':isShort?'ai-short':'ai-wait');
-    const actClass=d.action==='ENTRAR'?'act-enter':d.action?.includes('ESPERAR')?'act-wait':'act-no';
-    const isUrgent = d.confidence >= 95;
-    const urgentClass = isUrgent ? (isLong ? 'blink-urgent-long' : 'blink-urgent-short') : '';
-    result.innerHTML=`<div class="ai-hdr" style="margin-bottom:10px"><span style="font-size:22px">${isLong?'▲':isShort?'▼':'◆'}</span><span style="font-size:22px;font-weight:800;color:${col};margin-left:4px">${d.direction} — ${d.confidence}%</span></div>
-    <div style="margin-bottom:9px"><span class="action-badge ${actClass} ${urgentClass}" style="font-size:14px;padding:7px 18px;border-radius:6px;display:inline-block">${d.action||'ESPERAR'}</span>${isUrgent?'<span style="font-size:11px;color:'+col+';margin-left:8px;font-weight:700;animation:blink-urgent .4s infinite">⚡ SEÑAL CRÍTICA ≥95%</span>':''}</div><div class="ai-reasoning" style="font-size:12px;line-height:1.7">${d.reasoning||''}${d.warning?'<br><span style="color:#f59e0b">⚠ '+d.warning+'</span>':''}</div><div class="ai-levels"><div class="ai-level"><div class="ai-level-lbl">Entry</div><div class="ai-level-val">$${(d.entry||0).toLocaleString()}</div></div><div class="ai-level"><div class="ai-level-lbl">TP1 / TP2</div><div class="ai-level-val" style="color:#00d68f">$${(d.tp1||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R base</span><br><span style="font-size:11px;color:#00d68f">$${(d.tp2||0).toLocaleString()} <span style="font-size:9px;color:#4b5563">R:R extendido</span></span></div></div><div class="ai-level"><div class="ai-level-lbl">SL · R:R</div><div class="ai-level-val" style="color:#ff4d6d">$${(d.sl||0).toLocaleString()}<br><span style="font-size:10px;color:#4b5563">${d.rr||'–'}</span></div></div></div>`;
-    if(d.entry){
-      aiSignal=d; aiRR=d.rr||null;
-      document.getElementById('c-ent').value=d.entry.toFixed(1);
-      document.getElementById('c-tp').value=d.tp1.toFixed(1);
-      document.getElementById('c-sl').value=d.sl.toFixed(1);
-      calc();
-    const _realRr = d.entry && d.tp1 && d.sl ? Math.abs(d.tp1 - d.entry) / Math.abs(d.entry - d.sl) : 0;
-    const _realRrStr = '1:' + _realRr.toFixed(1);
-    aiRR = _realRrStr;
-    document.getElementById('r-rr').textContent = _realRrStr;
-    document.getElementById('r-rr').style.color = _realRr >= 1.5 ? '#00d68f' : _realRr >= 1 ? '#f59e0b' : '#ff4d6d';
-      updateExecButtons();
-      if (autoMode && d.confidence >= 95 && d.direction !== 'ESPERAR') {
-        const _autoRr = d.entry && d.tp1 && d.sl ? Math.abs(d.tp1 - d.entry) / Math.abs(d.entry - d.sl) : 0;
-        if (_autoRr >= 1.5) {
-          fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
-          showToast(`🚨 SEÑAL CRÍTICA ${d.confidence}% — abriendo paper trade automático`, d.direction==='LONG'?'#00d68f':'#ff4d6d');
-          setTimeout(() => openPaperTrade(d.direction), 1500);
-        } else {
-          fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
-          showToast(`⚠️ Señal ${d.confidence}% — alerta enviada, R:R insuficiente (${_autoRr.toFixed(1)})`, '#f59e0b');
-        }
-      } else if (autoMode && d.confidence >= 90) {
-        fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:false,confidence:d.confidence})}).catch(()=>{});
-        showToast(`🔔 Señal ${d.confidence}% detectada — alerta enviada`, '#f59e0b');
-      }
-    }
-  }catch(e){
-    result.className='ai-box ai-error';
-    result.innerHTML=`<div class="ai-hdr"><span>⚠</span><span style="font-size:13px;font-weight:700;color:#ff4d6d">Error</span></div><div class="ai-reasoning" style="color:#ff4d6d">${e.message}</div>`;
-  }
-  btn.disabled=false;icon.textContent='✦';
-}
-
-function calc(){
-  const cap=parseFloat(document.getElementById('c-cap').value)||0;
-  const lev=parseFloat(document.getElementById('c-lev').value)||1;
-  const ent=parseFloat(document.getElementById('c-ent').value)||0;
-  const tp=parseFloat(document.getElementById('c-tp').value)||0;
-  const sl=parseFloat(document.getElementById('c-sl').value)||0;
-  const sz=cap*lev;
-  document.getElementById('r-sz').textContent=sz?'$'+fmt(sz):'–';
-  if(ent&&tp&&sl){
-    const pr=sz*(tp-ent)/ent;
-    const ls=sz*(ent-sl)/ent;
-    const reward=Math.abs(tp-ent);
-    const risk=Math.abs(ent-sl);
-    const rr=risk>0?(reward/risk):0;
-    document.getElementById('r-pr').textContent=(pr>0?'+':'')+'$'+fmt(Math.abs(pr));
-    document.getElementById('r-ls').textContent='-$'+fmt(Math.abs(ls));
-    if(aiRR){
-      document.getElementById('r-rr').textContent=aiRR;
-      document.getElementById('r-rr').style.color='#00d68f';
-    } else {
-      document.getElementById('r-rr').textContent='1:'+rr.toFixed(1);
-      document.getElementById('r-rr').style.color=rr>=1.5?'#00d68f':rr>=1?'#f59e0b':'#ff4d6d';
-    }
-    document.getElementById('r-lq').textContent='$'+fmt(ent*(1-1/lev*0.9));
-  }
-}
-
-function renderDeepOB(){
-  const dob=mkt.deepOB;const el=document.getElementById('deep-ob-panel');
-  if(!dob||(!dob.bidClusters?.length&&!dob.askClusters?.length)){el.innerHTML='<div style="font-size:11px;color:#4b5563;text-align:center;padding:10px">Sin clusters significativos</div>';return;}
-  const imb=dob.deepImbalance||0;const imbCol=imb>15?'#00d68f':imb<-15?'#ff4d6d':'#f59e0b';
-  function clusterRow(c){
-    const isBid=c.side==='bid';const col=isBid?'#00d68f':'#ff4d6d';
-    const usd=c.usdVal>=1000000?(c.usdVal/1000000).toFixed(1)+'M':(c.usdVal/1000).toFixed(0)+'K';
-    const strengthBar=Math.min(100,Math.round((c.strength-1)/4*100));
-    const breakColor=c.breakProb>65?'#00d68f':c.breakProb>40?'#f59e0b':'#ff4d6d';
-    return`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03)">
-      <div style="width:3px;height:24px;border-radius:2px;background:${col};flex-shrink:0"></div>
-      <div style="flex:1"><div style="display:flex;justify-content:space-between;align-items:center"><span class="mono" style="font-size:11px;font-weight:700;color:${col}">$${parseInt(c.price).toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${c.qty} BTC · ${usd}</span></div><div style="height:3px;background:#1e2330;border-radius:2px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${strengthBar}%;background:${col};border-radius:2px"></div></div></div>
-      <div style="text-align:right;min-width:42px"><div style="font-size:11px;font-weight:700;color:${breakColor}">${c.breakProb}%</div><div style="font-size:9px;color:#2a3040">rotura</div></div>
-    </div>`;
-  }
-  const askHtml=[...(dob.askClusters||[])].reverse().map(c=>clusterRow(c)).join('');
-  const bidHtml=(dob.bidClusters||[]).map(c=>clusterRow(c)).join('');
-  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:10px;color:#4b5563">Imbalance profundo 500 niveles</span><span class="mono" style="font-size:12px;font-weight:700;color:${imbCol}">${imb>0?'+':''}${imb}%</span></div>
-    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Muros vendedores (ask)</div>${askHtml||'<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin clusters ask</div>'}
-    <div style="height:1px;background:#1e2330;margin:6px 0"></div>
-    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Muros compradores (bid)</div>${bidHtml||'<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin clusters bid</div>'}
-    <div style="font-size:9px;color:#2a3040;margin-top:6px">% rotura = probabilidad de que el precio traspase el muro</div>`;
-}
-
-function renderWhales(){
-  const w=mkt.whaleData;const el=document.getElementById('whale-panel');
-  if(!w){el.innerHTML='<div style="font-size:11px;color:#4b5563;text-align:center;padding:10px">Sin datos</div>';return;}
-  const biasCol=w.whaleBias==='bull'?'#00d68f':w.whaleBias==='bear'?'#ff4d6d':'#f59e0b';
-  const biasLabel=w.whaleBias==='bull'?'▲ Alcista':w.whaleBias==='bear'?'▼ Bajista':'◆ Neutro';
-  const domCol=w.dominance==='buyers'?'#00d68f':w.dominance==='sellers'?'#ff4d6d':'#f59e0b';
-  const recentWhales=(w.whales||[]).slice(-5).reverse().map(wh=>{
-    const isBuy=wh.side==='buy';const col=isBuy?'#00d68f':'#ff4d6d';
-    const usd=wh.usdVal>=1000000?(wh.usdVal/1000000).toFixed(2)+'M':(wh.usdVal/1000).toFixed(0)+'K';
-    const time=new Date(wh.time).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    return`<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:12px">${isBuy?'▲':'▼'}</span><span class="mono" style="font-size:11px;font-weight:700;color:${col}">${usd}</span><span class="mono" style="font-size:10px;color:#4b5563">$${parseInt(wh.price).toLocaleString()}</span><span style="font-size:10px;color:#2a3040;margin-left:auto">${time}</span></div>`;
-  }).join('');
-  const totalWhaleVol=(w.whaleBuyVol||0)+(w.whaleSellVol||0);
-  const buyPct=totalWhaleVol>0?Math.round((w.whaleBuyVol/totalWhaleVol)*100):50;
-  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><span style="font-size:14px;font-weight:700;color:${biasCol}">${biasLabel}</span><span style="font-size:10px;color:#4b5563;margin-left:6px">${w.whaleCount} trades detectados</span></div><span style="font-size:11px;font-weight:700;color:${domCol}">${w.dominance}</span></div>
-    <div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px"><span style="color:#00d68f">Compras $${w.whaleBuyVol}K</span><span>CVD ballenas</span><span style="color:#ff4d6d">Ventas $${w.whaleSellVol}K</span></div><div style="height:5px;background:#1e2330;border-radius:3px;overflow:hidden"><div style="height:100%;width:${buyPct}%;background:#00d68f;border-radius:3px;transition:width .5s"></div></div></div>
-    <div style="font-size:9px;color:#4b5563;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Últimas transacciones ≥$500K</div>
-    ${recentWhales||'<div style="font-size:10px;color:#2a3040;padding:4px 0">Sin ballenas recientes</div>'}
-    <div style="font-size:9px;color:#2a3040;margin-top:5px">Ratio dominancia: ${w.whaleRatio||0}% del volumen total</div>`;
-}
-
-function renderFib(){
-  const fib=mkt.fibonacci?.tf15m;const el=document.getElementById('fib-panel');if(!fib||!el)return;
-  const p=mkt.price;const isUp=fib.isUptrend;const trendCol=isUp?'#00d68f':'#ff4d6d';const trendLabel=isUp?'▲ Alcista':'▼ Bajista';
-  const allLevels=[...fib.retracements.map(r=>({...r,type:'ret'})),...fib.extensions.map(r=>({...r,type:'ext'}))].sort((a,b)=>b.price-a.price);
-  function levelRow(lvl){
-    const isCurrent=Math.abs(p-lvl.price)/p*100<0.5;const isAbove=lvl.price>p;const isKey=lvl.isKey;const isExt=lvl.type==='ext';
-    const col=isKey?(isExt?'#8b5cf6':'#f59e0b'):isExt?'#534AB7':'#4b5563';
-    const bg=isCurrent?'rgba(245,158,11,.08)':'transparent';const dist=Math.abs(p-lvl.price)/p*100;
-    return`<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;background:${bg};${isCurrent?'border:1px solid rgba(245,158,11,.3)':'border:1px solid transparent'}">
-      <span style="width:3px;height:16px;border-radius:2px;background:${col};flex-shrink:0;${isKey?'box-shadow:0 0 4px '+col:''}"></span>
-      <span style="font-size:10px;color:${col};font-weight:${isKey?'700':'400'};width:42px">${lvl.label}${isExt?' ext':''}</span>
-      <span class="mono" style="font-size:11px;font-weight:700;color:${isCurrent?'#f59e0b':isAbove?'#ff4d6d':'#00d68f'}">$${parseInt(lvl.price).toLocaleString()}</span>
-      <span style="font-size:9px;color:#2a3040;margin-left:auto">${dist.toFixed(2)}%</span>
-      ${isCurrent?'<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 4px;border-radius:3px;font-weight:700">◄ PRECIO</span>':''}
-    </div>`;
-  }
-  let fibSignalHtml='';
-  if(fib.retImpact.signal!=='none'&&fib.nearestRetrace?.dist<0.8){
-    const sigCol=fib.retImpact.signal==='long_bounce'?'#00d68f':'#ff4d6d';
-    fibSignalHtml=`<div style="padding:6px 8px;background:rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.08);border-radius:5px;border:1px solid rgba(${fib.retImpact.signal==='long_bounce'?'0,214,143':'255,77,109'},.25);margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:${sigCol}">⬟ ${fib.retImpact.description||'Zona de rebote Fibonacci activa'}</div><div style="font-size:10px;color:#4b5563;margin-top:2px">Bonus aplicado: +${fib.retImpact.bonus||0}% a probabilidades</div></div>`;
-  } else if(fib.extImpact.signal!=='none'&&fib.nearestExt?.dist<0.8){
-    fibSignalHtml=`<div style="padding:6px 8px;background:rgba(139,92,246,.08);border-radius:5px;border:1px solid rgba(139,92,246,.25);margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#8b5cf6">⬟ ${fib.extImpact.description||'Zona de agotamiento Fibonacci'}</div><div style="font-size:10px;color:#4b5563;margin-top:2px">Zona de agotamiento — ${fib.extImpact.penalty>0?'penaliza continuación -'+fib.extImpact.penalty+'%':'confirma reversión'}</div></div>`;
-  }
-  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><span style="font-size:12px;font-weight:700;color:${trendCol}">${trendLabel}</span><span style="font-size:10px;color:#4b5563;margin-left:6px">Rango: $${parseInt(fib.swingLow).toLocaleString()} — $${parseInt(fib.swingHigh).toLocaleString()}</span></div></div>
-    ${fibSignalHtml}
-    <div style="display:flex;flex-direction:column;gap:2px">${allLevels.map(lvl=>levelRow(lvl)).join('')}</div>
-    <div style="display:flex;gap:10px;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,.03)"><span style="font-size:9px;color:#f59e0b">■ retroceso clave</span><span style="font-size:9px;color:#8b5cf6">■ extensión clave</span><span style="font-size:9px;color:#4b5563">■ nivel menor</span></div>`;
-}
-
-async function triggerAlert(){
-  const btn=document.getElementById('alert-btn');const icon=document.getElementById('alert-icon');
-  btn.disabled=true;icon.textContent='⏳';
-  try{await fetch(`${API}/api/alert/trigger`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,force:true})});icon.textContent='✅';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
-  catch(e){icon.textContent='❌';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
-}
-
-let paperStats=null;let openTrades=[];
-
-async function refreshPaper(){
-  try{
-    const [statsRes,openRes]=await Promise.all([fetch(`${API}/api/paper/stats`).then(r=>r.json()),fetch(`${API}/api/paper/open`).then(r=>r.json())]);
-    paperStats=statsRes;openTrades=openRes;renderPaper();
-  }catch(e){console.error('Paper trading error:',e);}
-}
-
-async function openPaperTrade(direction){
-  if(!mkt.price)return;
-  const cs=mkt.combinedSignal;const entry=mkt.price;
-  const capital=parseFloat(document.getElementById('c-cap').value)||1000;
-  const leverage=parseFloat(document.getElementById('c-lev').value)||10;
-  const useAI=aiSignal&&aiSignal.direction===direction&&aiSignal.entry&&aiSignal.tp1&&aiSignal.sl;
-  const entryInput=useAI?parseFloat(aiSignal.entry):parseFloat(document.getElementById('c-ent').value)||entry;
-  const tp1Input=useAI?parseFloat(aiSignal.tp1):parseFloat(document.getElementById('c-tp').value)||(direction==='LONG'?entry*1.025:entry*0.975);
-  const slInput=useAI?parseFloat(aiSignal.sl):parseFloat(document.getElementById('c-sl').value)||(direction==='LONG'?entry*0.988:entry*1.012);
-  if(useAI){document.getElementById('c-ent').value=entryInput.toFixed(1);document.getElementById('c-tp').value=tp1Input.toFixed(1);document.getElementById('c-sl').value=slInput.toFixed(1);calc();}
-  const reward=Math.abs(tp1Input-entryInput);const risk=Math.abs(entryInput-slInput);
-  const rr=risk>0?(reward/risk).toFixed(1):'0';
-  const _rrNum = parseFloat(rr);
-  if (!lockUnlocked && _rrNum < 1.5) {
-    showToast(`⛔ R:R 1:${rr} insuficiente — mínimo 1:1.5 requerido`, '#ff4d6d');
-    return;
-  }
-  try{
-    const res=await fetch(`${API}/api/paper/open`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,direction,entry:entryInput,tp1:tp1Input,tp2:useAI&&aiSignal.tp2?parseFloat(aiSignal.tp2):tp1Input,sl:slInput,rr:`1:${rr}`,confidence:cs?.probability||0,size_usd:capital,leverage,divergences:mkt.divergences?.slice(0,3),fibonacci:mkt.fibonacci?.tf15m,source:'manual',market_data:{
-  confidence: aiSignal?.confidence || cs?.probability || 0,
-  direction,
-  price: mkt.price,
-  rsi_15m: mkt.rsi15m,
-  cvd_pct: mkt.cvd15m?.cvdPct,
-  cvd_trend: mkt.cvd15m?.trend,
-  funding_rate: mkt.fundingRate,
-  oi_trend_15m: mkt.oiTrends?.tf15m?.trend,
-  bias_4h: mkt.bias?.tf4h?.bias,
-  bias_4h_score: mkt.bias?.tf4h?.score,
-  bias_1d: mkt.bias?.tf1d?.bias,
-  fib_level: mkt.fibonacci?.tf15m?.nearestRetrace?.label,
-  fib_dist: mkt.fibonacci?.tf15m?.nearestRetrace?.dist,
-  fib_signal: mkt.fibonacci?.tf15m?.retImpact?.signal,
-  whale_count: mkt.whaleData?.whaleCount,
-  whale_bias: mkt.whaleData?.whaleBias,
-  deep_imbalance: mkt.deepOB?.deepImbalance,
-  price_vs_poc: mkt.vrvp?.poc ? ((mkt.price - mkt.vrvp.poc) / mkt.vrvp.poc * 100).toFixed(3) : null,
-  divergence_count: mkt.divergences?.length,
-  top_divergence: mkt.divergences?.[0]?.type,
-  top_divergence_prob: mkt.divergences?.[0]?.probability,
-  ai_reasoning: aiSignal?.reasoning || null,
-  timestamp: new Date().toISOString(),
-  mode: 'manual'
-}})});
-    const d=await res.json();
-    if(d.ok){await refreshPaper();const src=useAI?'(valores IA)':'(valores manuales)';showToast((direction==='LONG'?'▲ Paper LONG abierto ':' ▼ Paper SHORT abierto ')+src,direction==='LONG'?'#00d68f':'#ff4d6d');}
-    else{showToast(d.error||'Error al abrir trade','#ff4d6d');}
-  }catch(e){showToast('Error al abrir trade','#ff4d6d');}
-}
-
-async function closePaperTrade(id,reason,tradeSymbol){
-  if(reason==='manual'){
-    if(!confirm('¿Cancelar este trade?\nNo se contabilizará en estadísticas ni ML.')) return;
-  }
-  const symbolToFetch = tradeSymbol || pair;
-  const priceRes=await fetch(`${API}/api/market/${symbolToFetch}`).then(r=>r.json()).catch(()=>({price:mkt.price}));
-  const closePrice=priceRes.price||mkt.price;
-  try{
-    const res=await fetch(`${API}/api/paper/close/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({close_price:closePrice,close_reason:reason})});
-    const d=await res.json();
-    await refreshPaper();
-    if(reason==='manual'){
-      showToast('Trade cancelado — no contabilizado','#f59e0b');
-    } else {
-      const trade=d.trade;
-      const pnl=parseFloat(trade?.pnl_usd||0);
-      const won=trade?.status==='won';
-      showToast(`${won?'✅ TP':'❌ SL'} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
-    }
-  }catch(e){}
-}
-
-function showToast(msg,col='#f59e0b'){
-  let t=document.getElementById('toast');
-  if(!t){t=document.createElement('div');t.id='toast';t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:8px;font-size:14px;font-weight:800;z-index:9999;transition:all .3s;text-align:center;min-width:200px;border:1px solid transparent';document.body.appendChild(t);}
-  t.textContent=msg;t.style.background=col==='#00d68f'?'rgba(0,214,143,.15)':col==='#ff4d6d'?'rgba(255,77,109,.15)':'rgba(245,158,11,.15)';
-  t.style.borderColor=col;t.style.color=col;t.style.opacity='1';t.style.transform='translateX(-50%) scale(1)';
-  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) scale(0.95)';},3000);
-}
-
-function renderPaper(){
-  const el=document.getElementById('paper-panel');if(!el)return;
-  const cs=mkt.combinedSignal;
-  if(paperStats){
-    const s=paperStats;const pnlCol=s.totalPnl>=0?'#00d68f':'#ff4d6d';
-    document.getElementById('paper-stats-summary').innerHTML=`<span style="color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}% WR</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:${pnlCol}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:#4b5563">${s.total} trades</span>`;
-  }
-  let html='';
-  if(openTrades.length>0){
-    openTrades.forEach(t=>{
-      const isLong=t.direction==='LONG';const col=isLong?'#00d68f':'#ff4d6d';
-      const currentP=allPrices[t.symbol]||(t.symbol===pair?mkt.price:0)||parseFloat(t.entry);
-      const entry=parseFloat(t.entry);const tp1=parseFloat(t.tp1);const sl=parseFloat(t.sl);
-      const size=parseFloat(t.size_usd);const lev=parseFloat(t.leverage);
-      const priceDiff=isLong?(currentP-entry)/entry:(entry-currentP)/entry;
-      const floatingPnl=parseFloat((size*priceDiff).toFixed(2));
-      const floatingPct=parseFloat((priceDiff*100).toFixed(2));
-      const floatingCol=floatingPnl>=0?'#00d68f':'#ff4d6d';
-      const towardTP=isLong?currentP>entry:currentP<entry;
-      const progressCol=towardTP?'#00d68f':'#ff4d6d';
-      html+=`<div style="background:#0d1017;border-top:2px solid ${col};border-bottom:1px solid #1e2330;padding:12px 14px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="background:${col};color:${isLong?'#000':'#fff'};font-size:11px;font-weight:800;padding:2px 8px;border-radius:4px">${isLong?'▲ LONG':'▼ SHORT'}</span>
-            <span style="font-size:12px;font-weight:700;color:#e2e4ea">${t.symbol}</span>
-            <span style="font-size:10px;color:#4b5563">${lev}x</span>
-          </div>
-          <div style="text-align:right">
-            <div class="mono" style="font-size:15px;font-weight:800;color:${floatingCol}">${floatingPnl>=0?'+':''}$${floatingPnl}</div>
-            <div style="font-size:10px;color:${floatingCol}">${floatingPct>=0?'+':''}${floatingPct}%</div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Entry</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${parseInt(entry).toLocaleString()}</div><div style="font-size:9px;color:#2a3040;margin-top:2px">${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</div></div>
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Precio actual</div><div class="mono" style="font-size:12px;font-weight:700;color:#f59e0b">$${parseInt(currentP).toLocaleString()}</div></div>
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Tamaño</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">$${(size).toLocaleString()}</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
-          <div style="background:rgba(0,214,143,.06);border:1px solid rgba(0,214,143,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">TP</div><div class="mono" style="font-size:12px;font-weight:700;color:#00d68f">$${parseInt(tp1).toLocaleString()}</div></div>
-          <div style="background:rgba(255,77,109,.06);border:1px solid rgba(255,77,109,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">SL</div><div class="mono" style="font-size:12px;font-weight:700;color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div></div>
-          <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">R:R</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">${(()=>{const r=Math.abs(parseFloat(t.tp1)-parseFloat(t.entry));const k=Math.abs(parseFloat(t.entry)-parseFloat(t.sl));return k>0?'1:'+(r/k).toFixed(1):'–';})()}</div></div>
-        </div>
-        <div style="margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;font-size:9px;color:#4b5563;margin-bottom:3px">
-            <span>SL $${parseInt(sl).toLocaleString()}</span>
-            <span style="color:${progressCol}">${towardTP?'▲ hacia TP':'▼ hacia SL'}</span>
-            <span>TP $${parseInt(tp1).toLocaleString()}</span>
-          </div>
-          <div style="height:4px;background:#1e2330;border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${isLong?Math.min(100,Math.max(0,(currentP-sl)/(tp1-sl)*100)):Math.min(100,Math.max(0,(sl-currentP)/(sl-tp1)*100))}%;background:${progressCol};border-radius:2px;transition:width .5s"></div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button onclick="closePaperTrade('${t.id}','tp1','${t.symbol}')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','sl','${t.symbol}')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','manual','${t.symbol}')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
-        </div>
-        <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
-          <span>📅 ${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</span>
-          <span style="background:${t.source==='scalping'?'rgba(139,92,246,.15)':t.source==='auto'?'rgba(0,214,143,.1)':t.source==='sweep'?'rgba(56,189,248,.1)':t.source==='wall'?'rgba(249,115,22,.1)':t.source==='meanrev'?'rgba(16,185,129,.1)':'rgba(245,158,11,.1)'};color:${t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='sweep'?'#38bdf8':t.source==='wall'?'#f97316':t.source==='meanrev'?'#10b981':'#f59e0b'};padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px">${t.source==='scalping'?'⚡ Scalping':t.source==='auto'?'🤖 Auto':t.source==='sweep'?'🌊 Sweep':t.source==='wall'?'🧱 Wall':t.source==='meanrev'?'📈 MeanRev':'👤 Manual'}</span>
-          <span>Conf: ${t.confidence||0}%</span>
-        </div>
-      </div>`;
+    const timestamp = Date.now() + binanceTimeOffset;
+    const signed = binanceSign(timestamp, 10000);
+    const res = await axios.get(`${BINANCE}/fapi/v2/account?${signed}`, {
+      headers: { 'X-MBX-APIKEY': BINANCE_API_KEY }, timeout: 10000
     });
-  } else {
-    html+=`<div style="padding:14px;text-align:center;color:#2a3040;font-size:11px;border-bottom:1px solid #1e2330">Sin posiciones abiertas</div>`;
+    const d = res.data;
+    const result = {
+      totalWalletBalance: parseFloat(d.totalWalletBalance || 0),
+      totalUnrealizedProfit: parseFloat(d.totalUnrealizedProfit || 0),
+      totalMarginBalance: parseFloat(d.totalMarginBalance || 0),
+      availableBalance: parseFloat(d.availableBalance || 0),
+      totalPositionInitialMargin: parseFloat(d.totalPositionInitialMargin || 0),
+      assets: (d.assets || []).filter(a => parseFloat(a.walletBalance) > 0).map(a => ({
+        asset: a.asset, walletBalance: parseFloat(a.walletBalance),
+        unrealizedProfit: parseFloat(a.unrealizedProfit), availableBalance: parseFloat(a.availableBalance)
+      })),
+      positions: (d.positions || []).filter(p => parseFloat(p.positionAmt) !== 0).map(p => ({
+        symbol: p.symbol, positionAmt: parseFloat(p.positionAmt),
+        entryPrice: parseFloat(p.entryPrice), unrealizedProfit: parseFloat(p.unrealizedProfit),
+        leverage: parseInt(p.leverage), liquidationPrice: parseFloat(p.liquidationPrice)
+      }))
+    };
+    binanceAccountCache = { data: result, ts: now, lastError: null };
+    console.log(`✅ Binance account OK — balance: $${result.totalWalletBalance}`);
+    return result;
+  } catch(e) {
+    const binanceErr = e.response?.data?.msg || e.message;
+    const binanceCode = e.response?.data?.code || '';
+    console.log(`⚠️ Binance account error [${binanceCode}]: ${binanceErr}`);
+    binanceAccountCache = { data: null, ts: 0, lastError: `[${binanceCode}] ${binanceErr}` };
+    if (binanceCode === -1021 || binanceCode === -1022) syncBinanceTime();
+    return null;
   }
-  html+=`<div style="padding:8px 14px;border-bottom:1px solid #1e2330;font-size:10px;color:#2a3040;text-align:center">Para abrir trades usa los botones de ejecución en 🤖 Señal IA</div>`;
-  if(paperStats&&paperStats.total>0){
-    const s=paperStats;
-    html+=`<div style="padding:10px 14px"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Estadísticas</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:10px">
-        <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">Win Rate</div><div class="mono" style="font-size:13px;font-weight:700;color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}%</div></div>
-        <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">PnL</div><div class="mono" style="font-size:13px;font-weight:700;color:${s.totalPnl>=0?'#00d68f':'#ff4d6d'}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</div></div>
-        <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">P.Factor</div><div class="mono" style="font-size:13px;font-weight:700;color:#f59e0b">${s.profitFactor}</div></div>
-        <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">Max DD</div><div class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">-$${s.maxDrawdown}</div></div>
-      </div>
-      <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
-      ${s.recentTrades.slice(0,8).map(t=>{
-        if(t.status==='closed'&&(t.pnl_usd===0||t.pnl_usd===null))return'';
-        const won=t.status==='won',lost=t.status==='lost',cancelled=t.status==='cancelled';
-        const pnlCol=won?'#00d68f':lost?'#ff4d6d':cancelled?'#4b5563':'#f59e0b';
-        const icon=won?'✓':lost?'✗':cancelled?'○':'—';
-        const date=new Date(t.closed_at||t.created_at).toLocaleDateString('es-PE',{month:'2-digit',day:'2-digit'});
-        const srcIcon=t.source==='scalping'?'⚡':t.source==='auto'?'🤖':t.source==='manual'?'👤':t.source==='sweep'?'🌊':t.source==='wall'?'🧱':t.source==='meanrev'?'📈':'📊';
-        const srcCol=t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='manual'?'#f59e0b':t.source==='sweep'?'#38bdf8':t.source==='wall'?'#f97316':t.source==='meanrev'?'#10b981':'#4b5563';
-        const openTime = new Date(t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'});
-        const closeTime = t.closed_at ? new Date(t.closed_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '–';
-        const closeDate = t.closed_at ? new Date(t.closed_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'}) : '';
-        return`<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px;color:${pnlCol};font-weight:700;width:14px">${icon}</span>
-            <span style="font-size:10px;color:${srcCol};width:16px">${srcIcon}</span>
-            <span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700;width:42px">${t.direction}</span>
-            <span style="font-size:10px;color:#4b5563;flex:1">${t.symbol}</span>
-            <span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:58px;text-align:right">${(t.pnl_usd>=0?'+':'')+'$'+(t.pnl_usd||0).toFixed(0)}</span>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:3px;padding-left:30px;font-size:9px;color:#2a3040">
-            <span>📅 Apertura: ${date} ${openTime}</span>
-            ${t.closed_at?`<span>🏁 Cierre: ${closeDate} ${closeTime}</span>`:''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
-  } else {
-    html+=`<div style="padding:12px 14px;text-align:center;font-size:11px;color:#2a3040">Sin historial aún</div>`;
-  }
-  el.innerHTML=html;
 }
 
-let mlData=null;
-async function runMLOptimize(){
-  const btn=document.getElementById('ml-opt-btn');btn.textContent='⏳ Optimizando...';btn.disabled=true;
-  try{const res=await fetch(`${API}/api/ml/optimize`,{method:'POST'}).then(r=>r.json());if(res.error){showToast('Error: '+res.error,'#ff4d6d');}else if(res.optimized===false){showToast(res.reason==='insufficient_data'?`Necesitas más trades (${res.trades}/50)`:'Sistema ya optimizado','#f59e0b');}else{showToast(`🧠 ${res.adjustments_count} ajustes aplicados`,'#8b5cf6');await refreshML();}}catch(e){showToast('Error de conexión','#ff4d6d');}
-  finally{btn.textContent='🧠 Optimizar';btn.disabled=false;}
-}
-async function refreshML(){
-  try{const res=await fetch(`${API}/api/ml/insights`);mlData=await res.json();renderML();}catch(e){console.error('ML error:',e);}
-}
-function renderML(){
-  const el=document.getElementById('ml-panel');if(!el)return;
-  if(!mlData){el.innerHTML=`<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Cargando...</div>`;return;}
-  if(mlData.message){el.innerHTML=`<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">${mlData.message} (${mlData.trades||0} trades)</div>`;return;}
-  if(!mlData.total||mlData.total<10){el.innerHTML=`<div style="padding:14px;text-align:center;font-size:11px;color:#2a3040">Pocos trades (${mlData.total||0}) — espera más datos</div>`;return;}
-  const d=mlData;const wr=parseFloat(d.winRate)||0;const pnl=parseFloat(d.totalPnl)||0;
-  const wrCol=wr>=55?'#00d68f':wr>=45?'#f59e0b':'#ff4d6d';const pnlCol=pnl>=0?'#00d68f':'#ff4d6d';
-  const topDivs=Object.entries(d.topDivergencesWon||{}).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  const divLabels={'absorcion_compras':'Absorción Compras','absorcion_ventas':'Absorción Ventas','rsi_bajista':'RSI Bajista','rsi_alcista':'RSI Alcista','cvd_precio_bajista':'CVD/Precio Bajista','cvd_precio_alcista':'CVD/Precio Alcista','bull_trap':'Trampa Alcista','bear_trap':'Trampa Bajista','short_buildup':'Short Buildup','long_buildup':'Long Buildup','funding_extremo':'Funding Extremo','volumen_climax':'Volumen Clímax','long_squeeze':'Long Squeeze','short_squeeze':'Short Squeeze','sfp_bajista':'🪤 SFP Bajista','sfp_alcista':'🪤 SFP Alcista'};
-  const maxDivCount=topDivs[0]?.[1]||1;const pf=d.profitFactor||'–';const dd=parseFloat(d.maxDrawdown)||0;
-  el.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:10px 14px;border-bottom:1px solid #1e2330">
-    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Win Rate</div><div class="mono" style="font-size:15px;font-weight:800;color:${wrCol}">${wr.toFixed(1)}%</div><div style="font-size:9px;color:#2a3040">${d.won||0}W / ${d.lost||0}L</div></div>
-    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">PnL Total</div><div class="mono" style="font-size:15px;font-weight:800;color:${pnlCol}">${pnl>=0?'+':''}$${pnl.toFixed(0)}</div><div style="font-size:9px;color:#2a3040">${d.total||0} trades</div></div>
-    <div style="background:#111520;border-radius:5px;padding:7px;text-align:center"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">Profit Factor</div><div class="mono" style="font-size:15px;font-weight:800;color:#f59e0b">${pf}</div><div style="font-size:9px;color:#2a3040">Max DD -$${dd.toFixed(0)}</div></div>
-  </div>
-  <div style="padding:10px 14px;border-bottom:1px solid #1e2330">
-    <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Indicadores — ganadores vs perdedores</div>
-    <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px"><span>Confianza promedio</span><div style="display:flex;gap:8px"><span style="color:#00d68f">✓ ${d.avgConfidenceWon||'–'}</span><span style="color:#ff4d6d">✗ ${d.avgConfidenceLost||'–'}</span></div></div></div>
-    <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px"><span>RSI 15m promedio</span><div style="display:flex;gap:8px"><span style="color:#00d68f">✓ ${d.avgRsiWon||'–'}</span><span style="color:#ff4d6d">✗ ${d.avgRsiLost||'–'}</span></div></div></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:10px;color:#4b5563">Con Fibonacci activo</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithFib||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithFib||0).toFixed(1)}% WR</span></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:10px;color:#4b5563">Con ballenas activas</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithWhales||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithWhales||0).toFixed(1)}% WR</span></div>
-    <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#4b5563">4H alineado con señal</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h||0)>wr?'#00d68f':'#f59e0b'}">${d.winRateAligned4h||'–'}% WR</span></div>
-  </div>
-  ${topDivs.length?`<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Divergencias con más victorias</div>${topDivs.map(([type,count])=>{const barW=Math.round((count/maxDivCount)*100);return`<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#e2e4ea;margin-bottom:2px"><span>${divLabels[type]||type}</span><span style="color:#00d68f;font-weight:700">${count} victorias</span></div><div style="height:3px;background:#1e2330;border-radius:2px;overflow:hidden"><div style="height:100%;width:${barW}%;background:#00d68f;border-radius:2px"></div></div></div>`;}).join('')}</div>`:''}
-  ${(()=>{if(!d.bySource||Object.keys(d.bySource).length===0)return'';const rows=Object.entries(d.bySource).map(([src,s])=>{const srcLabel=src==='scalping'?'⚡ Scalping':src==='auto'?'🤖 Auto':src==='manual'?'👤 Manual':src==='sweep'?'🌊 Sweep':src==='wall'?'🧱 Wall':src==='meanrev'?'📈 MeanRev':'📊 Backtest';const srcCol=src==='scalping'?'#8b5cf6':src==='auto'?'#00d68f':src==='manual'?'#f59e0b':src==='sweep'?'#38bdf8':src==='wall'?'#f97316':src==='meanrev'?'#10b981':'#4b5563';const wrCol=s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d';const pnlCol=s.totalPnl>=0?'#00d68f':'#ff4d6d';const pnlStr=(s.totalPnl>=0?'+':'')+'$'+Math.abs(s.totalPnl).toFixed(0);return'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:11px;font-weight:700;color:'+srcCol+';min-width:90px">'+srcLabel+'</span><span style="font-size:10px;color:#4b5563;min-width:50px">'+s.total+' trades</span><span class="mono" style="font-size:11px;font-weight:700;color:'+wrCol+';min-width:45px">'+s.winRate+'%</span><span class="mono" style="font-size:11px;font-weight:700;color:'+pnlCol+';margin-left:auto">'+pnlStr+'</span></div>';}).join('');return'<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rendimiento por modo</div>'+rows+'</div>';})()}
-  ${d.recommendations?.length?`<div style="padding:10px 14px"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Recomendaciones del sistema</div>${d.recommendations.map(r=>`<div style="display:flex;gap:6px;padding:5px 8px;background:rgba(245,158,11,.06);border-radius:5px;border:1px solid rgba(245,158,11,.15);margin-bottom:5px"><span style="font-size:12px;flex-shrink:0">⬟</span><span style="font-size:10px;color:#f59e0b;line-height:1.5">${r}</span></div>`).join('')}</div>`:`<div style="padding:10px 14px;text-align:center;font-size:11px;color:#2a3040">Acumula más trades para ver recomendaciones</div>`}`;
+// fetchBestLiqData — usa Binance forceOrders (Coinglass requiere plan de pago)
+async function fetchBestLiqData(symbol, price) {
+  return fetchForceOrders(symbol);
 }
 
-let scalpingOn=false;
-async function toggleScalping(){
-  const btn=document.getElementById('scalp-btn');const icon=document.getElementById('scalp-icon');
-  if(!scalpingOn){
-    btn.disabled=true;icon.textContent='⏳';
-    const res=await fetch(`${API}/api/scalping/start`,{method:'POST'}).then(r=>r.json()).catch(()=>null);
-    btn.disabled=false;
-    if(res?.ok){scalpingOn=true;btn.style.background='rgba(139,92,246,.35)';btn.style.borderColor='#8b5cf6';btn.style.boxShadow='0 0 10px rgba(139,92,246,.5)';icon.textContent='⚡';showToast('⚡ Scalping activado — análisis cada 3 min','#8b5cf6');}
-    else{icon.textContent='⚡';showToast('Error al activar scalping','#ff4d6d');}
-  } else {
-    await fetch(`${API}/api/scalping/stop`,{method:'POST'}).catch(()=>null);
-    scalpingOn=false;btn.style.background='rgba(139,92,246,.1)';btn.style.borderColor='rgba(139,92,246,.35)';btn.style.boxShadow='none';icon.textContent='⚡';showToast('Scalping desactivado','#f59e0b');
-  }
-}
-async function checkScalpingStatus(){
-  try{const res=await fetch(`${API}/api/scalping/status`).then(r=>r.json());if(res.active){scalpingOn=true;const btn=document.getElementById('scalp-btn');if(btn){btn.style.background='rgba(139,92,246,.35)';btn.style.borderColor='#8b5cf6';btn.style.boxShadow='0 0 10px rgba(139,92,246,.5)';}}}catch(_){}
-}
-
-async function fetchAllPrices(){
-  try{const p=await fetch(`${API}/api/prices`).then(r=>r.json());if(p&&!p.error)allPrices=p;}catch(_){}
-}
-
-async function refreshNews(){
-  const el=document.getElementById('news-panel');if(!el)return;
-  el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Cargando noticias...</div>';
-  function sentimentTag(title) {
-    const t=title.toLowerCase();
-    const bull=['surge','jump','rally','bullish','etf','approval','buy','rise','pump','adopt','partnership','launch','upgrade','all-time','ath','record','gains','soars'].some(w=>t.includes(w));
-    const bear=['crash','drop','fall','bearish','ban','hack','sell','dump','fear','war','sanction','inflation','lawsuit','fraud','scam','plunge','tumble','slump','concerns'].some(w=>t.includes(w));
-    return bull?{col:'#00d68f',emoji:'🟢',label:'ALCISTA'}:bear?{col:'#ff4d6d',emoji:'🔴',label:'BAJISTA'}:{col:'#f59e0b',emoji:'🟡',label:'NEUTRO'};
-  }
-  function renderNewsItems(items) {
-    if(!items||!items.length){el.innerHTML='<div style="padding:12px 14px;text-align:center;font-size:11px;color:#4b5563">Sin noticias recientes</div>';return;}
-    el.innerHTML=items.slice(0,6).map(n=>{
-      const title=n.title||'';const src=n.source||'';
-      const ago=n.published_on?Math.round((Date.now()/1000-n.published_on)/60)+'m':'';
-      const s=sentimentTag(title);const url=n.url||'#';
-      return`<div style="padding:10px 14px;border-bottom:1px solid #1a2035;cursor:pointer" onclick="window.open('${url}','_blank')">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span>${s.emoji}</span><span style="font-size:10px;color:${s.col};font-weight:700">${s.label}</span>
-          <span style="font-size:9px;color:#2a3040;margin-left:auto">${src}${ago?' · '+ago:''}</span>
-        </div>
-        <div style="font-size:11px;color:#e2e4ea;line-height:1.4">${title}</div>
-      </div>`;
-    }).join('');
-  }
+// IP pública del servidor — para whitelist en Binance API
+app.get('/api/myip', async (req, res) => {
   try {
-    const data = await fetch(`${API}/api/news/latest`,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
-    if(data && Array.isArray(data) && data.length >= 1) { renderNewsItems(data); return; }
-  } catch(_) {}
+    const r = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
+    res.json({ ip: r.data.ip, note: 'Agrega esta IP en Binance → Gestión de API → Restricciones de acceso IP' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/binance/account', async (req, res) => {
   try {
-    const cc = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=10',{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
-    if(cc.Data?.length) { renderNewsItems(cc.Data.map(n=>({title:n.title,source:n.source_info?.name||n.source,published_on:n.published_on,url:n.url}))); return; }
-  } catch(_) {}
-  try {
-    const rssUrl = encodeURIComponent('https://cointelegraph.com/rss');
-    const proxy = await fetch(`https://api.allorigins.win/get?url=${rssUrl}`,{signal:AbortSignal.timeout(6000)}).then(r=>r.json());
-    if(proxy.contents) {
-      const items=[];const rx=/<item>([\s\S]*?)<\/item>/g;let m;
-      while((m=rx.exec(proxy.contents))!==null&&items.length<8){
-        const it=m[1];
-        const title=(it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)||it.match(/<title>(.*?)<\/title>/))?.[1]||'';
-        const url=(it.match(/<link>(.*?)<\/link>/))?.[1]||'';
-        const pub=(it.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]||'';
-        if(title) items.push({title:title.trim(),source:'CoinTelegraph',published_on:pub?Math.floor(new Date(pub).getTime()/1000):Math.floor(Date.now()/1000),url});
+    if (!BINANCE_API_KEY || !BINANCE_SECRET) {
+      return res.json({ error: 'Variables BINANCE_API_KEY o BINANCE_SECRET_KEY no encontradas en Railway', available: false });
+    }
+    const account = await fetchBinanceAccount();
+    if (!account) {
+      return res.json({ error: binanceAccountCache.lastError || 'Error desconocido', available: false });
+    }
+    res.json({ ...account, available: true });
+  } catch(e) { res.status(500).json({ error: e.message, available: false }); }
+});
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.37' }));
+
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
+// ══════════════════════════════════════════════════════════════════
+const wsState = {};
+const wsConnections = {};
+const killSwitchCooldown = {};
+
+function initWsState(symbol) {
+  if (wsState[symbol]) return;
+  wsState[symbol] = {
+    trades: [], volumes: [], avgVolume1m: 0, lastOI: 0,
+    oiHistory: [], lastPrice: 0, lastUpdate: 0, anomaly: null, liqZones: [],
+  };
+}
+
+function connectWebSocket(symbol) {
+  if (wsConnections[symbol]) return;
+  initWsState(symbol);
+  const stream = `${symbol.toLowerCase()}@aggTrade`;
+  const url = `${BINANCE_WS}/ws/${stream}`;
+  console.log(`🔌 WebSocket conectando: ${symbol}`);
+  const ws = new (require('ws'))(url);
+  wsConnections[symbol] = ws;
+  ws.on('open', () => console.log(`✅ WS conectado: ${symbol}`));
+  ws.on('message', (data) => {
+    try {
+      const t = JSON.parse(data);
+      const price = parseFloat(t.p), qty = parseFloat(t.q), usdVal = price * qty;
+      const isBuy = !t.m, now = Date.now();
+      wsState[symbol].lastPrice = price;
+      wsState[symbol].lastUpdate = now;
+      wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
+      wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
+      if (!wsState[symbol]._evalTimer) {
+        wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol); }, 500);
       }
-      if(items.length){renderNewsItems(items);return;}
+    } catch(e) {}
+  });
+  ws.on('close', () => {
+    console.log(`⚠️ WS desconectado: ${symbol} — reconectando en 5s`);
+    delete wsConnections[symbol];
+    setTimeout(() => connectWebSocket(symbol), 5000);
+  });
+  ws.on('error', (e) => { console.log(`❌ WS error ${symbol}: ${e.message}`); ws.terminate(); });
+}
+
+function getWsMetrics(symbol) {
+  const state = wsState[symbol];
+  if (!state || !state.trades.length) return null;
+  const now = Date.now();
+  const last60s = state.trades.filter(t => now - t.time < 60000);
+  const last10s = state.trades.filter(t => now - t.time < 10000);
+  if (!last60s.length) return null;
+  const totalVol60s = last60s.reduce((s, t) => s + t.usdVal, 0);
+  const buyVol60s = last60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const sellVol60s = last60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const cvdLive = (buyVol60s - sellVol60s) / Math.max(totalVol60s, 1) * 100;
+  const totalVol10s = last10s.reduce((s, t) => s + t.usdVal, 0);
+  const buyVol10s = last10s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const sellVol10s = last10s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const whaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
+  const whales60s = last60s.filter(t => t.usdVal >= whaleThreshold);
+  const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
+  const last600s = state.trades.filter(t => now - t.time < 600000);
+  const last120s = state.trades.filter(t => now - t.time < 120000 && now - t.time >= 60000);
+  let dynamicAvg = state.avgVolume1m;
+  if (last600s.length >= 10) dynamicAvg = last600s.reduce((s, t) => s + t.usdVal, 0) / 10;
+  else if (last120s.length >= 5) dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0);
+  const effectiveAvg = Math.max(dynamicAvg, state.avgVolume1m);
+  const volumeMultiplier = effectiveAvg > 0 ? totalVol60s / effectiveAvg : 1;
+  return { totalVol60s, buyVol60s, sellVol60s, cvdLive, totalVol10s, buyVol10s, sellVol10s,
+    whaleCount: whales60s.length, whaleBuyVol, whaleSellVol, avgVolume1m: effectiveAvg,
+    volumeMultiplier, lastPrice: state.lastPrice, anomaly: state.anomaly };
+}
+
+async function evaluateAnomaly(symbol) {
+  const state = wsState[symbol];
+  if (!state) return;
+  const metrics = getWsMetrics(symbol);
+  if (!metrics) return;
+  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '10');
+  const now = Date.now();
+  const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
+  const isBearishSweep = metrics.cvdLive < -40 && isVolumeAnomaly;
+  const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;
+  const prices60s = state.trades.filter(t => now - t.time < 60000).map(t => t.price);
+  const priceMove60s = prices60s.length >= 2 ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100 : 0;
+  const isPriceMoving = priceMove60s >= 0.5;
+  const isRealBearishSweep = isBearishSweep && isPriceMoving;
+  const isRealBullishSweep = isBullishSweep && isPriceMoving;
+  const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
+  const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
+  const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
+  const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 20000000 : 5000000;
+  const last10sTrades = state.trades.filter(t => now - t.time < 10000);
+  const last10sBuyVol = last10sTrades.filter(t => t.isBuy).reduce((s,t) => s + t.usdVal, 0);
+  const last10sSellVol = last10sTrades.filter(t => !t.isBuy).reduce((s,t) => s + t.usdVal, 0);
+  const massiveWhaleSingle = state.trades.find(t => t.usdVal >= massiveWhaleThreshold && now - t.time < 30000);
+  const massiveWhaleBuyAccum = last10sBuyVol >= massiveAccumThreshold;
+  const massiveWhaleSellAccum = last10sSellVol >= massiveAccumThreshold;
+  const dominanciaRatioBuy = last10sSellVol > 0 ? last10sBuyVol / last10sSellVol : 99;
+  const dominanciaRatioSell = last10sBuyVol > 0 ? last10sSellVol / last10sBuyVol : 99;
+  const hayDominanciaCompra = dominanciaRatioBuy >= 1.5;
+  const hayDominanciaVenta = dominanciaRatioSell >= 1.5;
+  const isMassiveWhale = !!(massiveWhaleSingle || (massiveWhaleBuyAccum && hayDominanciaCompra) || (massiveWhaleSellAccum && hayDominanciaVenta));
+  const massiveWhaleDirection = massiveWhaleSingle ? (massiveWhaleSingle.isBuy ? 'LONG' : 'SHORT') : massiveWhaleBuyAccum && hayDominanciaCompra ? 'LONG' : 'SHORT';
+  const massiveWhaleVol = massiveWhaleSingle ? massiveWhaleSingle.usdVal : Math.max(last10sBuyVol, last10sSellVol);
+  const liqZoneBonus = calcLiqZoneBonus(symbol, metrics.lastPrice);
+  if (!isRealBearishSweep && !isRealBullishSweep && !bigWhale && !isMassiveWhale) return;
+  const isSweep = isRealBearishSweep || isRealBullishSweep;
+  const isWhaleOnly = !isSweep && !!bigWhale && !isMassiveWhale;
+  const direction = isRealBearishSweep ? 'SHORT' : isRealBullishSweep ? 'LONG' : isMassiveWhale ? massiveWhaleDirection : (bigWhale?.isBuy ? 'LONG' : 'SHORT');
+  const reason = isRealBearishSweep ? `Barrida bajista — CVD ${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio -${priceMove60s.toFixed(2)}%` :
+                 isRealBullishSweep ? `Barrida alcista — CVD +${metrics.cvdLive.toFixed(1)}% vol ${metrics.volumeMultiplier.toFixed(1)}x precio +${priceMove60s.toFixed(2)}%` :
+                 isMassiveWhale ? `🐋 Ballena masiva $${(massiveWhaleVol/1e6).toFixed(1)}M ${massiveWhaleDirection === 'LONG' ? 'comprando' : 'vendiendo'}${massiveWhaleSingle ? ' (orden única)' : ' (acumulada 10s)'}` :
+                 `Ballena $${(bigWhale.usdVal/1e6).toFixed(2)}M ${bigWhale.isBuy ? 'comprando' : 'vendiendo'}`;
+  const cooldownKey = `${symbol}_${direction}`;
+  if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) return;
+  killSwitchCooldown[cooldownKey] = now;
+  if (isSweep || isWhaleOnly) {
+    state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus, isSweep: !!(isRealBearishSweep || isRealBullishSweep), isWhale: !!bigWhale && !isSweep };
+    setTimeout(() => { if (wsState[symbol]?.anomaly?.time === now) wsState[symbol].anomaly = null; }, 5 * 60 * 1000);
+  }
+  console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
+  if (isSweep) {
+    await killSwitchOpposite(symbol, direction, reason);
+    await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
+  } else if (isMassiveWhale) {
+    await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
+    await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
+  }
+  if (process.env.TELEGRAM_CHAT_ID) {
+    if (isSweep) {
+      const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : '🟢 BARRIDA ALCISTA';
+      const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}\n🛡️ Kill Switch + Sweep trade abierto\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    } else if (isMassiveWhale) {
+      const emoji = massiveWhaleDirection === 'LONG' ? '🟢' : '🔴';
+      const msg = `${emoji} 🐋 BALLENA MASIVA — ${symbol}\n${reason}\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n⚡ Trade automático abierto en dirección ${massiveWhaleDirection}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
     }
-  } catch(_) {}
-  el.innerHTML='<div style="padding:12px 14px;font-size:11px;color:#4b5563;text-align:center">⚠ Noticias no disponibles — <a href="https://cointelegraph.com" target="_blank" style="color:#f59e0b">ver CoinTelegraph</a></div>';
+  }
 }
 
-fetchAll();
-fetchAllPrices();
-// ── Semáforo de sesión ────────────────────────────────────────────────────
-async function updateSesion() {
+async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
-    const d = await fetch('/api/sesion').then(r => r.json());
-    const dot = document.getElementById('sesion-dot');
-    const label = document.getElementById('sesion-label');
-    const badge = document.getElementById('sesion-badge');
-    if (!badge) return;
-    if (d.activa) {
-      badge.style.background = 'rgba(0,214,143,.1)';
-      badge.style.borderColor = 'rgba(0,214,143,.3)';
-      badge.style.color = '#00d68f';
-      dot.style.background = '#00d68f';
-      label.textContent = `${d.emoji} ${d.nombre} · ${d.horaLima}h Lima`;
-    } else {
-      badge.style.background = 'rgba(255,77,109,.08)';
-      badge.style.borderColor = 'rgba(255,77,109,.2)';
-      badge.style.color = '#ff4d6d';
-      dot.style.background = '#ff4d6d';
-      label.textContent = `${d.emoji} ${d.nombre} · ${d.horaLima}h Lima`;
-    }
-  } catch(_) {}
-}
-
-// ── Dashboard macro — actualiza con datos del análisis ────────────────────
-function updateMacroDashboard() {
-  if (!mkt || !mkt.timeframes) return;
-  const tf = mkt.timeframes;
-  const sym = currentSymbol || 'BTC';
-
-  const cvd1h = tf['1H']?.cvdPct;
-  const cvd4h = tf['4H']?.cvdPct;
-  const fr    = tf['15m']?.fundingRate;
-  const oi    = tf['4H']?.oiDeltaPct;
-
-  const fmt = (n, suffix='%') => `${n > 0 ? '+' : ''}${parseFloat(n).toFixed(n > 10 || n < -10 ? 1 : 2)}${suffix}`;
-  const col = n => n > 20 ? '#00d68f' : n < -20 ? '#ff4d6d' : n > 5 ? '#38bdf8' : n < -5 ? '#f59e0b' : '#4b5563';
-
-  const el1h = document.getElementById('macro-cvd1h');
-  if (el1h && cvd1h !== undefined) el1h.innerHTML = `CVD 1H: <span style="color:${col(cvd1h)};font-weight:700">${fmt(cvd1h)}</span>`;
-
-  const el4h = document.getElementById('macro-cvd4h');
-  if (el4h && cvd4h !== undefined) el4h.innerHTML = `CVD 4H: <span style="color:${col(cvd4h)};font-weight:700">${fmt(cvd4h)}</span>`;
-
-  if (fr !== undefined) {
-    const elFr = document.getElementById('macro-funding');
-    const n = parseFloat(fr) * 100;
-    const c = Math.abs(n) < 0.005 ? '#4b5563' : n > 0 ? '#ff4d6d' : '#00d68f';
-    if (elFr) elFr.innerHTML = `FR: <span style="color:${c};font-weight:700">${n > 0 ? '+' : ''}${n.toFixed(4)}%</span>`;
-  }
-
-  if (oi !== undefined) {
-    const elOi = document.getElementById('macro-oi');
-    const n = parseFloat(oi);
-    const c = n > 0.3 ? '#00d68f' : n < -0.3 ? '#ff4d6d' : '#4b5563';
-    if (elOi) elOi.innerHTML = `OI 4H: <span style="color:${c};font-weight:700">${fmt(n)}</span>`;
-  }
-
-  // Score de confluencia
-  let score = 0;
-  if (cvd1h !== undefined) score += cvd1h > 20 ? 2 : cvd1h < -20 ? -2 : 0;
-  if (cvd4h !== undefined) score += cvd4h > 20 ? 2 : cvd4h < -20 ? -2 : 0;
-  if (fr !== undefined) score += parseFloat(fr) < -0.005 ? 1 : parseFloat(fr) > 0.005 ? -1 : 0;
-  if (oi !== undefined) score += parseFloat(oi) > 0.5 ? 1 : parseFloat(oi) < -0.5 ? -1 : 0;
-
-  const elScore = document.getElementById('macro-score');
-  if (elScore) {
-    const lbl = score >= 3 ? '🟢 Alcista' : score <= -3 ? '🔴 Bajista' : score >= 1 ? '🔵 Leve alcista' : score <= -1 ? '🟠 Leve bajista' : '🟡 Neutral';
-    const c = score >= 3 ? '#00d68f' : score <= -3 ? '#ff4d6d' : score >= 1 ? '#38bdf8' : score <= -1 ? '#f59e0b' : '#4b5563';
-    const bg = score >= 3 ? 'rgba(0,214,143,.1)' : score <= -3 ? 'rgba(255,77,109,.1)' : 'rgba(75,85,99,.1)';
-    elScore.style.color = c;
-    elScore.style.background = bg;
-    elScore.textContent = `Score ${score > 0 ? '+' : ''}${score} · ${lbl}`;
-  }
-}
-
-setInterval(fetchAll,30000);
-setInterval(fetchAllPrices,15000);
-setInterval(updateSesion, 60000);
-setInterval(updateMacroDashboard, 15000);
-setTimeout(()=>{ updateMacroDashboard(); updateSesion(); }, 1500);
-setTimeout(refreshWsWidget, 3000);
-setInterval(refreshWsWidget, 5000);
-setTimeout(refreshNews,5000);
-setInterval(refreshNews,5*60*1000);
-setTimeout(refreshML,3000);
-setInterval(refreshPaper,60000);
-setTimeout(refreshPaper,2000);
-setTimeout(checkScalpingStatus,3000);
-
-async function loadBinanceAccount() {
-  const el = document.getElementById('binance-acct-body');
-  const statusEl = document.getElementById('binance-acct-status');
-  if (!el) return;
-  try {
-    const d = await fetch(`${API}/api/binance/account`).then(r=>r.json());
-    if (!d.available || d.error) {
-      el.innerHTML = `<div style="color:#4b5563;font-size:11px;text-align:center">⚠️ ${d.error||'No disponible'}</div>`;
+    // Filtro horario
+    if (isHoraBloqueada()) {
+      const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+      console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
       return;
     }
-    if (statusEl) { statusEl.textContent='● live'; statusEl.style.color='#00d68f'; }
-    const pnlCol = d.totalUnrealizedProfit >= 0 ? '#00d68f' : '#ff4d6d';
-    const pnlSign = d.totalUnrealizedProfit >= 0 ? '+' : '';
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">BALANCE</div>
-          <div class="mono" style="font-size:14px;font-weight:700">$${d.totalWalletBalance.toFixed(2)}</div>
-        </div>
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">DISPONIBLE</div>
-          <div class="mono" style="font-size:14px;font-weight:700">$${d.availableBalance.toFixed(2)}</div>
-        </div>
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">PNL NO REALIZADO</div>
-          <div class="mono" style="font-size:14px;font-weight:700;color:${pnlCol}">${pnlSign}$${d.totalUnrealizedProfit.toFixed(2)}</div>
-        </div>
-        <div style="background:#111520;border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:#4b5563;margin-bottom:2px">MARGEN USADO</div>
-          <div class="mono" style="font-size:14px;font-weight:700">$${d.totalPositionInitialMargin.toFixed(2)}</div>
-        </div>
-      </div>
-      ${d.positions.length ? `
-        <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Posiciones abiertas</div>
-        ${d.positions.map(p => {
-          const side = p.positionAmt > 0 ? 'LONG' : 'SHORT';
-          const sc = side==='LONG'?'#00d68f':'#ff4d6d';
-          const pc = p.unrealizedProfit>=0?'#00d68f':'#ff4d6d';
-          const ps = p.unrealizedProfit>=0?'+':'';
-          return `<div style="background:#111520;border-radius:5px;padding:7px 8px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
-            <div>
-              <span style="color:${sc};font-weight:700;font-size:11px">${side}</span>
-              <span style="color:#6b7280;font-size:10px;margin-left:6px">${p.symbol}</span>
-              <span style="color:#4b5563;font-size:9px;margin-left:4px">${p.leverage}x</span>
-            </div>
-            <div style="text-align:right">
-              <div class="mono" style="font-size:11px">$${parseInt(p.entryPrice).toLocaleString()}</div>
-              <div class="mono" style="font-size:11px;color:${pc}">${ps}$${p.unrealizedProfit.toFixed(2)}</div>
-            </div>
-          </div>`;
-        }).join('')}
-      ` : '<div style="color:#2a3040;font-size:11px;text-align:center">Sin posiciones abiertas</div>'}
-    `;
-  } catch(e) {
-    if (el) el.innerHTML = `<div style="color:#4b5563;font-size:11px;text-align:center">Error cargando cuenta</div>`;
-  }
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
+    const { data: recentWhale } = await supabase.from('paper_trades').select('opened_at').eq('symbol', symbol).eq('source', 'sweep').order('opened_at', { ascending: false }).limit(1);
+    if (recentWhale?.length) {
+      const lastOpened = new Date(recentWhale[0].opened_at).getTime();
+      const cooldownMs = 15 * 60 * 1000;
+      if (Date.now() - lastOpened < cooldownMs) { console.log("⏳ Whale cooldown " + symbol + " — esperar " + Math.ceil((cooldownMs - (Date.now() - lastOpened)) / 60000) + " min más"); return; }
+    }
+    const detectionPrice = metrics.lastPrice;
+    if (!detectionPrice) return;
+    let currentPriceCheck = detectionPrice;
+    try { const tickerCheck = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${symbol}`); currentPriceCheck = parseFloat(tickerCheck.data.price); } catch(_) {}
+    const priceMovedAgainstUs = direction === 'SHORT' ? currentPriceCheck > detectionPrice * 1.003 : currentPriceCheck < detectionPrice * 0.997;
+    if (priceMovedAgainstUs) { console.log(`⏭ Whale trade omitido — precio ya rebotó desde detección (${symbol})`); return; }
+    // v4.4.16 C2: confirmación precio 5min — si ballena vendió pero precio no cayó = absorción compradora
+    // Los 3 perdedores ETH SHORT ($10.1M, $10.3M, $15.2M) tenían este patrón exacto
+    const prices5mWh = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
+    if (prices5mWh.length >= 5) {
+      const priceMove5m = (prices5mWh[prices5mWh.length-1] - prices5mWh[0]) / prices5mWh[0] * 100;
+      if (direction === 'SHORT' && priceMove5m > -0.1) {
+        console.log(`⏭ Whale SHORT omitido — precio no confirma bajada en 5min (${priceMove5m.toFixed(2)}%) — absorción compradora (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && priceMove5m < 0.1) {
+        console.log(`⏭ Whale LONG omitido — precio no confirma subida en 5min (${priceMove5m.toFixed(2)}%) — absorción vendedora (${symbol})`);
+        return;
+      }
+    }
+    const price = currentPriceCheck;
+    // v4.4.17 C3-whale: bloquear si bias_1d es contrario al trade
+    // Fix: C3 solo estaba en openSweepCounterTrade — los whale trades no lo tenían
+    // Causa de pérdidas: ETH SHORT -$16, BTC SHORT -$31, BTC LONG -$28 con mercado en tendencia opuesta
+    try {
+      const k1dWh = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+      const bias1dWh = calcBias(k1dWh.data, null, 0);
+      if (bias1dWh) {
+        // v4.4.18 Fix B: neutral con score tendencial también bloquea
+        const blockShortWh = bias1dWh.bias === 'long' || bias1dWh.score > 58;
+        const blockLongWh  = bias1dWh.bias === 'short' || bias1dWh.score < 42;
+        if (direction === 'SHORT' && blockShortWh) {
+          console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+          return;
+        }
+        if (direction === 'LONG' && blockLongWh) {
+          console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+          return;
+        }
+      }
+    } catch(_) {}
+    // v4.4.32 Fix A: vol_multiplier mínimo 6x — backtest 365d confirma: 6x da mejor Z-Score y WR que 4x
+    if (metrics.volumeMultiplier < 6) {
+      console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<6x) — señal débil (${symbol})`);
+      return;
+    }
+    // v4.4.36 Fix CVD: CVD mínimo 60% — datos reales: CVD>60 WR 58.8% vs CVD 40-60 WR 39.3%
+    if (Math.abs(metrics.cvdLive) < 60) {
+      console.log(`⏭ Whale trade omitido — CVD ${metrics.cvdLive.toFixed(1)}% insuficiente (<60%) (${symbol})`);
+      return;
+    }
+    // v4.4.34 Fix CVD 5min — confirmar flujo de dinero en contexto amplio
+    try {
+      const kCvd5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=10`);
+      let buyVol5m = 0, sellVol5m = 0;
+      for (const k of kCvd5m.data) {
+        const v = parseFloat(k[5]);
+        if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol5m += v;
+        else sellVol5m += v;
+      }
+      const totalVol5m = buyVol5m + sellVol5m;
+      const cvd5mPct = totalVol5m > 0 ? (buyVol5m - sellVol5m) / totalVol5m * 100 : 0;
+      if (direction === 'LONG' && cvd5mPct < -20) {
+        console.log(`⏭ Whale LONG omitido — CVD 5min negativo (${cvd5mPct.toFixed(1)}%) instituciones vendiendo (${symbol})`);
+        return;
+      }
+      if (direction === 'SHORT' && cvd5mPct > 20) {
+        console.log(`⏭ Whale SHORT omitido — CVD 5min positivo (${cvd5mPct.toFixed(1)}%) instituciones comprando (${symbol})`);
+        return;
+      }
+    } catch(_) {}
+    const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
+    const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
+    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr = Math.max(atr5m, price * 0.004);
+    const isLong = direction === 'LONG';
+    const tp1 = isLong ? price + atr * 1.2 : price - atr * 1.2;
+    const sl = isLong ? price - atr * 0.8 : price + atr * 0.8;
+    if (isLong && sl >= price) return;
+    if (!isLong && sl <= price) return;
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    if (rrVal < 1.5) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
+    // v4.4.16 C1: confianza mínima 82 — conf=77 tenía WR 40% y PnL negativo
+    const whaleConfidence = Math.max(82, Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus)));
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
+    console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'SHORT' ? '▼' : '▲';
+      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+  } catch(e) { console.error('Whale trade error:', e.message); }
 }
-setTimeout(loadBinanceAccount, 4000);
-setInterval(loadBinanceAccount, 30000);
 
-async function runBacktest() {
-  const btn = document.getElementById('bt-btn');
-  const results = document.getElementById('bt-results');
-  btn.disabled = true; btn.textContent = '⏳';
-  results.innerHTML = '<div style="color:#8b5cf6;text-align:center;padding:20px">Descargando datos y simulando... puede tomar 10-15 segundos</div>';
+async function killSwitchOpposite(symbol, sweepDirection, reason) {
   try {
-    const body = {
-      symbol: document.getElementById('bt-symbol').value,
-      days: parseInt(document.getElementById('bt-days').value),
-      module: document.getElementById('bt-mode').value,
-      baseVolMult: 5,
-      filteredVolMult: parseFloat(document.getElementById('bt-vol')?.value || 4),
-      filteredBias1dScore: parseFloat(document.getElementById('bt-bias')?.value || 58),
-      filteredBias1hScore: 40,
-      filteredMinCVD: parseFloat(document.getElementById('bt-cvd')?.value || 25),
-      filteredMinPriceMove: 0.1,
-      scalpRsiMin: parseFloat(document.getElementById('bt-rsi-min').value),
-      scalpRsiMax: parseFloat(document.getElementById('bt-rsi-max').value),
-      scalpMinImbalance: parseFloat(document.getElementById('bt-imb').value),
-      scalpMomentumPct: parseFloat(document.getElementById('bt-mom').value),
-      sweepMinVolMult: parseFloat(document.getElementById('bt-vol').value),
-      sweepMinCVD: parseFloat(document.getElementById('bt-cvd').value),
-      sweepBias1dScore: parseFloat(document.getElementById('bt-bias').value),
-    };
-    const res = await fetch(`${API}/api/backtest`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const d = await res.json();
-    if (d.error) throw new Error(d.error);
-    renderBacktestResults(d);
+    const oppositeDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
+    const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+    if (!openTrades?.length) return;
+    for (const trade of openTrades) {
+      const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
+      const entry = parseFloat(trade.entry), sl = parseFloat(trade.sl);
+      // Solo actuar si precio ya recorrió >60% del camino hacia el SL
+      // ETH: umbral 40% — se mueve más rápido, evita cierres con pérdida grande
+      const slThreshold = symbol.includes('ETH') ? 0.40 : 0.60;
+      const totalDistance = Math.abs(sl - entry), currentDistance = Math.abs(currentPrice - entry);
+      const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
+      if (slProgress < slThreshold) {
+        console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL (umbral: ${(slThreshold*100).toFixed(0)}%)`);
+        if (process.env.TELEGRAM_CHAT_ID) {
+          const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nAl ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nPrecio: $${parseInt(currentPrice).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}`;
+          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+        }
+        continue;
+      }
+      const priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
+      const _lev1 = parseFloat(trade.leverage || 10);
+      const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff * _lev1).toFixed(2));
+      const pnl_pct = parseFloat((priceDiff * _lev1 * 100).toFixed(2));
+      await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'kill_switch', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+      console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} (${(slProgress*100).toFixed(0)}% hacia SL)`);
+      if (process.env.TELEGRAM_CHAT_ID) {
+        const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
+        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      }
+    }
+  } catch(e) { console.error('Kill switch error:', e.message); }
+}
+
+async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
+  try {
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
+    const price = metrics.lastPrice;
+    if (!price) return;
+    // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
+    const prices5mSw = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
+    if (prices5mSw.length >= 5) {
+      const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
+      if (direction === 'SHORT' && priceMove5mSw > -0.1) {
+        console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}%) — absorción compradora (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && priceMove5mSw < 0.1) {
+        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}%) — absorción vendedora (${symbol})`);
+        return;
+      }
+    }
+    const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
+    const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
+    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr = Math.max(atr5m, price * 0.003);
+    const isShort = direction === 'SHORT';
+    const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
+    const sl = isShort ? price + atr * 0.8 : price - atr * 0.8;
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    if (rrVal < 1.5) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
+    const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
+    let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
+    try {
+      const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+        fetchOIHistory(symbol,'15m',5), fetchOIHistory(symbol,'4h',5),
+        axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+      ]);
+      fundingSweep = parseFloat(fundSw.data.lastFundingRate);
+      bias4hSweep = calcBias(k4hSw.data, oi4hSw, fundingSweep);
+      bias1dSweep = calcBias(k1dSw.data, null, fundingSweep);
+      oiTrend15mSweep = calcOITrend(oi15mSw);
+      fib15mSweep = calcFibonacci(k15mSw.data, price);
+    } catch(_) {}
+    // v4.4.16 C3: bloquear sweep si bias_1d es contrario — mercado diario manda
+    // ETH estaba en acumulación (bias_1d=long), ballenas SHORT de $10-15M no podían revertirlo
+    if (bias1dSweep) {
+      // v4.4.18 Fix B: neutral con score tendencial también bloquea
+      const blockShortSw = bias1dSweep.bias === 'long' || bias1dSweep.score > 58;
+      const blockLongSw  = bias1dSweep.bias === 'short' || bias1dSweep.score < 42;
+      if (direction === 'SHORT' && blockShortSw) {
+        console.log(`⏭ Sweep SHORT omitido — bias_1d alcista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
+        return;
+      }
+      if (direction === 'LONG' && blockLongSw) {
+        console.log(`⏭ Sweep LONG omitido — bias_1d bajista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
+        return;
+      }
+    }
+    const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
+    console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'SHORT' ? '▼' : '▲';
+      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%\n⚡ ${reason}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+    }
+  } catch(e) { console.error('Sweep trade error:', e.message); }
+}
+
+// ── ORDER BOOK DINÁMICO ──────────────────────────────────────────
+async function calcDynamicLiqZones(symbol, price) {
+  try {
+    const book = await fetchDeepOrderBook(symbol);
+    if (!book?.bidClusters?.length && !book?.askClusters?.length) return null;
+    const absThreshold = symbol.includes('BTC') ? 15000000 : symbol.includes('ETH') ? 8000000 : 3000000;
+    const relMultiplier = 3.0;
+    const zones = [];
+    for (const cluster of book.bidClusters) {
+      const usdVal = cluster.usdVal, distPct = Math.abs(price - cluster.price) / price * 100;
+      if (distPct > 2.0 || usdVal < absThreshold || cluster.strength < relMultiplier) continue;
+      const bonus = usdVal > absThreshold * 3 ? 20 : usdVal > absThreshold * 1.5 ? 12 : 6;
+      zones.push({ price: cluster.price, side: 'bid', usdVal, distPct, bonus, strength: cluster.strength });
+    }
+    for (const cluster of book.askClusters) {
+      const usdVal = cluster.usdVal, distPct = Math.abs(price - cluster.price) / price * 100;
+      if (distPct > 2.0 || usdVal < absThreshold || cluster.strength < relMultiplier) continue;
+      const bonus = usdVal > absThreshold * 3 ? 20 : usdVal > absThreshold * 1.5 ? 12 : 6;
+      zones.push({ price: cluster.price, side: 'ask', usdVal, distPct, bonus, strength: cluster.strength });
+    }
+    return zones.length ? zones : null;
+  } catch(e) { return null; }
+}
+
+function calcLiqZoneBonus(symbol, price) {
+  if (!price) return 0;
+  const zones = [{ dist: -0.018, size: 240 }, { dist: -0.025, size: 380 }, { dist: -0.042, size: 490 }, { dist: -0.055, size: 620 }, { dist: -0.075, size: 830 }, { dist: 0.015, size: 210 }, { dist: 0.028, size: 320 }, { dist: 0.045, size: 480 }, { dist: 0.068, size: 740 }, { dist: 0.095, size: 950 }];
+  let maxBonus = 0;
+  for (const z of zones) {
+    const zonePrice = price * (1 + z.dist), distPct = Math.abs(price - zonePrice) / price * 100;
+    if (distPct < 1.0) { const bonus = z.size > 700 ? 20 : z.size > 500 ? 15 : z.size > 300 ? 10 : 5; if (bonus > maxBonus) maxBonus = bonus; }
+  }
+  return maxBonus;
+}
+
+function applyLiqZoneProbBonus(divergences, price) {
+  if (!price || !divergences.length) return divergences;
+  const zones = [{ dist: -0.018, size: 240, direction: 'down' }, { dist: -0.025, size: 380, direction: 'down' }, { dist: -0.042, size: 490, direction: 'down' }, { dist: -0.055, size: 620, direction: 'down' }, { dist: -0.075, size: 830, direction: 'down' }, { dist: 0.015, size: 210, direction: 'up' }, { dist: 0.028, size: 320, direction: 'up' }, { dist: 0.045, size: 480, direction: 'up' }, { dist: 0.068, size: 740, direction: 'up' }, { dist: 0.095, size: 950, direction: 'up' }];
+  return divergences.map(d => {
+    let liqBonus = 0;
+    for (const z of zones) {
+      const zonePrice = price * (1 + z.dist), distPct = Math.abs(price - zonePrice) / price * 100;
+      if (distPct < 1.5) {
+        const liqDirection = z.dist < 0 ? 'SHORT' : 'LONG';
+        if (d.direction === liqDirection) { const bonus = z.size > 700 ? 12 : z.size > 500 ? 8 : z.size > 300 ? 5 : 3; liqBonus = Math.max(liqBonus, bonus); }
+      }
+    }
+    if (liqBonus > 0) return { ...d, probability: Math.min(95, d.probability + liqBonus), confluence: [...(d.confluence || []), `🧲 Imán liq +${liqBonus}%`] };
+    return d;
+  });
+}
+
+app.get('/api/ws/status', (req, res) => {
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
+  const status = {};
+  for (const sym of symbols) {
+    const metrics = getWsMetrics(sym.trim());
+    status[sym.trim()] = { connected: !!wsConnections[sym.trim()], lastUpdate: wsState[sym.trim()]?.lastUpdate || 0, lastPrice: wsState[sym.trim()]?.lastPrice || 0, metrics: metrics ? { cvdLive: metrics.cvdLive?.toFixed(1), volumeMultiplier: metrics.volumeMultiplier?.toFixed(2), whaleCount: metrics.whaleCount, anomaly: metrics.anomaly } : null };
+  }
+  res.json(status);
+});
+
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= period; i++) { const diff = closes[i] - closes[i - 1]; if (diff > 0) avgGain += diff; else avgLoss += Math.abs(diff); }
+  avgGain /= period; avgLoss /= period;
+  for (let i = period + 1; i < closes.length; i++) { const diff = closes[i] - closes[i - 1]; if (diff > 0) { avgGain = (avgGain*(period-1)+diff)/period; avgLoss = (avgLoss*(period-1))/period; } else { avgGain = (avgGain*(period-1))/period; avgLoss = (avgLoss*(period-1)+Math.abs(diff))/period; } }
+  return Math.round(100 - 100 / (1 + avgGain/(avgLoss||0.001)));
+}
+
+function calcBB(closes, period = 20, mult = 2) {
+  if (closes.length < period) return null;
+  const slice = closes.slice(-period), sma = slice.reduce((a,b) => a+b,0)/period;
+  const std = Math.sqrt(slice.reduce((s,v) => s+Math.pow(v-sma,2),0)/period);
+  return { upper: sma+mult*std, middle: sma, lower: sma-mult*std };
+}
+
+function calcVWAP(klines) {
+  let cumTPV = 0, cumVol = 0;
+  klines.forEach(k => { const tp=(parseFloat(k[2])+parseFloat(k[3])+parseFloat(k[4]))/3, vol=parseFloat(k[5]); cumTPV+=tp*vol; cumVol+=vol; });
+  return cumVol > 0 ? cumTPV/cumVol : 0;
+}
+
+function calcCVD(klines) {
+  let cumulative = 0;
+  const deltas = klines.map(k => { const open=parseFloat(k[1]),close=parseFloat(k[4]),vol=parseFloat(k[5]); const buyRatio = close>open?1:close<open?0:0.5; const delta = vol*buyRatio - vol*(1-buyRatio); cumulative += delta; return { delta, cumulative, vol }; });
+  const last5 = deltas.slice(-5), delta5 = last5.reduce((s,d)=>s+d.delta,0), delta3 = deltas.slice(-3).reduce((s,d)=>s+d.delta,0);
+  const prevCum = deltas[deltas.length-6]?.cumulative||0;
+  const cvdPct = prevCum!==0?((cumulative-prevCum)/Math.abs(prevCum)*100).toFixed(2):'0.00';
+  const avgVol = deltas.slice(-20).reduce((s,d)=>s+d.vol,0)/20, lastVol = deltas[deltas.length-1]?.vol||0;
+  const volPct = avgVol>0?((lastVol-avgVol)/avgVol*100).toFixed(1):'0.0';
+  const isClimax = Math.abs(parseFloat(delta3))>Math.abs(delta5)*0.8 && Math.abs(lastVol)>avgVol*2;
+  return { cumulative, delta5, delta3, cvdPct:parseFloat(cvdPct), volPct:parseFloat(volPct), trend:delta5>0?'bull':'bear', isClimax };
+}
+
+function calcVRVP(klines) {
+  const buckets={};let totalVol=0;
+  klines.forEach(k=>{ const high=parseFloat(k[2]),low=parseFloat(k[3]),vol=parseFloat(k[5]); const mid=Math.round((high+low)/2/50)*50; buckets[mid]=(buckets[mid]||0)+vol; totalVol+=vol; });
+  const sorted=Object.entries(buckets).sort((a,b)=>b[1]-a[1]);
+  const poc=parseFloat(sorted[0]?.[0]||0);
+  const prices=Object.keys(buckets).map(Number).sort((a,b)=>a-b);
+  let cumVol=0; const vah70=[],val70=[];
+  for(const p of [...prices].reverse()){cumVol+=buckets[p];if(cumVol/totalVol<=0.7)vah70.push(p);}
+  cumVol=0;
+  for(const p of prices){cumVol+=buckets[p];if(cumVol/totalVol<=0.3)val70.push(p);}
+  const vah=vah70.length?Math.max(...vah70):poc, val=val70.length?Math.min(...val70):poc;
+  return { poc, vah:Math.max(vah,poc), val:Math.min(val,poc) };
+}
+
+async function fetchOIHistory(symbol, interval, limit=10) {
+  try { const res = await axios.get(`${BINANCE}/futures/data/openInterestHist?symbol=${symbol}&period=${interval}&limit=${limit}`); return res.data||[]; } catch(e){ return []; }
+}
+
+function calcOITrend(oiHistory) {
+  if(!oiHistory||oiHistory.length<2) return { trend:'flat', deltaPct:'0.000', current:0 };
+  const first=parseFloat(oiHistory[0]?.sumOpenInterest||0), last=parseFloat(oiHistory[oiHistory.length-1]?.sumOpenInterest||0);
+  const deltaPct=first>0?((last-first)/first*100).toFixed(3):'0.000';
+  const trend=parseFloat(deltaPct)>0.1?'rising':parseFloat(deltaPct)<-0.1?'falling':'flat';
+  return { trend, deltaPct, current:last };
+}
+
+function calcBias(klines, oiData=null, fundingRate=0) {
+  if(!klines||!Array.isArray(klines)||klines.length<20) return { bias:'neutral', score:50, rsi:50, cvdPct:0, volPct:0, oiTrend:'flat', oiDeltaPct:'0.000', fundingRate:0 };
+  const closes=klines.map(k=>parseFloat(k[4])), highs=klines.map(k=>parseFloat(k[2])), lows=klines.map(k=>parseFloat(k[3]));
+  const rsi=calcRSI(closes), cvd=calcCVD(klines), vwap=calcVWAP(klines);
+  const last=closes[closes.length-1], prev5avg=closes.slice(-6,-1).reduce((a,b)=>a+b,0)/5;
+  const priceVsPrev=prev5avg>0?((last-prev5avg)/prev5avg*100):0;
+  const recentHighs=highs.slice(-5), recentLows=lows.slice(-5);
+  const hhCount=recentHighs.filter((h,i)=>i>0&&h>recentHighs[i-1]).length, llCount=recentLows.filter((l,i)=>i>0&&l<recentLows[i-1]).length;
+  const aboveVwap=last>vwap, oiTrend=oiData?calcOITrend(oiData):{trend:'flat',deltaPct:'0.000',current:0};
+  let score=50;
+  if(priceVsPrev>0.3) score+=12; else if(priceVsPrev<-0.3) score-=12;
+  if(hhCount>=3) score+=10; if(llCount>=3) score-=10;
+  if(rsi>70) score-=25; else if(rsi>60) score+=8; else if(rsi<30) score+=25; else if(rsi<40) score-=8;
+  const cvdExtreme = Math.abs(cvd.cvdPct) > 15;
+  if(cvd.delta5>0) score += cvdExtreme ? 15 : 10; else score -= cvdExtreme ? 15 : 10;
+  if(aboveVwap) score+=5; else score-=5;
+  if(oiTrend.trend==='rising'&&priceVsPrev>0) score+=8; if(oiTrend.trend==='rising'&&priceVsPrev<0) score-=8;
+  if(oiTrend.trend==='falling'&&priceVsPrev<0) score-=5; if(oiTrend.trend==='falling'&&priceVsPrev>0) score+=3;
+  if(fundingRate>0.001) score-=5; if(fundingRate<-0.001) score+=5;
+  score=Math.min(95,Math.max(5,Math.round(score)));
+  return { bias: score>60?'long':score<40?'short':'neutral', score, rsi, cvdPct:cvd.cvdPct, volPct:cvd.volPct, aboveVwap, vwap:vwap.toFixed(1), priceVsPrev: parseFloat(priceVsPrev.toFixed(2)), oiTrend:oiTrend.trend, oiDeltaPct:oiTrend.deltaPct, oiCurrent:oiTrend.current, fundingRate, frBias:fundingRate>0.001?'longs_hot':fundingRate<-0.001?'shorts_hot':'neutral' };
+}
+
+function analyzeOB(bids,asks) {
+  if(!bids?.length||!asks?.length) return {};
+  const bidVol=bids.slice(0,10).reduce((s,b)=>s+parseFloat(b[1]),0), askVol=asks.slice(0,10).reduce((s,a)=>s+parseFloat(a[1]),0);
+  const imbalance=((bidVol-askVol)/(bidVol+askVol)*100).toFixed(1);
+  const avgBid=bidVol/10,avgAsk=askVol/10;
+  const bidWalls=bids.slice(0,20).filter(b=>parseFloat(b[1])>avgBid*3).map(b=>({price:parseFloat(b[0]),size:parseFloat(b[1])}));
+  const askWalls=asks.slice(0,20).filter(a=>parseFloat(a[1])>avgAsk*3).map(a=>({price:parseFloat(a[0]),size:parseFloat(a[1])}));
+  return { bidVol:bidVol.toFixed(2), askVol:askVol.toFixed(2), imbalance, pressure:parseFloat(imbalance)>15?'bid_dominant':parseFloat(imbalance)<-15?'ask_dominant':'balanced', bidWalls, askWalls, spread:(parseFloat(asks[0][0])-parseFloat(bids[0][0])).toFixed(1), spreadPct:((parseFloat(asks[0][0])-parseFloat(bids[0][0]))/parseFloat(bids[0][0])*100).toFixed(4), topBid:parseFloat(bids[0][0]), topAsk:parseFloat(asks[0][0]) };
+}
+
+function getNearestLiqMagnet(price,direction) {
+  const zones=[{dist:-0.018,size:240,label:'Stop longs'},{dist:-0.025,size:380,label:'Zona shorts'},{dist:-0.042,size:490,label:'Pool liq.'},{dist:-0.055,size:620,label:'Cluster grande'},{dist:-0.075,size:830,label:'Imán mayor'},{dist:0.015,size:210,label:'Stop shorts'},{dist:0.028,size:320,label:'Zona longs'},{dist:0.045,size:480,label:'Pool liq. arriba'},{dist:0.068,size:740,label:'Cluster arriba'}];
+  const filtered=zones.filter(z=>direction==='down'?z.dist<0:z.dist>0);
+  const nearest=filtered.sort((a,b)=>Math.abs(a.dist)-Math.abs(b.dist))[0];
+  if(!nearest) return null;
+  const bonus=nearest.size>700?20:nearest.size>500?15:nearest.size>300?10:5;
+  return { price:(price*(1+nearest.dist)).toFixed(0), size:nearest.size, label:nearest.label, dist:Math.abs(nearest.dist*100).toFixed(1), bonus };
+}
+
+function calcLiqMagnets(price) {
+  const zones=[{dist:-0.018,size:240,label:'Stop longs'},{dist:-0.025,size:380,label:'Zona shorts'},{dist:-0.042,size:490,label:'Pool liq.'},{dist:-0.055,size:620,label:'Cluster grande'},{dist:-0.075,size:830,label:'Imán mayor'},{dist:0.015,size:210,label:'Stop shorts'},{dist:0.028,size:320,label:'Zona longs'},{dist:0.045,size:480,label:'Pool liq. arriba'},{dist:0.068,size:740,label:'Cluster arriba'},{dist:0.095,size:950,label:'Imán crítico'}];
+  return zones.map(z=>({price:parseFloat((price*(1+z.dist)).toFixed(0)),size:z.size,label:z.label,dist:Math.abs(z.dist*100).toFixed(1),direction:z.dist>0?'up':'down',isMajor:z.size>=600,isEstimated:true})).sort((a,b)=>Math.abs(parseFloat(a.dist))-Math.abs(parseFloat(b.dist)));
+}
+
+function calcRealLiqMagnets(price, liqData) {
+  if (!liqData?.zones?.length) return calcLiqMagnets(price);
+  const realZones = liqData.zones.filter(z => z.total >= 50).map(z => { const dist = ((z.price - price) / price * 100), direction = z.price > price ? 'up' : 'down'; const sizeM = Math.round(z.total / 1000 * 10) / 10; const label = z.dominant === 'longs' ? (direction === 'down' ? 'Stop longs reales' : 'Zona longs reales') : (direction === 'up' ? 'Stop shorts reales' : 'Zona shorts reales'); return { price: z.price, size: Math.max(sizeM, 10), label, dist: Math.abs(dist).toFixed(1), direction, isMajor: z.total >= 500, isReal: true, dominant: z.dominant }; }).filter(z => Math.abs(parseFloat(z.dist)) <= 10).sort((a,b) => Math.abs(parseFloat(a.dist)) - Math.abs(parseFloat(b.dist))).slice(0, 15);
+  if (realZones.length >= 5) return realZones;
+  const staticZones = calcLiqMagnets(price);
+  const realPrices = new Set(realZones.map(z => Math.round(z.price / 100) * 100));
+  const filteredStatic = staticZones.filter(z => !realPrices.has(Math.round(z.price / 100) * 100));
+  return [...realZones, ...filteredStatic].sort((a,b) => Math.abs(parseFloat(a.dist)) - Math.abs(parseFloat(b.dist))).slice(0, 12);
+}
+
+function calcFibonacci(klines, price) {
+  if (!klines || klines.length < 20) return null;
+  const highs = klines.map(k => parseFloat(k[2])), lows = klines.map(k => parseFloat(k[3]));
+  const n = klines.length;
+  let swingHigh = -Infinity, swingLow = Infinity, swingHighIdx = 0, swingLowIdx = 0;
+  for (let i = 2; i < n - 2; i++) {
+    if (highs[i] > highs[i-1] && highs[i] > highs[i-2] && highs[i] > highs[i+1] && highs[i] > highs[i+2]) { if (highs[i] > swingHigh) { swingHigh = highs[i]; swingHighIdx = i; } }
+    if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2]) { if (lows[i] < swingLow) { swingLow = lows[i]; swingLowIdx = i; } }
+  }
+  if (swingHigh === -Infinity || swingLow === Infinity) return null;
+  const range = swingHigh - swingLow;
+  if (range <= 0) return null;
+  const isUptrend = swingLowIdx < swingHighIdx;
+  const retLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  const extLevels = [1.272, 1.414, 1.618, 2.0, 2.618];
+  const retracements = retLevels.map(r => ({ level: r, price: isUptrend ? swingHigh - range * r : swingLow + range * r, label: r === 0 ? '0%' : r === 1 ? '100%' : `${(r*100).toFixed(1)}%`, isKey: [0.382, 0.5, 0.618].includes(r) }));
+  const extensions = extLevels.map(r => ({ level: r, price: isUptrend ? swingHigh + range * (r - 1) : swingLow - range * (r - 1), label: `${(r*100).toFixed(1)}%`, isKey: [1.618, 2.618].includes(r) }));
+  let nearestRetrace = null, nearestExt = null, minRetDist = Infinity, minExtDist = Infinity;
+  retracements.forEach(lvl => { const dist = Math.abs(price - lvl.price) / price * 100; if (dist < minRetDist) { minRetDist = dist; nearestRetrace = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; } });
+  extensions.forEach(lvl => { const dist = Math.abs(price - lvl.price) / price * 100; if (dist < minExtDist) { minExtDist = dist; nearestExt = { ...lvl, dist: parseFloat(dist.toFixed(2)) }; } });
+  function fibImpact(nearest, isRetracement) {
+    if (!nearest) return { bonus: 0, penalty: 0, signal: 'none' };
+    const isVeryClose = nearest.dist < 0.3, isClose = nearest.dist < 0.8;
+    if (!isClose) return { bonus: 0, penalty: 0, signal: 'none', description: '' };
+    if (isRetracement && nearest.isKey) return { bonus: isVeryClose ? 15 : 8, penalty: 0, signal: isUptrend ? 'long_bounce' : 'short_bounce', description: `Precio en retroceso Fib ${nearest.label} — zona de rebote clave` };
+    // Penalización aumentada (12→20, 6→15) — extensiones contrarias causaban WR 39.3%
+    if (!isRetracement && nearest.isKey) return { bonus: 0, penalty: isVeryClose ? 20 : 15, signal: isUptrend ? 'short_exhaustion' : 'long_exhaustion', description: `Precio en extensión Fib ${nearest.label} — zona de agotamiento` };
+    // Niveles no clave (23.6%, 78.6%) no suman bonus — WR 39.3% indicó inflación de señales débiles
+    return { bonus: 0, penalty: 0, signal: 'none', description: '' };
+  }
+  const retImpact = fibImpact(nearestRetrace, true);
+  const extImpact = fibImpact(nearestExt, false);
+  return {
+    swingHigh: parseFloat(swingHigh.toFixed(1)), swingLow: parseFloat(swingLow.toFixed(1)),
+    isUptrend, range: parseFloat(range.toFixed(1)),
+    retracements: retracements.map(r => ({ ...r, price: parseFloat(r.price.toFixed(1)) })),
+    extensions: extensions.map(r => ({ ...r, price: parseFloat(r.price.toFixed(1)) })),
+    nearestRetrace: nearestRetrace ? { ...nearestRetrace, price: parseFloat(nearestRetrace.price.toFixed(1)) } : null,
+    nearestExt: nearestExt ? { ...nearestExt, price: parseFloat(nearestExt.price.toFixed(1)) } : null,
+    retImpact, extImpact, totalBonus: retImpact.bonus + extImpact.bonus, totalPenalty: retImpact.penalty + extImpact.penalty
+  };
+}
+
+function detectDivergences(klines15m, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib=null) {
+  try {
+  if (!klines15m || !Array.isArray(klines15m) || klines15m.length < 20) return [];
+  const divergences=[];
+  const closes=klines15m.map(k=>parseFloat(k[4]||0));
+  if (!closes || closes.length < 20 || closes.every(c => isNaN(c) || c === 0)) return [];
+  const highs=klines15m.map(k=>parseFloat(k[2])), lows=klines15m.map(k=>parseFloat(k[3])), volumes=klines15m.map(k=>parseFloat(k[5]));
+  const cvd=calcCVD(klines15m), vwap=calcVWAP(klines15m);
+  const rsiValues=[];
+  for(let i=15;i<closes.length;i++) rsiValues.push(calcRSI(closes.slice(0,i+1)));
+  const lastRSI=rsiValues[rsiValues.length-1], prevRSI=rsiValues[rsiValues.length-4], prevRSI8=rsiValues[rsiValues.length-8]||prevRSI;
+  const lastHigh=Math.max(...highs.slice(-3)),prevHigh=Math.max(...highs.slice(-8,-3)),prevHigh2=Math.max(...highs.slice(-14,-8));
+  const lastLow=Math.min(...lows.slice(-3)),prevLow=Math.min(...lows.slice(-8,-3)),prevLow2=Math.min(...lows.slice(-14,-8));
+  const lastClose=closes[closes.length-1], prevClose5=closes.length>=6?closes[closes.length-6]:closes[0]||0, prevClose10=closes.length>=11?closes[closes.length-11]:closes[0]||0;
+  const priceUp=lastClose>prevClose5, priceDown=lastClose<prevClose5, priceUp10=lastClose>prevClose10, priceDown10=lastClose<prevClose10;
+  const cvdFalling=cvd.delta5<0, cvdRising=cvd.delta5>0, cvdAgressive=Math.abs(cvd.cvdPct)>5;
+  const avgVol=volumes.slice(-20).reduce((a,b)=>a+b,0)/20, lastVol=volumes[volumes.length-1];
+  const volClimaxUp=lastVol>avgVol*2.5&&priceUp, volClimaxDown=lastVol>avgVol*2.5&&priceDown;
+  const trend4h=bias4h?.bias||'neutral', trend1d=bias1d?.bias||'neutral';
+  const bearishContext=trend4h==='short'||trend1d==='short', bullishContext=trend4h==='long'||trend1d==='long';
+  const oiRising=oiTrend15m?.trend==='rising', oiFalling=oiTrend15m?.trend==='falling';
+  const aboveVwap=lastClose>vwap, belowVwap=lastClose<vwap;
+  const hasBidWall=(ob.bidWalls?.length||0)>0, hasAskWall=(ob.askWalls?.length||0)>0;
+  const wsAnomaly = wsState[Object.keys(wsState).find(k => k.startsWith(price > 10000 ? 'BTC' : 'ETH'))]?.anomaly;
+  const wsAnomalyBonus = (dir) => {
+    if (!wsAnomaly || Date.now() - wsAnomaly.time > 5 * 60 * 1000) return 0;
+    if (wsAnomaly.isSweep) return wsAnomaly.direction === dir ? 10 : -8;
+    if (wsAnomaly.isWhale) return wsAnomaly.direction === dir ? 5 : -5;
+    return 0;
+  };
+
+  if(priceUp&&cvdRising&&cvdAgressive){
+    let prob=65; if(hasAskWall) prob+=10; if(oiFalling) prob+=8; if(lastRSI>65) prob+=7; if(lastRSI>75) prob+=8;
+    if(bearishContext) prob+=8; if(aboveVwap) prob+=5; if(volClimaxUp) prob+=7;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    const hasRealSweep = wsAnomalyBonus('SHORT') > 0;
+    if (!hasRealSweep) prob = Math.min(82, prob);
+    divergences.push({ type:'absorcion_compras', name:'Absorción de Compras', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`CVD +${cvd.cvdPct}% agresivo con muro vendedor — precio se agotará.${bearishContext?' 4H/1D bajista.':''}${!hasRealSweep?' (sin barrida confirmada)':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',hasAskWall&&'Muro ask',oiFalling&&'OI cayendo',bearishContext&&'Contexto bajista',hasRealSweep&&'⚡ Barrida WS confirmada'].filter(Boolean) });
+  }
+  if(priceDown&&cvdFalling&&cvdAgressive){
+    let prob=65; if(hasBidWall) prob+=8; if(lastRSI<35) prob+=10; if(lastRSI<25) prob+=8;
+    if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5; if(volClimaxDown) prob+=7;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    const hasRealWhale = wsAnomalyBonus('LONG') > 0;
+    if (!hasRealWhale) prob = Math.min(82, prob);
+    divergences.push({ type:'absorcion_ventas', name:'Absorción de Ventas', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`${hasRealWhale?'🐋 Ballena confirmada':'CVD'} ${cvd.cvdPct}% mientras precio baja.${bullishContext?' 4H/1D alcista.':''}${!hasRealWhale?' (sin ballena confirmada)':''}`, action:prob>=82?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[hasBidWall&&'Muro bid',oiFalling&&'OI cayendo',bullishContext&&'Contexto alcista',hasRealWhale&&'⚡ Barrida WS confirmada'].filter(Boolean) });
+  }
+  if(lastHigh>prevHigh&&lastRSI<prevRSI-3){
+    let prob=64; if(cvdFalling) prob+=15; if(oiRising&&priceUp) prob+=5; if(lastRSI>60) prob+=7; if(lastRSI>70) prob+=8;
+    if(bearishContext) prob+=8; if(hasAskWall) prob+=8; if(prevHigh>prevHigh2&&prevRSI<prevRSI8-2) prob+=10;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'rsi_bajista', name:'Div. RSI Bajista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`Precio HH ($${parseInt(lastHigh).toLocaleString()}) pero RSI LH (${lastRSI} vs ${prevRSI}) — momentum agotado.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[cvdFalling&&'CVD divergente',bearishContext&&'Contexto bajista',hasAskWall&&'Muro ask'].filter(Boolean) });
+  }
+  if(lastLow<prevLow&&lastRSI>prevRSI+3){
+    let prob=64; if(cvdRising) prob+=15; if(lastRSI<40) prob+=7; if(lastRSI<30) prob+=8;
+    if(bullishContext) prob+=8; if(hasBidWall) prob+=8; if(prevLow<prevLow2&&prevRSI>prevRSI8+2) prob+=10;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'rsi_alcista', name:'Div. RSI Alcista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Precio LL ($${parseInt(lastLow).toLocaleString()}) pero RSI HL (${lastRSI} vs ${prevRSI}) — vendedores agotados.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista',hasBidWall&&'Muro bid'].filter(Boolean) });
+  }
+  if(priceUp&&cvdFalling){
+    let prob=65; if(oiRising) prob+=8; if(lastRSI>60) prob+=8; if(cvdAgressive) prob+=7; if(bearishContext) prob+=8; if(aboveVwap) prob+=5;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'cvd_precio_bajista', name:'Div. CVD/Precio Bajista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`Precio sube pero CVD ${cvd.cvdPct}% negativo — subida sin respaldo real de volumen.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',bearishContext&&'Contexto bajista'].filter(Boolean) });
+  }
+  if(priceDown&&cvdRising){
+    let prob=65; if(lastRSI<40) prob+=10; if(cvdAgressive) prob+=7; if(bullishContext) prob+=8; if(belowVwap) prob+=5; if(oiFalling) prob+=5;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'cvd_precio_alcista', name:'Div. CVD/Precio Alcista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`Precio baja pero CVD +${cvd.cvdPct}% — demanda oculta absorbiendo la caída.`, action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'Shorts cerrando',bullishContext&&'Contexto alcista'].filter(Boolean) });
+  }
+  if(priceUp&&oiFalling&&cvdFalling){
+    let prob=72; if(lastRSI>65) prob+=8; if(bearishContext) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'bull_trap', name:'Trampa Alcista', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:'Subida con OI cayendo y CVD negativo — shorts liquidados sin demanda real. Fakeout.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'OI cayendo',cvdFalling&&'CVD divergente',bearishContext&&'Contexto bajista'].filter(Boolean) });
+  }
+  if(priceDown&&oiFalling&&cvdRising){
+    let prob=72; if(lastRSI<35) prob+=8; if(bullishContext) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'bear_trap', name:'Trampa Bajista', direction:'LONG', probability:Math.min(95,prob), entry:price, description:'Caída con OI cayendo y CVD positivo — longs liquidados sin oferta real. Fakeout bajista.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiFalling&&'OI cayendo',cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista'].filter(Boolean) });
+  }
+  if(oiRising&&priceDown10&&cvdFalling){
+    let prob=70; if(lastRSI<50) prob+=8; if(bearishContext) prob+=10; if(cvdAgressive) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'short_buildup', name:'Short Buildup', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio cae — nuevas posiciones cortas con convicción.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdFalling&&'CVD negativo',bearishContext&&'Contexto bajista'].filter(Boolean) });
+  }
+  if(oiRising&&priceUp10&&cvdRising){
+    let prob=70; if(lastRSI>50&&lastRSI<70) prob+=8; if(bullishContext) prob+=10; if(cvdAgressive) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'long_buildup', name:'Long Buildup', direction:'LONG', probability:Math.min(95,prob), entry:price, description:'OI sube mientras precio sube — nuevas posiciones largas con convicción.', action:prob>=80?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[oiRising&&'OI subiendo',cvdRising&&'CVD positivo',bullishContext&&'Contexto alcista'].filter(Boolean) });
+  }
+  if(Math.abs(fundingRate)>0.0008){
+    const isBull=fundingRate>0; let prob=68;
+    if(Math.abs(fundingRate)>0.002) prob+=12; else if(Math.abs(fundingRate)>0.001) prob+=7;
+    const nearLiq=getNearestLiqMagnet(price,isBull?'down':'up'); if(nearLiq) prob+=nearLiq.bonus;
+    divergences.push({ type:'funding_extremo', name:'Funding Extremo', direction:isBull?'SHORT':'LONG', probability:Math.min(90,prob), entry:price, description:`FR ${(fundingRate*100).toFixed(4)}% — ${isBull?'longs sobrecalentados':'shorts en riesgo'}`, action:prob>=75?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:[`FR ${(fundingRate*100).toFixed(4)}%`] });
+  }
+  if(cvd.isClimax){
+    const dir=cvd.delta5>0?'SHORT':'LONG'; let prob=73;
+    const nearLiq=getNearestLiqMagnet(price,dir==='SHORT'?'down':'up'); if(nearLiq) prob+=nearLiq.bonus;
+    if(dir==='SHORT'&&bearishContext) prob+=8; if(dir==='LONG'&&bullishContext) prob+=8;
+    prob += wsAnomalyBonus(dir);
+    divergences.push({ type:'volumen_climax', name:'Volumen Clímax', direction:dir, probability:Math.min(92,prob), entry:price, description:`Vol extremo (2.5x avg) — agotamiento inminente. Clímax = reversión.`, action:prob>=80?'ENTRAR':'ESPERAR', liqTarget:nearLiq?.price, confluence:['Vol 2.5x avg'] });
+  }
+  if(oiRising&&fundingRate<-0.0005&&priceDown){
+    let prob=72; if(cvdFalling) prob+=8; if(bearishContext) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'down'); if(nearLiq) prob+=nearLiq.bonus;
+    divergences.push({ type:'long_squeeze', name:'Squeeze de Longs', direction:'SHORT', probability:Math.min(90,prob), entry:price, description:'OI alto + funding negativo + precio cae — longs liquidados en cascada.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding negativo','Precio cayendo'] });
+  }
+  if(oiRising&&fundingRate>0.002&&priceUp){
+    let prob=72; if(cvdRising) prob+=8; if(bullishContext) prob+=8;
+    const nearLiq=getNearestLiqMagnet(price,'up'); if(nearLiq) prob+=nearLiq.bonus;
+    divergences.push({ type:'short_squeeze', name:'Squeeze de Shorts', direction:'LONG', probability:Math.min(90,prob), entry:price, description:'OI alto + funding muy positivo + precio sube — shorts liquidados.', action:prob>=78?'ESPERAR CONFIRMACIÓN':'MONITOREAR', liqTarget:nearLiq?.price, confluence:['OI alto','Funding extremo','Precio subiendo'] });
+  }
+  if (fib) {
+    divergences.forEach(d => {
+      const isLong = d.direction === 'LONG'; const isShort = d.direction === 'SHORT';
+      if (fib.retImpact.signal === 'long_bounce' && isLong) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      if (fib.retImpact.signal === 'short_bounce' && isShort) d.probability = Math.min(95, d.probability + fib.retImpact.bonus);
+      if (fib.extImpact.signal === 'short_exhaustion' && isShort) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'long_exhaustion' && isLong) d.probability = Math.min(95, d.probability + 10);
+      if (fib.extImpact.signal === 'short_exhaustion' && isLong) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+      if (fib.extImpact.signal === 'long_exhaustion' && isShort) d.probability = Math.max(5, d.probability - fib.extImpact.penalty);
+    });
+  }
+  const priceDownRegime = closes.length >= 6 ? lastClose < closes[closes.length - 6] : false;
+  const bearExhaustion = [lastRSI < 35, cvdRising && priceDownRegime, oiFalling && priceDownRegime, fundingRate < -0.0005, lastVol > avgVol * 2 && priceDownRegime].filter(Boolean).length;
+  if (bearExhaustion >= 3) {
+    let prob = 65 + (bearExhaustion * 6);
+    if (bullishContext) prob = Math.min(95, prob + 10); if (hasBidWall) prob = Math.min(95, prob + 8);
+    const nearLiq = getNearestLiqMagnet(price, 'up'); if (nearLiq) prob += nearLiq.bonus;
+    prob += wsAnomalyBonus('LONG');
+    divergences.push({ type:'regime_change_long', name:'Cambio de Régimen — LONG', direction:'LONG', probability:Math.min(95,prob), entry:price, description:`${bearExhaustion}/5 señales agotamiento bajista — ${bearExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela alcista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI<35&&'RSI sobreventa',cvdRising&&priceDownRegime&&'CVD divergente',oiFalling&&priceDownRegime&&'OI cayendo',fundingRate<-0.0005&&'Funding negativo'].filter(Boolean) });
+  }
+  const priceUpRegime = closes.length >= 6 ? lastClose > closes[closes.length - 6] : false;
+  const bullExhaustion = [lastRSI > 68, cvdFalling && priceUpRegime, oiFalling && priceUpRegime, fundingRate > 0.001, lastVol > avgVol * 2 && priceUpRegime].filter(Boolean).length;
+  if (bullExhaustion >= 3) {
+    let prob = 65 + (bullExhaustion * 6);
+    if (bearishContext) prob = Math.min(95, prob + 10); if (hasAskWall) prob = Math.min(95, prob + 8);
+    const nearLiq = getNearestLiqMagnet(price, 'down'); if (nearLiq) prob += nearLiq.bonus;
+    prob += wsAnomalyBonus('SHORT');
+    divergences.push({ type:'regime_change_short', name:'Cambio de Régimen — SHORT', direction:'SHORT', probability:Math.min(95,prob), entry:price, description:`${bullExhaustion}/5 señales agotamiento alcista — ${bullExhaustion>=4?'Señal MUY FUERTE.':'Confirmar con vela bajista.'}`, action:prob>=82?'ENTRAR':prob>=68?'ESPERAR':'NO ENTRAR', liqTarget:nearLiq?.price, confluence:[lastRSI>68&&'RSI sobrecompra',cvdFalling&&priceUpRegime&&'CVD divergente',oiFalling&&priceUpRegime&&'OI cayendo',fundingRate>0.001&&'Funding positivo'].filter(Boolean) });
+  }
+  const divsWithLiq = applyLiqZoneProbBonus(divergences, price);
+  return divsWithLiq.sort((a,b)=>b.probability-a.probability);
+  } catch(e) { console.error('detectDivergences error:', e.message); return []; }
+}
+
+function calcCombinedSignal(divergences, bias4h, bias1d, whaleData=null, deepOB=null, fib=null, bias1h=null) {
+  const absorcionCount = divergences.filter(d => d.type === 'absorcion_compras' || d.type === 'absorcion_ventas').length;
+  if(!divergences.length) return { direction:'ESPERAR', probability:30, action:'ESPERAR', reason:'Sin divergencias activas' };
+  const shorts=divergences.filter(d=>d.direction==='SHORT'), longs=divergences.filter(d=>d.direction==='LONG');
+  const shortScore=shorts.reduce((s,d)=>s+d.probability,0)/(shorts.length||1), longScore=longs.reduce((s,d)=>s+d.probability,0)/(longs.length||1);
+  let direction=shorts.length>longs.length?'SHORT':longs.length>shorts.length?'LONG':'ESPERAR';
+  let prob=direction==='SHORT'?shortScore:direction==='LONG'?longScore:30;
+  const regimeLong = divergences.find(d => d.type === 'regime_change_long'), regimeShort = divergences.find(d => d.type === 'regime_change_short');
+  if (regimeLong && direction === 'SHORT') { prob = Math.max(5, prob - 30); if (regimeLong.probability >= 80) prob = 5; }
+  if (regimeShort && direction === 'LONG') { prob = Math.max(5, prob - 30); if (regimeShort.probability >= 80) prob = 5; }
+  const both4hAnd1dLong = bias4h?.bias==='long' && bias1d?.bias==='long', both4hAnd1dShort = bias4h?.bias==='short' && bias1d?.bias==='short';
+  const only4hLong = bias4h?.bias==='long' && bias1d?.bias!=='short', only4hShort = bias4h?.bias==='short' && bias1d?.bias!=='long';
+  if(direction==='LONG'){
+    if(both4hAnd1dLong) prob=Math.min(95,prob+15); else if(only4hLong) prob=Math.min(95,prob+8);
+    if(bias1d?.bias==='short') prob=Math.max(5,prob-10);
+    if(bias1h?.bias==='short') prob=Math.max(5,prob-12);
+  }
+  if(direction==='SHORT'){
+    if(both4hAnd1dShort) prob=Math.min(95,prob+15); else if(only4hShort) prob=Math.min(95,prob+8);
+    if(bias1d?.bias==='long') prob=Math.max(5,prob-10);
+    if(bias1h?.bias==='long') prob=Math.max(5,prob-12);
+  }
+  if(whaleData && whaleData.whaleCount >= 3) {
+    if(direction==='LONG' && whaleData.whaleBias==='bull') prob=Math.min(95,prob+10);
+    if(direction==='SHORT' && whaleData.whaleBias==='bear') prob=Math.min(95,prob+10);
+    if(direction==='LONG' && whaleData.whaleBias==='bear') prob=Math.max(5,prob-8);
+    if(direction==='SHORT' && whaleData.whaleBias==='bull') prob=Math.max(5,prob-8);
+  }
+  if(deepOB) {
+    const deepImb = deepOB.deepImbalance || 0;
+    if(direction==='LONG' && deepImb > 20) prob=Math.min(95,prob+6);
+    if(direction==='SHORT' && deepImb < -20) prob=Math.min(95,prob+6);
+  }
+  if (fib) {
+    if (direction === 'LONG' && fib.retImpact.signal === 'long_bounce') prob = Math.min(95, prob + fib.totalBonus);
+    if (direction === 'SHORT' && fib.retImpact.signal === 'short_bounce') prob = Math.min(95, prob + fib.totalBonus);
+    if (direction === 'SHORT' && fib.extImpact.signal === 'short_exhaustion') prob = Math.min(95, prob + 10);
+    if (direction === 'LONG' && fib.extImpact.signal === 'long_exhaustion') prob = Math.min(95, prob + 10);
+    prob = Math.max(5, prob - fib.totalPenalty);
+    // Bloquear si extensión contraria MUY cercana (<0.3%) — agotamiento inminente
+    // Fix WR 39.3%: señales llegaban al umbral pero perdían por estar en zona de agotamiento Fib
+    if (fib.nearestExt && fib.nearestExt.dist < 0.3) {
+      if (direction === 'LONG' && fib.extImpact.signal === 'long_exhaustion') {
+        prob = Math.min(prob, 60);
+        console.log('⬟ Fib block LONG — extensión agotamiento cercana dist:' + fib.nearestExt.dist + '%');
+      }
+      if (direction === 'SHORT' && fib.extImpact.signal === 'short_exhaustion') {
+        prob = Math.min(prob, 60);
+        console.log('⬟ Fib block SHORT — extensión agotamiento cercana dist:' + fib.nearestExt.dist + '%');
+      }
+    }
+  }
+  if (absorcionCount >= 2) prob = Math.min(95, prob + 8);
+  const topDiv = divergences[0];
+  if (topDiv && absorcionCount >= 1 && divergences.length >= 3) prob = Math.min(95, prob + 5);
+  const isRegimeChange = (regimeLong && direction==='LONG') || (regimeShort && direction==='SHORT');
+  const action = isRegimeChange && prob >= 75 ? '⚠️ CAMBIO DE RÉGIMEN — ENTRAR' : prob>=82?'ENTRAR':prob>=68?'ESPERAR CONFIRMACIÓN':'NO ENTRAR';
+  const fibSummary = fib?.nearestRetrace?.dist < 0.8 ? `Fib ${fib.nearestRetrace.label} cerca` : fib?.nearestExt?.dist < 0.8 ? `Ext Fib ${fib.nearestExt.label} cerca` : null;
+  const whaleSummary = whaleData?.whaleCount > 0 ? `${whaleData.whaleCount} ballenas — ${whaleData.dominance}` : null;
+  return { direction, probability:Math.round(prob), action, shortCount:shorts.length, longCount:longs.length, whaleSummary, fibSummary };
+}
+
+async function fetchForceOrders(symbol) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/allForceOrders?symbol=${symbol}&limit=200`);
+    const orders = res.data || [], bucketSize = symbol.includes('BTC') ? 100 : symbol.includes('ETH') ? 10 : 1;
+    const buckets = {}; let totalLongs = 0, totalShorts = 0;
+    orders.forEach(o => { const price = parseFloat(o.averagePrice || o.price), qty = parseFloat(o.executedQty || o.origQty), usdVal = price * qty, bucket = Math.round(price / bucketSize) * bucketSize; if (!buckets[bucket]) buckets[bucket] = { price: bucket, longLiq: 0, shortLiq: 0, total: 0 }; if (o.side === 'SELL') { buckets[bucket].longLiq += usdVal; totalLongs += usdVal; } else { buckets[bucket].shortLiq += usdVal; totalShorts += usdVal; } buckets[bucket].total += usdVal; });
+    const zones = Object.values(buckets).filter(b => b.total > 10000).sort((a, b) => b.total - a.total).slice(0, 20).map(b => ({ price: b.price, longLiq: Math.round(b.longLiq / 1000), shortLiq: Math.round(b.shortLiq / 1000), total: Math.round(b.total / 1000), dominant: b.longLiq > b.shortLiq ? 'longs' : 'shorts' }));
+    return { zones, totalLongs: Math.round(totalLongs/1000), totalShorts: Math.round(totalShorts/1000), count: orders.length };
+  } catch(e) { return { zones: [], totalLongs: 0, totalShorts: 0, count: 0 }; }
+}
+
+async function fetchDeepOrderBook(symbol) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=500`);
+    const bids = res.data.bids || [], asks = res.data.asks || [], bucketSize = symbol.includes('BTC') ? 50 : symbol.includes('ETH') ? 5 : 0.5;
+    function clusterSide(orders, side) {
+      const buckets = {};
+      orders.forEach(([priceStr, qtyStr]) => { const price = parseFloat(priceStr), qty = parseFloat(qtyStr), bucket = Math.round(price / bucketSize) * bucketSize; buckets[bucket] = (buckets[bucket] || 0) + qty; });
+      const vals = Object.values(buckets), mean = vals.reduce((a,b)=>a+b,0) / vals.length;
+      const std = Math.sqrt(vals.reduce((s,v)=>s+Math.pow(v-mean,2),0)/vals.length), threshold = mean + std * 1.2;
+      return Object.entries(buckets).filter(([, qty]) => qty > threshold).map(([price, qty]) => ({ price: parseFloat(price), qty: parseFloat(qty.toFixed(2)), usdVal: Math.round(parseFloat(price) * qty), side, strength: qty / mean, breakProb: Math.round(Math.min(85, Math.max(15, 100 - (qty/mean)*15))) })).sort((a, b) => b.qty - a.qty).slice(0, 8);
+    }
+    const bidClusters = clusterSide(bids, 'bid'), askClusters = clusterSide(asks, 'ask');
+    const totalBidLiq = bids.reduce((s,[,q])=>s+parseFloat(q),0), totalAskLiq = asks.reduce((s,[,q])=>s+parseFloat(q),0);
+    const deepImbalance = ((totalBidLiq - totalAskLiq) / (totalBidLiq + totalAskLiq) * 100).toFixed(1);
+    return { bidClusters, askClusters, deepImbalance: parseFloat(deepImbalance), totalBidLiq: totalBidLiq.toFixed(1), totalAskLiq: totalAskLiq.toFixed(1) };
+  } catch(e) { return { bidClusters: [], askClusters: [], deepImbalance: 0 }; }
+}
+
+async function detectWhales(symbol, price) {
+  try {
+    const res = await axios.get(`${BINANCE}/fapi/v1/aggTrades?symbol=${symbol}&limit=500`);
+    const trades = res.data || [], whaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 3000000 : 1000000;
+    const whales = []; let whaleBuyVol = 0, whaleSellVol = 0, totalBuyVol = 0, totalSellVol = 0;
+    trades.forEach(t => { const tradePrice = parseFloat(t.p), qty = parseFloat(t.q), usdVal = tradePrice * qty, isBuy = !t.m; if (isBuy) totalBuyVol += usdVal; else totalSellVol += usdVal; if (usdVal >= whaleThreshold) { whales.push({ price: tradePrice, qty: qty.toFixed(3), usdVal: Math.round(usdVal), side: isBuy ? 'buy' : 'sell', time: t.T, isAggressive: true }); if (isBuy) whaleBuyVol += usdVal; else whaleSellVol += usdVal; } });
+    const whaleCVD = whaleBuyVol - whaleSellVol, whaleBias = whaleCVD > 0 ? 'bull' : whaleCVD < 0 ? 'bear' : 'neutral';
+    const whaleRatio = (whaleBuyVol + whaleSellVol) / (totalBuyVol + totalSellVol + 1) * 100;
+    return { whales: whales.slice(-10), whaleBuyVol: Math.round(whaleBuyVol / 1000), whaleSellVol: Math.round(whaleSellVol / 1000), whaleCVD: Math.round(whaleCVD / 1000), whaleBias, whaleCount: whales.length, whaleRatio: parseFloat(whaleRatio.toFixed(1)), lastWhale: whales[whales.length - 1] || null, dominance: whaleBuyVol > whaleSellVol * 1.5 ? 'buyers' : whaleSellVol > whaleBuyVol * 1.5 ? 'sellers' : 'balanced' };
+  } catch(e) { return { whales: [], whaleBuyVol: 0, whaleSellVol: 0, whaleCVD: 0, whaleBias: 'neutral', whaleCount: 0 }; }
+}
+
+app.get('/api/market/:symbol', async (req, res) => {
+  try {
+    const symbol=req.params.symbol||'BTCUSDT';
+    const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`), axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`), axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`), axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`), axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
+      fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
+    ]);
+    const price_temp = parseFloat(ticker.data.lastPrice);
+    const [liqData, deepOB, whaleData] = await Promise.all([fetchBestLiqData(symbol, price_temp), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
+    const price=parseFloat(ticker.data.lastPrice), fundingRate=parseFloat(funding.data.lastFundingRate);
+    if(!k15m.data||!Array.isArray(k15m.data)||k15m.data.length<20) throw new Error('Insufficient kline data');
+    const closes15m=k15m.data.map(k=>parseFloat(k[4])), cvd15m=calcCVD(k15m.data), vrvp=calcVRVP(k15m.data), bb15m=calcBB(closes15m), vwap15m=calcVWAP(k15m.data), rsi15m=calcRSI(closes15m);
+    const ob=analyzeOB(obRes.data.bids,obRes.data.asks), liqMagnets=calcRealLiqMagnets(price, liqData);
+    const oiTrend15m=calcOITrend(oi15mHist), oiTrend1h=calcOITrend(oi1hHist), oiTrend4h=calcOITrend(oi4hHist);
+    const bias15m=calcBias(k15m.data,oi15mHist,fundingRate), bias1h=calcBias(k1h.data,oi1hHist,fundingRate), bias4h=calcBias(k4h.data,oi4hHist,fundingRate), bias1d=calcBias(k1d.data,null,fundingRate);
+    const fib15m = calcFibonacci(k15m.data, price), fib4h = calcFibonacci(k4h.data, price);
+    const divergences=detectDivergences(k15m.data,ob,price,fundingRate,bias4h,bias1d,oiTrend15m,fib15m);
+    const doublePatterns=detectDoublePatterns(k15m.data,price), allDivs=[...divergences,...doublePatterns];
+    const combinedSignal=calcCombinedSignal(allDivs,bias4h,bias1d,whaleData,deepOB,fib15m,bias1h);
+    const scalpSignal=calcScalpSignal(allDivs,calcBias(k15m.data,oi15mHist,fundingRate),calcBias(k1h.data,oi1hHist,fundingRate),bias4h);
+    const vols=k15m.data.slice(-5).map(k=>parseFloat(k[5])), avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4, lastVol=vols[vols.length-1];
+    const volDeltaPct=avgVol5>0?((lastVol-avgVol5)/avgVol5*100).toFixed(1):'0.0';
+    const wsMetrics = getWsMetrics(symbol);
+    res.json({ price, change24h:parseFloat(ticker.data.priceChangePercent), volume24h:parseFloat(ticker.data.quoteVolume), openInterest:parseFloat(oiRes.data.openInterest), fundingRate, markPrice:parseFloat(funding.data.markPrice), indexPrice:parseFloat(funding.data.indexPrice), rsi15m, rsiOverbought:rsi15m>70, rsiOversold:rsi15m<30, cvd15m, vrvp, bb15m, vwap15m:vwap15m.toFixed(1), oiTrends:{ tf15m:oiTrend15m, tf1h:oiTrend1h, tf4h:oiTrend4h }, volDeltaPct:parseFloat(volDeltaPct), orderBook:ob, liqMagnets, divergences:allDivs, combinedSignal, scalpSignal, doublePatterns, bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d }, klines:k15m.data.slice(-20), liqData, deepOB, whaleData, fibonacci:{ tf15m:fib15m, tf4h:fib4h }, wsMetrics });
+  } catch(e) { console.error('Market error:',e.message); res.status(500).json({ error:e.message }); }
+});
+
+app.post('/api/analyze', async (req, res) => {
+  try {
+    const { marketData:d, symbol } = req.body;
+    const now=Date.now();
+    if(analyzeCache[symbol]&&now-analyzeCache[symbol].ts<60000) return res.json(analyzeCache[symbol].data);
+    const strongDivs2 = (d.divergences||[]).filter(dv => dv.probability >= 90);
+    const _shortCount = (d.divergences||[]).filter(dv => dv.direction === 'SHORT' && dv.probability >= 90).length;
+    const _longCount  = (d.divergences||[]).filter(dv => dv.direction === 'LONG'  && dv.probability >= 90).length;
+    const _domCount = Math.max(_shortCount, _longCount), _oppCount = Math.min(_shortCount, _longCount);
+    const _hasMajority = _domCount >= 2 && _domCount > _oppCount * 1.5, _hasAny = _domCount >= 1 && _oppCount === 0;
+    if (!_hasMajority && !_hasAny && d.combinedSignal?.direction === 'ESPERAR') {
+      return res.json({ direction:'ESPERAR', confidence:30, action:'NO ENTRAR', reasoning:'Señales divididas — sin ventaja clara en ninguna dirección.', entry:d.price, tp1:d.price, tp2:d.price, sl:d.price, rr:'1:0' });
+    }
+    const divSummary = strongDivs2.length ? strongDivs2.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') : (d.divergences||[]).slice(0,2).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') || 'Ninguna';
+    const b=d.bias;
+    const wsM = getWsMetrics(symbol);
+    const wsNote = wsM && Math.abs(wsM.cvdLive) > 20 ? `\nWS TIEMPO REAL: CVD=${wsM.cvdLive.toFixed(1)}% vol=${wsM.volumeMultiplier.toFixed(1)}x ballenas=${wsM.whaleCount}` : '';
+    const prompt=`Eres un trader experto en futuros perpetuos de criptomonedas. Analiza y da señal precisa.
+
+MERCADO: ${symbol} — $${d.price} (${d.change24h>0?'+':''}${d.change24h?.toFixed(2)}%)
+RSI 15m: ${d.rsi15m} ${d.rsiOverbought?'⚠ SOBRECOMPRA':d.rsiOversold?'⚠ SOBREVENTA':''}
+CVD 15m: delta5=${d.cvd15m?.delta5?.toFixed(0)}, tendencia=${d.cvd15m?.trend}, cvdPct=${d.cvd15m?.cvdPct}%
+OI: ${d.openInterest?.toFixed(0)} | Funding: ${(d.fundingRate*100)?.toFixed(4)}%
+VRVP: POC=$${d.vrvp?.poc} VAH=$${d.vrvp?.vah} VAL=$${d.vrvp?.val}
+
+SESGO MULTI-TF:
+15m: ${b?.tf15m?.bias}(${b?.tf15m?.score}) RSI=${b?.tf15m?.rsi} OI=${b?.tf15m?.oiTrend}(${b?.tf15m?.oiDeltaPct}%) FR=${(b?.tf15m?.fundingRate*100)?.toFixed(4)}%
+1H:  ${b?.tf1h?.bias}(${b?.tf1h?.score}) RSI=${b?.tf1h?.rsi} OI=${b?.tf1h?.oiTrend}(${b?.tf1h?.oiDeltaPct}%)
+4H:  ${b?.tf4h?.bias}(${b?.tf4h?.score}) RSI=${b?.tf4h?.rsi} OI=${b?.tf4h?.oiTrend}(${b?.tf4h?.oiDeltaPct}%)
+1D:  ${b?.tf1d?.bias}(${b?.tf1d?.score}) RSI=${b?.tf1d?.rsi}
+
+DIVERGENCIAS (${d.divergences?.length||0}):
+${divSummary}
+
+SEÑAL: ${d.combinedSignal?.direction} ${d.combinedSignal?.probability}% — ${d.combinedSignal?.action}
+LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
+IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
+
+REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
+R:R OBLIGATORIO: usa los imanes de liquidación del mapa como TP objetivo. Para SHORT: TP1 = primera zona de liquidación ABAJO del precio (Stop longs). Para LONG: TP1 = primera zona de liquidación ARRIBA (Stop shorts). SL en zona de resistencia/soporte real. TP1 debe ser mínimo 1.5x la distancia del SL. Si no hay zona de liquidación accesible con R:R ≥1:1.5, da direction=ESPERAR.
+
+Responde SOLO JSON sin markdown:
+{"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo principal o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
+
+    const response=await anthropic.messages.create({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{role:'user',content:prompt}] });
+    const text=response.content[0].text;
+    const signal=JSON.parse(text.replace(/```json|```/g,'').trim());
+    const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
+    const _rrRisk   = signal.direction === 'SHORT' ? (signal.sl - signal.entry) : (signal.entry - signal.sl);
+    const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
+    signal.rr = `1:${_rrVal.toFixed(1)}`;
+    if (signal.confidence < 90) { signal.direction = 'ESPERAR'; signal.action = 'NO ENTRAR'; signal.reasoning = `Confianza ${signal.confidence}% insuficiente (mínimo 90%). ` + signal.reasoning; }
+    analyzeCache[symbol]={ ts:now, data:signal };
+    try { await supabase.from('signals').insert({ symbol, direction:signal.direction, confidence:signal.confidence, entry:signal.entry, tp1:signal.tp1, tp2:signal.tp2, sl:signal.sl, rr:signal.rr, reasoning:signal.reasoning, market_data:d }); } catch(_){}
+    if(signal.confidence>=parseInt(process.env.ALERT_MIN_CONFIDENCE||'90')&&process.env.TELEGRAM_CHAT_ID&&signal.rr&&parseFloat(signal.rr.replace('1:',''))>=1.5){
+      const e=signal.direction==='LONG'?'▲':signal.direction==='SHORT'?'▼':'◆';
+      const msg=`${e} ${signal.direction} — ${symbol}\n💰 Entry: $${signal.entry}\n🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}\n🛑 SL: $${signal.sl} | ${signal.rr}\n📊 ${signal.confidence}% — ${signal.action}\n💬 ${signal.reasoning}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg); } catch(_){}
+    }
+    res.json(signal);
+  } catch(e) { console.error('Analyze error:',e.message); res.status(500).json({ error:e.message, detail:e.message.includes('api')||e.message.includes('key')?'Verifica ANTHROPIC_API_KEY en Railway Variables':'Error procesando análisis' }); }
+});
+
+app.post('/api/trades', async (req, res) => { try { const {data,error}=await supabase.from('trades').insert(req.body); if(error) throw error; res.json({success:true,data}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/trades', async (req, res) => { try { const {data,error}=await supabase.from('trades').select('*').order('created_at',{ascending:false}).limit(50); if(error) throw error; res.json(data); } catch(e){ res.status(500).json({error:e.message}); } });
+
+let alertCache = {};
+const signalHistory = {};
+
+function confirmSignal(symbol, direction, probability) {
+  if (!signalHistory[symbol]) signalHistory[symbol] = [];
+  const now = Date.now(), minConf = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90');
+  if (probability < minConf) return { confirmed: false, count: 0 };
+  const history = signalHistory[symbol];
+  history.push({ direction, probability, timestamp: now });
+  signalHistory[symbol] = history.filter(s => now - s.timestamp < 45 * 60 * 1000).slice(-3);
+  const recent = signalHistory[symbol], sameDirection = recent.filter(s => s.direction === direction && now - s.timestamp < 30 * 60 * 1000);
+  if (sameDirection.length < 2) return { confirmed: false, count: sameDirection.length };
+  if (probability >= 92 && sameDirection.length >= 1) return { confirmed: true, count: sameDirection.length, avgProbability: probability };
+  const avgProb = Math.round(sameDirection.reduce((s,r) => s + r.probability, 0) / sameDirection.length);
+  return { confirmed: true, count: sameDirection.length, avgProbability: avgProb };
+}
+
+function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
+
+const analysisInProgress = {};
+async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
+  if (analysisInProgress[symbol] && !force) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
+  analysisInProgress[symbol] = true;
+  try {
+    await new Promise(r => setTimeout(r, 1000));
+    const price_temp_res = await axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`);
+    const price_temp = parseFloat(price_temp_res.data.lastPrice);
+    const [oiRes,funding,k15m,k1h] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`), axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`), axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+    ]);
+    await new Promise(r => setTimeout(r, 500));
+    const [k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`), axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=20`),
+      fetchOIHistory(symbol,'15m',10), fetchOIHistory(symbol,'1h',10), fetchOIHistory(symbol,'4h',10),
+    ]);
+    const ticker = price_temp_res;
+    const [liqData, deepOB, whaleData] = await Promise.all([fetchBestLiqData(symbol, price_temp), fetchDeepOrderBook(symbol), detectWhales(symbol, price_temp)]);
+    const price = parseFloat(ticker.data.lastPrice), fundingRate = parseFloat(funding.data.lastFundingRate);
+    if (!k15m.data || !Array.isArray(k15m.data) || k15m.data.length < 20) return;
+    const closes15m = k15m.data.map(k => parseFloat(k[4])), cvd15m = calcCVD(k15m.data), vrvp = calcVRVP(k15m.data);
+    const ob = analyzeOB(obRes.data.bids, obRes.data.asks);
+    const oiTrend15m = calcOITrend(oi15mHist), oiTrend1h = calcOITrend(oi1hHist), oiTrend4h = calcOITrend(oi4hHist);
+    const bias15m = calcBias(k15m.data, oi15mHist, fundingRate);
+    const bias1h  = calcBias(k1h.data?.length >= 20 ? k1h.data : k15m.data, oi1hHist, fundingRate);
+    const bias4h  = calcBias(k4h.data?.length >= 20 ? k4h.data : k15m.data, oi4hHist, fundingRate);
+    const bias1d  = calcBias(k1d.data?.length >= 20 ? k1d.data : k15m.data, null, fundingRate);
+    const fib15m = calcFibonacci(k15m.data, price);
+    const divergences = detectDivergences(k15m.data, ob, price, fundingRate, bias4h, bias1d, oiTrend15m, fib15m);
+    const combinedSignal = calcCombinedSignal(divergences, bias4h, bias1d, whaleData, deepOB, fib15m, bias1h);
+    const minConfidence = parseInt(process.env.ALERT_MIN_CONFIDENCE || '90'), minDivergences = parseInt(process.env.ALERT_MIN_DIVERGENCES || '2');
+    if (combinedSignal.direction === 'ESPERAR') { clearSignalHistory(symbol); return; }
+    if (combinedSignal.probability < minConfidence) return;
+    if (divergences.length < minDivergences) return;
+    const shortDivs = divergences.filter(d => d.direction === 'SHORT').length, longDivs = divergences.filter(d => d.direction === 'LONG').length;
+    const hasClearMajority = combinedSignal.direction === 'SHORT' ? (shortDivs >= 2 && shortDivs > longDivs * 1.5) : (longDivs >= 2 && longDivs > shortDivs * 1.5);
+    if (!hasClearMajority && !force) { console.log(`⏭ Auto-análisis omitido — señales divididas: ${shortDivs}S vs ${longDivs}L para ${symbol}`); clearSignalHistory(symbol); return; }
+    if (!hasClearMajority && force) console.log(`⚡ Análisis forzado (campana) — señales divididas: ${shortDivs}S vs ${longDivs}L para ${symbol}`);
+    const confirmation = confirmSignal(symbol, combinedSignal.direction, combinedSignal.probability);
+    if (!confirmation.confirmed) return;
+    const cacheKey = `${symbol}_${combinedSignal.direction}_${Math.floor(price / 100)}`;
+    const now = Date.now();
+    if (alertCache[cacheKey] && now - alertCache[cacheKey] < 45 * 60 * 1000 && !force) return;
+    alertCache[cacheKey] = now;
+    const marketData = { price, change24h: parseFloat(ticker.data.priceChangePercent), fundingRate, openInterest: parseFloat(oiRes.data.openInterest), rsi15m: calcRSI(closes15m), cvd15m, vrvp, volDeltaPct: 0, orderBook: ob, liqMagnets: calcLiqMagnets(price).slice(0,5), divergences: divergences.slice(0,4), combinedSignal, bias: { tf15m: bias15m, tf1h: bias1h, tf4h: bias4h, tf1d: bias1d } };
+    const strongDivs = divergences.filter(d => d.probability >= 90);
+    const divSummary = strongDivs.slice(0,4).map(d => `${d.name}: ${d.direction} ${d.probability}% — ${d.description}`).join('\n');
+    const b = marketData.bias;
+    const prompt = `Eres un trader experto en futuros perpetuos. Analiza y da señal precisa.
+MERCADO: ${symbol} — $${price}
+RSI 15m: ${marketData.rsi15m} | CVD: ${cvd15m.trend} ${cvd15m.cvdPct}%
+OI: ${marketData.openInterest?.toFixed(0)} | Funding: ${(fundingRate*100).toFixed(4)}%
+VRVP: POC=$${vrvp.poc} VAH=$${vrvp.vah} VAL=$${vrvp.val}
+SESGO: 15m=${b.tf15m?.bias}(${b.tf15m?.score}) 1H=${b.tf1h?.bias}(${b.tf1h?.score}) 4H=${b.tf4h?.bias}(${b.tf4h?.score}) 1D=${b.tf1d?.bias}(${b.tf1d?.score})
+DIVERGENCIAS (${divergences.length}):
+${divSummary}
+SEÑAL: ${combinedSignal.direction} ${combinedSignal.probability}% — ${combinedSignal.action}
+REGLAS: RSI>72 no long; RSI<28 no short.
+R:R OBLIGATORIO: usa los imanes de liquidación del mapa como TP objetivo. Para SHORT: TP1 = primera zona de liquidación ABAJO del precio (Stop longs). Para LONG: TP1 = primera zona de liquidación ARRIBA (Stop shorts). SL en zona de resistencia/soporte real. TP1 debe ser mínimo 1.5x la distancia del SL. Si no hay zona de liquidación accesible con R:R ≥1:1.5, da direction=ESPERAR.
+Responde SOLO JSON sin markdown:
+{"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
+    const response = await anthropic.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    const text = response.content[0].text;
+    const signal = JSON.parse(text.replace(/```json|```/g, '').trim());
+    const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
+    const _rrRisk   = signal.direction === 'SHORT' ? (signal.sl - signal.entry) : (signal.entry - signal.sl);
+    const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
+    signal.rr = `1:${_rrVal.toFixed(1)}`;
+    if (signal.confidence < minConfidence) return;
+    if (_rrVal < 1.5 && signal.direction !== 'ESPERAR') { console.log(`⚠️ Alerta descartada — R:R ${_rrVal.toFixed(2)} < 1.5 para ${symbol}`); return; }
+    if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) return;
+    const dir = signal.direction, emoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '🟡';
+    const fibNote = fib15m?.nearestRetrace?.dist < 0.8 ? `\n⬟ Fib ${fib15m.nearestRetrace.label} — ${fib15m.retImpact.description}` : '';
+    const whaleNote = whaleData?.whaleCount >= 3 ? `\n🐋 Ballenas: ${whaleData.dominance} (${whaleData.whaleCount} trades)` : '';
+    const wsM = getWsMetrics(symbol);
+    const wsNote2 = wsM?.anomaly && Date.now() - wsM.anomaly.time < 5*60*1000 ? `\n⚡ WS: ${wsM.anomaly.reason}` : '';
+    const msg = `${emoji} *${dir}* — ${symbol}\n━━━━━━━━━━━━━━\n💰 Entry: *$${signal.entry?.toLocaleString()}*\n🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}\n🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}\n━━━━━━━━━━━━━━\n📊 Confianza: *${signal.confidence}%* — ${signal.action}\n📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas\n💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}${wsNote2}\n━━━━━━━━━━━━━━\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
+    await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
+    console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
+    try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90'), trend1d = bias1d.bias;
+    const trendOk = signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : false;
+    const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
+    if (canAutoTrade) {
+      try {
+        const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
+        const { data: oppTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+        if (oppTrades?.length) {
+          for (const oppTrade of oppTrades) {
+            const currentPrice = wsState[symbol]?.lastPrice || signal.entry, entry = parseFloat(oppTrade.entry);
+            const priceDiff = oppTrade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
+            const _lev2 = parseFloat(oppTrade.leverage || 10);
+            const pnl_usd = parseFloat((parseFloat(oppTrade.size_usd) * priceDiff * _lev2).toFixed(2));
+            const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
+            await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'signal_reversal', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', oppTrade.id);
+            console.log(`🔄 Reversión de señal: cerrado ${oppTrade.direction} ${symbol} @ $${currentPrice}`);
+            if (process.env.TELEGRAM_CHAT_ID) { const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {} }
+          }
+        }
+        const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+        if (!existing || existing.length === 0) {
+          const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
+          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
+          console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
+          if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
+        }
+      } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
+    }
   } catch(e) {
-    results.innerHTML = `<div style="color:#ff4d6d;text-align:center;padding:10px">Error: ${e.message}</div>`;
+    console.error(`❌ Auto-analysis error ${symbol}:`, e.message, e.response?.status || '');
+    if (e.response?.status === 429) { console.log(`⏳ Rate limit 429 — esperando 30s`); await new Promise(r => setTimeout(r, 30000)); }
   }
-  btn.disabled = false; btn.textContent = '▶ Correr';
+  finally { analysisInProgress[symbol] = false; }
 }
 
-function renderBacktestResults(d) {
-  const el = document.getElementById('bt-results');
-  function statsHtml(stats, color, label, icon) {
-    const wrCol = stats.winRate >= 55 ? '#00d68f' : stats.winRate >= 45 ? '#f59e0b' : '#ff4d6d';
-    const pnlCol = stats.totalPnl >= 0 ? '#00d68f' : '#ff4d6d';
-    const pfCol = stats.profitFactor >= 1.5 ? '#00d68f' : stats.profitFactor >= 1 ? '#f59e0b' : '#ff4d6d';
-    return `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid ${color}33">
-      <div style="font-size:10px;color:${color};font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${icon} ${label} — ${stats.total} trades</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px">
-        <div style="text-align:center"><div style="font-size:9px;color:#4b5563">Win Rate</div><div class="mono" style="font-size:14px;font-weight:700;color:${wrCol}">${stats.winRate}%</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:#4b5563">PnL</div><div class="mono" style="font-size:14px;font-weight:700;color:${pnlCol}">${stats.totalPnl >= 0 ? '+' : ''}$${stats.totalPnl}</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:#4b5563">P.Factor</div><div class="mono" style="font-size:14px;font-weight:700;color:${pfCol}">${stats.profitFactor}</div></div>
-        <div style="text-align:center"><div style="font-size:9px;color:#4b5563">Max DD</div><div class="mono" style="font-size:14px;font-weight:700;color:#ff4d6d">-$${stats.maxDrawdown}</div></div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:6px;font-size:10px;color:#4b5563">
-        <span>✓ Avg ganador: <span style="color:#00d68f">+$${stats.avgWin}</span></span>
-        <span>✗ Avg perdedor: <span style="color:#ff4d6d">-$${stats.avgLoss}</span></span>
-      </div>
-    </div>`;
+function startAlertJob() {
+  if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
+    console.log('⚠️ Alertas Telegram desactivadas');
+    setInterval(monitorPaperTrades, 2 * 60 * 1000);
+
+  // ── Mean Reversion scanner — cada 1 minuto
+  setInterval(runMeanRevScanner, 60 * 1000);
+  console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
+    setTimeout(monitorPaperTrades, 15000);
+    return;
   }
-  const mode = document.getElementById('bt-mode')?.value || 'both';
-  let html = `<div style="font-size:10px;color:#4b5563;margin-bottom:8px;text-align:center">${d.symbol} · últimos ${d.days} días · $1,000 x5 por trade</div><div style="display:flex;flex-direction:column;gap:8px">`;
-  if (mode === 'momentum' && d.momentum) {
-    const s = d.momentum.stats;
-    const zCol = s.zScore >= 5 ? '#00d68f' : s.zScore >= 1.96 ? '#f59e0b' : s.zScore <= -1.96 ? '#ff4d6d' : '#4b5563';
-    const zLabel = s.zScore >= 5 ? '★★★ Muy significativo' : s.zScore >= 1.96 ? '★ Significativo' : s.zScore <= -5 ? '✗✗✗ Edge INVERSO muy fuerte' : s.zScore <= -1.96 ? '✗ Edge inverso' : '— No significativo';
-    html += `${statsHtml(s, '#00d68f', 'Momentum (vol spike + tendencia)', '📈')}`;
-    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(0,214,143,.3)">
-      <div style="font-size:10px;color:#00d68f;font-weight:700;margin-bottom:6px">📈 Validación estadística</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        <span style="font-size:11px;color:#4b5563">Z-Score</span>
-        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
-      </div>
-      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
-      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · z>1.96 = edge momentum · z<-1.96 = edge mean reversion</div>
-    </div>`;
-  } else if (mode === 'filtered' && d.filtered) {
-    const s = d.filtered.stats;
-    const zCol = s.zScore >= 5 ? '#00d68f' : s.zScore >= 1.96 ? '#f59e0b' : s.zScore <= -1.96 ? '#ff4d6d' : '#4b5563';
-    const zLabel = s.zScore >= 5 ? '★★★ Edge muy significativo' : s.zScore >= 1.96 ? '★ Edge significativo' : s.zScore <= -1.96 ? '✗ Edge inverso' : '— No significativo';
-    html += `${statsHtml(s, '#8b5cf6', 'Filtered (todos los filtros del sistema)', '🔬')}`;
-    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(139,92,246,.3)">
-      <div style="font-size:10px;color:#8b5cf6;font-weight:700;margin-bottom:6px">🔬 Validación estadística</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        <span style="font-size:11px;color:#4b5563">Z-Score</span>
-        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
-      </div>
-      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
-      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · Incluye Fix A/B/C2 · Parámetros ajustables arriba</div>
-    </div>`;
-  } else if (mode === 'base' && d.base) {
-    const s = d.base.stats;
-    const zCol = Math.abs(s.zScore||0) >= 5 ? '#00d68f' : Math.abs(s.zScore||0) >= 1.96 ? '#f59e0b' : '#ff4d6d';
-    const zLabel = Math.abs(s.zScore||0) >= 5 ? '★★★ Muy significativo' : Math.abs(s.zScore||0) >= 1.96 ? '★ Significativo' : '✗ No significativo';
-    html += `${statsHtml(s, '#f59e0b', 'Base (vol spike + mean reversion)', '📊')}`;
-    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(245,158,11,.3)">
-      <div style="font-size:10px;color:#f59e0b;font-weight:700;margin-bottom:6px">📈 Validación estadística</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        <span style="font-size:11px;color:#4b5563">Z-Score</span>
-        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
-      </div>
-      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
-      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · z>1.96 = significativo · z>5 = muy significativo</div>
-    </div>`;
+  const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
+  console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
+  setInterval(monitorPaperTrades, 2 * 60 * 1000);
+  setTimeout(monitorPaperTrades, 15000);
+  setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
+  setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
+  const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
+  wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
+  console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
+  setInterval(async () => {
+    for (const sym of wsSymbols) {
+      try {
+        const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
+        const vols = k1m.data.map(k => parseFloat(k[4]) * parseFloat(k[5]));
+        if (wsState[sym.trim()]) wsState[sym.trim()].avgVolume1m = vols.reduce((a,b)=>a+b,0)/vols.length;
+      } catch(_) {}
+    }
+  }, 5 * 60 * 1000);
+}
+
+app.get('/api/prices', async (req, res) => {
+  try {
+    const [btc, eth, sol, xau] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=BTCUSDT`), axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=ETHUSDT`),
+      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=SOLUSDT`), axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=XAUUSDT`).catch(() => ({ data: { price: '0' } })),
+    ]);
+    res.json({ BTCUSDT: parseFloat(btc.data.price), ETHUSDT: parseFloat(eth.data.price), SOLUSDT: parseFloat(sol.data.price), XAUUSDT: parseFloat(xau.data.price) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/alert/trigger', async (req, res) => {
+  const symbol = req.body.symbol || 'BTCUSDT', force = req.body.force === true;
+  await runAutoAnalysis(symbol, force);
+  res.json({ ok: true, message: `Análisis disparado para ${symbol}${force?' (forzado)':''}` });
+});
+
+app.get('/api/alert/status', (req, res) => {
+  res.json({ active: !!(process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN), intervalMin: parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','), minConfidence: parseInt(process.env.ALERT_MIN_CONFIDENCE || '90') });
+});
+
+app.post('/api/paper/open', async (req, res) => {
+  try {
+    const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || 1000, leverage: leverage || 10, divergences, fibonacci, source: source || 'manual', status: 'open', opened_at: new Date().toISOString() }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, trade: data });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/paper/close/:id', async (req, res) => {
+  try {
+    const { id } = req.params, { close_price, close_reason } = req.body;
+    const { data: trade, error: fetchErr } = await supabase.from('paper_trades').select('*').eq('id', id).single();
+    if (fetchErr) throw fetchErr;
+    const entry = parseFloat(trade.entry), closeP = parseFloat(close_price), size = parseFloat(trade.size_usd);
+    const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
+    const _lev3 = parseFloat(trade.leverage || 10);
+    const pnl_usd = parseFloat((size * priceDiff * _lev3).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev3 * 100).toFixed(2));
+    const finalStatus = close_reason === 'tp1' || close_reason === 'tp2' ? 'won' : close_reason === 'sl' ? 'lost' : close_reason === 'manual' ? 'cancelled' : 'closed';
+    const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd: finalStatus === 'cancelled' ? 0 : pnl_usd, pnl_pct: finalStatus === 'cancelled' ? 0 : pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, trade: data });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/paper/open', async (req, res) => {
+  try { const { data, error } = await supabase.from('paper_trades').select('*').eq('status', 'open').order('created_at', { ascending: false }); if (error) throw error; res.json(data); } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/paper/stats', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('paper_trades').select('*').in('status', ['won', 'lost']).order('created_at', { ascending: false }).limit(100);
+    if (error) throw error;
+    const total = data.length, won = data.filter(t => t.status === 'won').length, lost = data.filter(t => t.status === 'lost').length;
+    const winRate = total > 0 ? ((won / total) * 100).toFixed(1) : 0;
+    const totalPnl = data.reduce((s, t) => s + (parseFloat(t.pnl_usd) || 0), 0);
+    const avgWin = won > 0 ? data.filter(t=>t.status==='won').reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0) / won : 0;
+    const avgLoss = lost > 0 ? Math.abs(data.filter(t=>t.status==='lost').reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0) / lost) : 0;
+    const profitFactor = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : '∞';
+    let peak = 0, maxDD = 0, cumPnl = 0;
+    data.slice().reverse().forEach(t => { cumPnl += parseFloat(t.pnl_usd) || 0; if (cumPnl > peak) peak = cumPnl; const dd = peak - cumPnl; if (dd > maxDD) maxDD = dd; });
+    res.json({ total, won, lost, winRate: parseFloat(winRate), totalPnl: parseFloat(totalPnl.toFixed(2)), avgWin: parseFloat(avgWin.toFixed(2)), avgLoss: parseFloat(avgLoss.toFixed(2)), profitFactor, maxDrawdown: parseFloat(maxDD.toFixed(2)), recentTrades: data.slice(0, 20) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+async function monitorPaperTrades() {
+  try {
+    const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('status', 'open');
+    if (!openTrades?.length) return;
+    for (const trade of openTrades) {
+      try {
+        const priceRes = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${trade.symbol}`);
+        const currentPrice = parseFloat(priceRes.data.price), entryPrice = parseFloat(trade.entry);
+        if (Math.abs(currentPrice - entryPrice) / entryPrice * 100 > 50) continue;
+        const tp1 = parseFloat(trade.tp1), tp2 = parseFloat(trade.tp2) || tp1;
+        let sl = parseFloat(trade.sl);
+        const isLong = trade.direction === 'LONG';
+        const priceDiffPct = isLong ? (currentPrice - entryPrice) / entryPrice * 100 : (entryPrice - currentPrice) / entryPrice * 100;
+        const slDistance = Math.abs(entryPrice - sl);
+        let newSl = sl;
+        if (priceDiffPct >= 1.5) {
+          const trailDistance = slDistance * 0.5;
+          newSl = isLong ? Math.max(sl, currentPrice - trailDistance) : Math.min(sl, currentPrice + trailDistance);
+        } else if (priceDiffPct >= 1.0) {
+          newSl = isLong ? Math.max(sl, entryPrice + (currentPrice - entryPrice) * 0.5) : Math.min(sl, entryPrice - (entryPrice - currentPrice) * 0.5);
+        } else if (priceDiffPct >= 0.5) {
+          newSl = isLong ? Math.max(sl, entryPrice) : Math.min(sl, entryPrice);
+        }
+        if ((isLong && newSl > sl) || (!isLong && newSl < sl)) {
+          const newSlRounded = parseFloat(newSl.toFixed(1));
+          await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
+          sl = newSlRounded;
+          console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(0)} → ${newSlRounded.toFixed(0)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
+        }
+        if (priceDiffPct >= 1.0) {
+          try {
+            const liqRes = await fetchForceOrders(trade.symbol), currentTp1 = parseFloat(trade.tp1);
+            if (liqRes?.zones?.length) {
+              const relevantZones = liqRes.zones.filter(z => isLong ? z.price > currentPrice : z.price < currentPrice).filter(z => isLong ? z.price > currentTp1 : z.price < currentTp1).sort((a, b) => isLong ? a.price - b.price : b.price - a.price);
+              if (relevantZones.length) { const newTp1 = parseFloat(relevantZones[0].price.toFixed(1)); await supabase.from('paper_trades').update({ tp1: newTp1 }).eq('id', trade.id); console.log(`🎯 TP dinámico: ${trade.direction} ${trade.symbol} TP ${currentTp1.toFixed(0)} → ${newTp1.toFixed(0)}`); }
+            }
+          } catch(_) {}
+        }
+        let closeReason = null;
+        if (trade.direction === 'LONG') {
+          if (currentPrice >= tp2 && tp2 > tp1) closeReason = 'tp2';
+          else if (currentPrice >= tp1) closeReason = 'tp1';
+          else if (currentPrice <= sl) closeReason = 'sl';
+        } else {
+          if (currentPrice <= tp2 && tp2 < tp1) closeReason = 'tp2';
+          else if (currentPrice <= tp1) closeReason = 'tp1';
+          else if (currentPrice >= sl) closeReason = 'sl';
+        }
+        if (closeReason) {
+          const entry = parseFloat(trade.entry), priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
+          const _lev4 = parseFloat(trade.leverage || 10);
+          const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; }
+          await supabase.from('paper_trades').update({ status: closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
+          if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
+            const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
+            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}`;
+            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
+          }
+        }
+      } catch(_) {}
+    }
+  } catch(e) { console.error('Monitor paper trades error:', e.message); }
+}
+
+app.get('/api/news/latest', async (req, res) => {
+  const sources = [
+    async () => { const r = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=12', { timeout: 7000, headers: { 'User-Agent': 'Mozilla/5.0' } }); if (!r.data?.Data?.length) throw new Error('empty'); return r.data.Data.map(n => ({ title: n.title, source: n.source_info?.name || n.source || 'CryptoCompare', published_on: n.published_on, url: n.url })); },
+    async () => { const r = await axios.get('https://cointelegraph.com/rss', { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } }); const items = []; const rx = /<item>([\s\S]*?)<\/item>/g; let m; while ((m = rx.exec(r.data)) !== null && items.length < 8) { const it = m[1]; const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || ''; const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || ''; const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || ''; if (title) items.push({ title, source: 'CoinTelegraph', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url }); } if (!items.length) throw new Error('empty'); return items; },
+    async () => { const r = await axios.get('https://decrypt.co/feed', { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } }); const items = []; const rx = /<item>([\s\S]*?)<\/item>/g; let m; while ((m = rx.exec(r.data)) !== null && items.length < 8) { const it = m[1]; const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || ''; const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || ''; const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || ''; if (title) items.push({ title, source: 'Decrypt', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url }); } if (!items.length) throw new Error('empty'); return items; }
+  ];
+  for (const source of sources) {
+    try { const items = await source(); if (items?.length) { console.log(`✅ Noticias: ${items.length} items`); return res.json(items); } } catch(e) { console.log(`⚠️ Fuente noticias falló: ${e.message}`); }
+  }
+  res.json([]);
+});
+
+app.get('/api/ml/insights', async (req, res) => {
+  try {
+    const { data: trades, error } = await supabase.from('paper_trades').select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci').in('status', ['won','lost']).order('created_at', { ascending: false }).limit(2000);
+    if (error) throw error;
+    if (!trades || trades.length < 10) return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
+    const won = trades.filter(t => t.status === 'won'), lost = trades.filter(t => t.status === 'lost');
+    function avg(arr, key) { const vals = arr.map(t => parseFloat(t.market_data?.[key])).filter(v => !isNaN(v) && v >= 0 && v <= 100); return vals.length > 0 ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : null; }
+    const totalPnl = trades.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+    const avgWin = won.length > 0 ? won.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/won.length : 0;
+    const avgLoss = lost.length > 0 ? Math.abs(lost.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0)/lost.length) : 0;
+    let peak=0,maxDD=0,cumPnl=0; [...trades].reverse().forEach(t=>{cumPnl+=parseFloat(t.pnl_usd)||0;if(cumPnl>peak)peak=cumPnl;const dd=peak-cumPnl;if(dd>maxDD)maxDD=dd;});
+    const wr = (won.length/trades.length)*100;
+    const withFib = trades.filter(t=>t.market_data?.fib_bonus>0), withWhales = trades.filter(t=>t.market_data?.whale_count>=3);
+    const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
+    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
+    const bySource = {};
+    for (const src of ['scalping','auto','manual','sweep','wall','meanrev','backtest']) {
+      const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
+      if (!st.length) continue;
+      bySource[src] = { total:st.length, won:sw.length, lost:st.length-sw.length, winRate:parseFloat(((sw.length/Math.max(st.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(st.length,1)).toFixed(2)) };
+    }
+    const topDivs = won.reduce((acc,t)=>{const d=t.market_data?.top_divergence;if(d)acc[d]=(acc[d]||0)+1;return acc;},{});
+    const recs = [];
+    const avgConfW = parseFloat(avg(won,'confidence')), avgConfL = parseFloat(avg(lost,'confidence'));
+    if (!isNaN(avgConfW) && !isNaN(avgConfL) && avgConfW > avgConfL+5) recs.push(`Subir umbral a ${Math.round(avgConfW-2)}% (ganadores: ${avgConfW.toFixed(0)}% vs perdedores: ${avgConfL.toFixed(0)}%)`);
+    const wrFib = withFib.length > 0 ? (withFib.filter(t=>t.status==='won').length/withFib.length*100) : 0;
+    if (wrFib > wr+10) recs.push(`Fibonacci mejora WR en ${(wrFib-wr).toFixed(1)}% — priorizar señales con Fib`);
+    res.json({ total:trades.length, won:won.length, lost:lost.length, winRate: wr.toFixed(1), totalPnl: totalPnl.toFixed(2), avgWin: avgWin.toFixed(2), avgLoss: avgLoss.toFixed(2), profitFactor: avgLoss>0?(avgWin/avgLoss).toFixed(2):'∞', maxDrawdown: maxDD.toFixed(2), avgConfidenceWon: avg(won,'confidence'), avgConfidenceLost: avg(lost,'confidence'), avgRsiWon: avg(won,'rsi_15m'), avgRsiLost: avg(lost,'rsi_15m'), winRateWithFib: wrFib.toFixed(1), winRateWithWhales: withWhales.length>0?(withWhales.filter(t=>t.status==='won').length/withWhales.length*100).toFixed(1):'0', winRateAligned4h: aligned4h.length>0?(aligned4h.filter(t=>t.status==='won').length/aligned4h.length*100).toFixed(1):'n/a', topDivergencesWon: topDivs, bySource, recommendations: recs });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ml/optimize', async (req, res) => {
+  try {
+    const { data: trades } = await supabase.from('paper_trades').select('*').in('status',['won','lost']).not('market_data','is',null).limit(1000);
+    if (!trades || trades.length < 50) return res.json({ optimized:false, reason:'insufficient_data', trades:trades?.length||0 });
+    const won = trades.filter(t=>t.status==='won'), winRate = won.length/trades.length;
+    const adjustments = {}, recommendations = [];
+    const highConf = trades.filter(t=>(t.market_data?.confidence||0)>=90), lowConf = trades.filter(t=>(t.market_data?.confidence||0)<90);
+    if (highConf.length>=10&&lowConf.length>=10) { const wrH=highConf.filter(t=>t.status==='won').length/highConf.length, wrL=lowConf.filter(t=>t.status==='won').length/lowConf.length; if(wrH>wrL+0.1){adjustments.min_confidence={from:85,to:88};recommendations.push(`Alta confianza WR: ${(wrH*100).toFixed(1)}% vs baja: ${(wrL*100).toFixed(1)}%`);} }
+    res.json({ optimized:true, trades:trades.length, winRate:(winRate*100).toFixed(1), adjustments_count:Object.keys(adjustments).length, adjustments, recommendations });
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+let scalpingActive = false, scalpingInterval = null;
+
+app.post('/api/scalping/start', (req, res) => {
+  if (scalpingActive) return res.json({ ok: false, message: 'Scalping ya activo' });
+  const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','), intervalMin = parseFloat(process.env.SCALP_INTERVAL_MIN || '3');
+  scalpingActive = true;
+  scalpingInterval = setInterval(async () => { for (const sym of symbols) { try { await runScalpingAnalysis(sym.trim()); } catch(_) {} await new Promise(r => setTimeout(r, 2000)); } }, intervalMin * 60 * 1000);
+  setTimeout(async () => { for (const sym of symbols) { try { await runScalpingAnalysis(sym.trim()); } catch(_) {} } }, 5000);
+  res.json({ ok: true, message: `Scalping activado cada ${intervalMin} min` });
+});
+
+app.post('/api/scalping/stop', (req, res) => {
+  if (!scalpingActive) return res.json({ ok: false, message: 'Scalping no estaba activo' });
+  clearInterval(scalpingInterval); scalpingActive = false; scalpingInterval = null;
+  res.json({ ok: true, message: 'Scalping desactivado' });
+});
+
+app.get('/api/scalping/status', (req, res) => {
+  res.json({ active: scalpingActive, intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'), threshold: parseInt(process.env.SCALP_THRESHOLD || '88'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',') });
+});
+
+function detectDoublePatterns(klines15m, price) {
+  try {
+    if (!klines15m || klines15m.length < 30) return [];
+    const patterns = [], highs = klines15m.map(k => parseFloat(k[2])), lows = klines15m.map(k => parseFloat(k[3])), closes = klines15m.map(k => parseFloat(k[4])), volumes = klines15m.map(k => parseFloat(k[5])), n = closes.length, lookback = 20;
+    let peaks = [], troughs = [];
+    for (let i = n - lookback; i < n - 1; i++) {
+      if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) peaks.push({ idx: i, price: highs[i], vol: volumes[i] });
+      if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) troughs.push({ idx: i, price: lows[i], vol: volumes[i] });
+    }
+    if (peaks.length >= 2) {
+      const p1 = peaks[peaks.length-2], p2 = peaks[peaks.length-1];
+      const priceDiff = Math.abs(p1.price - p2.price) / p1.price * 100, volDivergence = p2.vol < p1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, p1.idx+1)), rsi2 = calcRSI(closes.slice(0, p2.idx+1)), rsiDivergence = rsi2 < rsi1 - 3;
+      const neckline = Math.min(...lows.slice(p1.idx, p2.idx+1)), priceBelowPattern = price < p2.price * 0.985;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence) && !priceBelowPattern) {
+        let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price < p2.price*0.999) prob+=7;
+        patterns.push({ type:'double_top', name:'┳ Double Top — Scalping Bajista', direction:'SHORT', probability:Math.min(92,prob), entry:price, tp:neckline-(p2.price-neckline)*0.8, sl:p2.price*1.002, description:`Double Top en $${parseInt(p2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal bajista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
+      }
+    }
+    if (troughs.length >= 2) {
+      const t1 = troughs[troughs.length-2], t2 = troughs[troughs.length-1];
+      const priceDiff = Math.abs(t1.price - t2.price) / t1.price * 100, volDivergence = t2.vol < t1.vol * 0.85;
+      const rsi1 = calcRSI(closes.slice(0, t1.idx+1)), rsi2 = calcRSI(closes.slice(0, t2.idx+1)), rsiDivergence = rsi2 > rsi1 + 3;
+      const neckline = Math.max(...highs.slice(t1.idx, t2.idx+1));
+      const priceAbovePattern = price > t2.price * 1.015, priceBelowNeckline = price < neckline * 0.998;
+      if (priceDiff < 0.4 && (volDivergence || rsiDivergence) && !priceAbovePattern && !priceBelowNeckline) {
+        let prob = 74; if(volDivergence) prob+=10; if(rsiDivergence) prob+=8; if(price > t2.price*1.001) prob+=7;
+        patterns.push({ type:'double_bottom', name:'▲ Double Bottom — Scalping Alcista', direction:'LONG', probability:Math.min(92,prob), entry:price, tp:neckline+(neckline-t2.price)*0.8, sl:t2.price*0.998, description:`Double Bottom en $${parseInt(t2.price).toLocaleString()} con ${rsiDivergence?'RSI divergente':'volumen decreciente'} — señal alcista.`, action:prob>=80?'ENTRAR':'ESPERAR', scalpMode:true });
+      }
+    }
+    return patterns;
+  } catch(e) { return []; }
+}
+
+function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
+  try {
+    if (!divergences.length) return { direction: 'ESPERAR', probability: 30, action: 'ESPERAR' };
+    const longs = divergences.filter(d => d.direction === 'LONG'), shorts = divergences.filter(d => d.direction === 'SHORT');
+    let longScore = longs.reduce((s,d)=>s+d.probability,0)/Math.max(longs.length,1), shortScore = shorts.reduce((s,d)=>s+d.probability,0)/Math.max(shorts.length,1);
+    if(bias15m?.bias==='long') longScore+=12; if(bias15m?.bias==='short') shortScore+=12;
+    if(bias1h?.bias==='long') longScore+=8; if(bias1h?.bias==='short') shortScore+=8;
+    if(bias4h?.bias==='long') longScore+=4; if(bias4h?.bias==='short') shortScore+=4;
+    if(divergences.some(d=>d.type==='double_top')) shortScore+=15;
+    if(divergences.some(d=>d.type==='double_bottom')) longScore+=15;
+    const direction = shortScore > longScore ? 'SHORT' : longScore > shortScore ? 'LONG' : 'ESPERAR';
+    const prob = direction === 'SHORT' ? shortScore : direction === 'LONG' ? longScore : 30;
+    return { direction, probability:Math.min(95,Math.round(prob)), action:prob>=78?'ENTRAR':prob>=65?'ESPERAR':'NO ENTRAR', mode:'scalping' };
+  } catch(e) { return { direction:'ESPERAR', probability:30, action:'ESPERAR' }; }
+}
+
+const scalpingInProgress = {};
+async function runScalpingAnalysis(symbol = 'BTCUSDT') {
+  if (scalpingInProgress[symbol]) return;
+  // Filtro horario — horas con WR <35%
+  if (isHoraBloqueada()) {
+    const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+    console.log(`⏰ Scalping bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+    return;
+  }
+  scalpingInProgress[symbol] = true;
+  try {
+    const [tickerRes, k3m, obRes, fundingRes] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=50`),
+      axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
+    ]);
+    const price = parseFloat(tickerRes.data.lastPrice), fundingRate = parseFloat(fundingRes.data.lastFundingRate);
+    const ob = analyzeOB(obRes.data.bids, obRes.data.asks), cvd3m = calcCVD(k3m.data), rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
+    const fib3m = calcFibonacci(k3m.data, price), wsM = getWsMetrics(symbol);
+
+    // v4.4.16 C4: filtros duros de scalping — basados en análisis de ganadores vs perdedores
+    // Ganadores: RSI prom 49, |imb| 56%, OI falling 2/3
+    // Perdedores: RSI prom 61, |imb| 44%, OI falling 1/4
+    // Calcular OI 15m para el filtro (ya se calcula abajo para mlData, anticipamos aquí)
+    let oi15mForFilter = null;
+    try {
+      const oi15mPre = await fetchOIHistory(symbol, '15m', 5);
+      oi15mForFilter = calcOITrend(oi15mPre);
+    } catch(_) {}
+
+    let longScore = 0, shortScore = 0;
+    const imb = parseFloat(ob.imbalance||0);
+    if (imb > 20) longScore += 30; if (imb < -20) shortScore += 30;
+    if (cvd3m.trend==='bull'&&cvd3m.cvdPct>5) longScore += 25; if (cvd3m.trend==='bear'&&cvd3m.cvdPct<-5) shortScore += 25;
+    if (rsi3m < 35) longScore += 15; if (rsi3m > 65) shortScore += 15;
+    if (fib3m?.retImpact?.signal==='long_bounce') longScore += 15; if (fib3m?.retImpact?.signal==='short_bounce') shortScore += 15;
+    if (ob.bidWalls?.length>0) longScore += 10; if (ob.askWalls?.length>0) shortScore += 10;
+    if (wsM?.anomaly && Date.now() - wsM.anomaly.time < 3*60*1000) {
+      if (wsM.anomaly.direction === 'LONG') longScore += 20;
+      if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
+    }
+    let bias1hScalp = null, bias4hScalp2 = null;
+    try {
+      const [k1hSc, k4hSc, oi1hSc, oi4hSc] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        fetchOIHistory(symbol,'1h',5), fetchOIHistory(symbol,'4h',5),
+      ]);
+      bias1hScalp = calcBias(k1hSc.data, oi1hSc, fundingRate);
+      bias4hScalp2 = calcBias(k4hSc.data, oi4hSc, fundingRate);
+    } catch(_) {}
+    const bias1hScore = bias1hScalp?.score || 50, bias4hScore = bias4hScalp2?.score || 50;
+    const scalpDirPreview = longScore > shortScore ? 'LONG' : 'SHORT';
+    const wsAnomaly = wsM?.anomaly;
+    // PREMIAR pullback: 4H alineado + 1H en contra = señal de entrada óptima (100% WR)
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'LONG') {
+      longScore += 20; console.log("✅ Pullback alcista detectado " + symbol + " — bonus +20");
+    }
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'SHORT') {
+      shortScore += 20; console.log("✅ Pullback bajista detectado " + symbol + " — bonus +20");
+    }
+    // BLOQUEAR sobreextensión: 4H y 1H ambos misma dirección = precio ya corrió mucho (25% WR)
+    const hasSweep = wsAnomaly?.isSweep && Date.now() - wsAnomaly.time < 3 * 60 * 1000;
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'LONG' && !hasSweep) { console.log("⛔ Scalp LONG " + symbol + " bloqueado — sobreextendido 4H+1H alcistas"); return; }
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'SHORT' && !hasSweep) { console.log("⛔ Scalp SHORT " + symbol + " bloqueado — sobreextendido 4H+1H bajistas"); return; }
+    if (bias4hScalp2?.bias === 'short' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'LONG') { console.log("⛔ Scalp LONG " + symbol + " bloqueado — 4H y 1H bajistas"); return; }
+    if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'SHORT') { console.log("⛔ Scalp SHORT " + symbol + " bloqueado — 4H y 1H alcistas"); return; }
+    if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) { console.log("⛔ Scalp " + symbol + " bloqueado — mercado lateral"); return; }
+
+    // v4.4.34 Fix bias_1h score — bloquear scalping cuando 1H contradice fuertemente la señal
+    // Si 1H es alcista fuerte (>65) no entrar SHORT — si 1H es bajista fuerte (<35) no entrar LONG
+    if (scalpDirPreview === 'SHORT' && bias1hScore > 65) {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H alcista fuerte (score:${bias1hScore}) contradice SHORT`);
+      return;
+    }
+    if (scalpDirPreview === 'LONG' && bias1hScore < 35) {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H bajista fuerte (score:${bias1hScore}) contradice LONG`);
+      return;
+    }
+
+    // BONUS ZONAS DE LIQUIDACIÓN DINÁMICAS
+    try {
+      const dynZones = await calcDynamicLiqZones(symbol, price);
+      if (dynZones?.length) {
+        const askZones = dynZones.filter(z => z.side === 'ask' && z.price > price);
+        if (askZones.length) { const best = askZones.sort((a,b) => a.distPct - b.distPct)[0]; longScore += best.bonus; console.log("🧲 Book real ASK $" + best.price.toFixed(0) + " $" + (best.usdVal/1e6).toFixed(1) + "M " + best.strength.toFixed(1) + "x (+" + best.bonus + " LONG) " + symbol); }
+        const bidZones = dynZones.filter(z => z.side === 'bid' && z.price < price);
+        if (bidZones.length) { const best = bidZones.sort((a,b) => a.distPct - b.distPct)[0]; shortScore += best.bonus; console.log("🧲 Book real BID $" + best.price.toFixed(0) + " $" + (best.usdVal/1e6).toFixed(1) + "M " + best.strength.toFixed(1) + "x (+" + best.bonus + " SHORT) " + symbol); }
+      } else {
+        const liqData = await fetchForceOrders(symbol);
+        if (liqData?.zones?.length) {
+          const nearUp = liqData.zones.filter(z => z.price > price && ((z.price - price) / price * 100) <= 1.5).sort((a,b) => a.price - b.price)[0];
+          const nearDown = liqData.zones.filter(z => z.price < price && ((price - z.price) / price * 100) <= 1.5).sort((a,b) => b.price - a.price)[0];
+          if (nearUp) { const bonus = nearUp.total > 500 ? 12 : nearUp.total > 200 ? 8 : 4; longScore += bonus; console.log("🧲 Liq estática arriba $" + nearUp.price + " (+" + bonus + " LONG) " + symbol); }
+          if (nearDown) { const bonus = nearDown.total > 500 ? 12 : nearDown.total > 200 ? 8 : 4; shortScore += bonus; console.log("🧲 Liq estática abajo $" + nearDown.price + " (+" + bonus + " SHORT) " + symbol); }
+        }
+      }
+    } catch(_) {}
+
+    const totalScore = longScore + shortScore;
+    if (!totalScore) return;
+    const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT', scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
+    if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '88')) return;
+
+    // v4.4.16 C4b: 3 filtros duros — sólo pasan trades con ventaja estadística real
+    // Filtro 1: RSI entre 35-65 (no entrar con momentum extremo)
+    if (rsi3m > 65 && scalpDir === 'SHORT') {
+      console.log(`⛔ Scalp SHORT bloqueado — RSI ${rsi3m} > 65, momentum sobreextendido (${symbol})`);
+      return;
+    }
+    if (rsi3m < 35 && scalpDir === 'LONG') {
+      console.log(`⛔ Scalp LONG bloqueado — RSI ${rsi3m} < 35, momentum sobreextendido (${symbol})`);
+      return;
+    }
+    // Filtro 2: imbalance mínimo 30% en dirección del trade
+    const absImb = Math.abs(imb);
+    if (absImb < 30) {
+      console.log(`⛔ Scalp ${scalpDir} bloqueado — imbalance ${imb.toFixed(1)}% insuficiente (<30%) (${symbol})`);
+      return;
+    }
+    if (scalpDir === 'SHORT' && imb > 0) {
+      console.log(`⛔ Scalp SHORT bloqueado — imbalance positivo (bids dominan) ${imb.toFixed(1)}% (${symbol})`);
+      return;
+    }
+    if (scalpDir === 'LONG' && imb < 0) {
+      console.log(`⛔ Scalp LONG bloqueado — imbalance negativo (asks dominan) ${imb.toFixed(1)}% (${symbol})`);
+      return;
+    }
+    // Filtro 3: OI falling confirma presión real (no obligatorio pero suma — si OI rising en contra, bloquear)
+    if (oi15mForFilter && oi15mForFilter.trend === 'rising') {
+      if (scalpDir === 'SHORT' && parseFloat(oi15mForFilter.deltaPct) > 0.2) {
+        console.log(`⛔ Scalp SHORT bloqueado — OI rising ${oi15mForFilter.deltaPct}% (nuevos longs entrando) (${symbol})`);
+        return;
+      }
+      if (scalpDir === 'LONG' && parseFloat(oi15mForFilter.deltaPct) > 0.2) {
+        console.log(`⛔ Scalp LONG bloqueado — OI rising ${oi15mForFilter.deltaPct}% con precio bajando (nuevos shorts) (${symbol})`);
+        // Solo bloquear LONG si OI sube Y precio baja (short buildup)
+        // No bloquear si OI sube Y precio sube (long buildup = señal válida)
+      }
+    }
+    const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2])), lows3m = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
+    const rawAtr = highs3m.reduce((s,h,i)=>s+(h-lows3m[i]),0)/20, atr3m = Math.max(rawAtr, price*0.008);
+    const isLong = scalpDir==='LONG', tp1 = isLong ? price+atr3m*1.5 : price-atr3m*1.5, sl = isLong ? price-atr3m*0.8 : price+atr3m*0.8;
+    if (isLong && sl >= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
+    if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
+    const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
+    if (rrVal < 1.5) return;
+    // v4.4.16 C5: bloquear scalping si hay sweep/anomalía activa en dirección contraria
+    // Elimina colisiones scalping↔sweep que generaban kill_switch pérdidas (4/6 lost)
+    const activeAnomaly = wsState[symbol]?.anomaly;
+    if (activeAnomaly && Date.now() - activeAnomaly.time < 5 * 60 * 1000) {
+      if (activeAnomaly.direction !== scalpDir) {
+        console.log(`⛔ Scalp ${scalpDir} ${symbol} bloqueado — sweep/anomalía activa en dirección contraria (${activeAnomaly.direction}): ${activeAnomaly.reason}`);
+        return;
+      }
+    }
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol',symbol).eq('status','open');
+    if (existing?.length) return;
+    let bias4hScalp = null, oiTrend15mScalp = null, fundingScalp = 0, whaleDataScalp = null;
+    try {
+      const [k4hS, oi15mS, fundS, oi4hS] = await Promise.all([axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`), fetchOIHistory(symbol,'15m',5), axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`), fetchOIHistory(symbol,'4h',5)]);
+      fundingScalp = parseFloat(fundS.data.lastFundingRate); bias4hScalp = calcBias(k4hS.data, oi4hS, fundingScalp); oiTrend15mScalp = calcOITrend(oi15mS); whaleDataScalp = await detectWhales(symbol, price);
+    } catch(_) {}
+    // v4.4.18 Fix C: confirmación de momentum — precio debe moverse en dirección en los últimos 60s
+    const prices60sScalp = (wsState[symbol]?.trades || []).filter(t => Date.now() - t.time < 60000).map(t => t.price);
+    if (prices60sScalp.length >= 5) {
+      const priceNow60  = prices60sScalp[prices60sScalp.length - 1];
+      const price60ago  = prices60sScalp[0];
+      const movePct60s  = (priceNow60 - price60ago) / price60ago * 100;
+      const noMomentum  = (scalpDir === 'LONG' && movePct60s < 0.05) || (scalpDir === 'SHORT' && movePct60s > -0.05);
+      if (noMomentum) {
+        console.log(`⛔ Scalp ${scalpDir} bloqueado — sin momentum en 60s (${movePct60s.toFixed(3)}%) — ${symbol}`);
+        return;
+      }
+    }
+    const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
+    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'), leverage:parseInt(process.env.PAPER_LEVERAGE||'10'), source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
+    }
+    console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
+  } catch(e) { console.error('Scalping error:', e.message); }
+  finally { scalpingInProgress[symbol] = false; }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// ─── WALL ABSORPTION v2 — Streaming depth20 + Anti-spoof ─────────
+// ══════════════════════════════════════════════════════════════════
+// Arquitectura:
+//   WebSocket depth20@100ms → bookState → wallTracker → absorción → trade
+// Basado en la estrategia de Luis con LBOrderPulse:
+//   1. Detectar pared grande en el book
+//   2. Verificar que no es spoof (>10s)
+//   3. Medir absorción: ¿rebotó o está perforando?
+//   4. Si rebotó (<30% comida) → entrar dirección contraria
+//   5. Si perforando (>50% comida) → no entrar
+
+const bookState = {};       // order book en tiempo real por símbolo
+const wallTracker = {};     // paredes detectadas con timestamp
+const wallAbsorptionCooldown = {};
+const wallOpeningLock = {};  // lock en memoria para evitar trades duplicados
+const wsDepthConnections = {};
+
+// ── Conectar WebSocket depth20 para cada símbolo ─────────────────
+function connectDepthWebSocket(symbol) {
+  if (wsDepthConnections[symbol]) return;
+
+  const stream = `${symbol.toLowerCase()}@depth20@100ms`;
+  const url = `${BINANCE_WS}/ws/${stream}`;
+  console.log(`📊 Depth WS conectando: ${symbol}`);
+
+  const ws = new (require('ws'))(url);
+  wsDepthConnections[symbol] = ws;
+
+  ws.on('open', () => console.log(`✅ Depth WS conectado: ${symbol}`));
+
+  ws.on('message', (data) => {
+    try {
+      const book = JSON.parse(data);
+      bookState[symbol] = {
+        bids: (book.b || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })),
+        asks: (book.a || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })),
+        ts: Date.now(),
+      };
+      // Evaluar paredes en cada actualización del book
+      evaluateWalls(symbol);
+    } catch(_) {}
+  });
+
+  ws.on('close', () => {
+    console.log(`⚠️ Depth WS desconectado: ${symbol} — reconectando en 5s`);
+    delete wsDepthConnections[symbol];
+    setTimeout(() => connectDepthWebSocket(symbol), 5000);
+  });
+
+  ws.on('error', (e) => {
+    console.log(`❌ Depth WS error ${symbol}: ${e.message}`);
+    ws.terminate();
+  });
+}
+
+// ── PASO 2: Detectar paredes grandes en el book ───────────────────
+function findBigWalls(symbol) {
+  const book = bookState[symbol];
+  if (!book || !book.bids.length || !book.asks.length) return [];
+
+  const walls = [];
+
+  // Calcular promedio de qty en bids y asks
+  const bidAvg = book.bids.reduce((s, b) => s + b.qty, 0) / book.bids.length;
+  const askAvg = book.asks.reduce((s, a) => s + a.qty, 0) / book.asks.length;
+
+  // Umbral mínimo absoluto — BTC: 1 BTC, ETH: 10 ETH
+  const minQty = symbol.includes('BTC') ? 1 : symbol.includes('ETH') ? 10 : 1;
+
+  // Pared = qty > 5x el promedio Y > umbral mínimo
+  for (const bid of book.bids) {
+    if (bid.qty >= minQty && bid.qty > bidAvg * 5) {
+      walls.push({ price: bid.price, qty: bid.qty, side: 'bid', avgQty: bidAvg });
+    }
+  }
+  for (const ask of book.asks) {
+    if (ask.qty >= minQty && ask.qty > askAvg * 5) {
+      walls.push({ price: ask.price, qty: ask.qty, side: 'ask', avgQty: askAvg });
+    }
+  }
+
+  return walls;
+}
+
+// ── PASO 3 + 4: Evaluar paredes — anti-spoof + absorción ─────────
+const wallEvalThrottle = {};
+function evaluateWalls(symbol) {
+  const now = Date.now();
+  // Throttle — evaluar máximo cada 2 segundos por símbolo
+  if (wallEvalThrottle[symbol] && now - wallEvalThrottle[symbol] < 2000) return;
+  wallEvalThrottle[symbol] = now;
+  const walls = findBigWalls(symbol);
+  const currentPrice = wsState[symbol]?.lastPrice;
+  if (!currentPrice) return;
+
+  // Limpiar paredes viejas (>60s sin aparecer)
+  if (wallTracker[symbol]) {
+    for (const key of Object.keys(wallTracker[symbol])) {
+      if (now - wallTracker[symbol][key].lastSeen > 60000) {
+        delete wallTracker[symbol][key];
+      }
+    }
   } else {
-    if (d.scalping) html += statsHtml(d.scalping.stats, '#8b5cf6', 'Scalping', '⚡');
-    if (d.sweep) html += statsHtml(d.sweep.stats, '#38bdf8', 'Sweep', '🌊');
+    wallTracker[symbol] = {};
   }
-  html += `</div><div style="margin-top:8px;font-size:9px;color:#2a3040;text-align:center">⚠ Backtest no incluye slippage ni fees. Los resultados son orientativos.</div>`;
-  el.innerHTML = html;
+
+  // Actualizar tracker con paredes actuales
+  for (const wall of walls) {
+    const key = `${wall.side}_${Math.round(wall.price)}`;
+    if (!wallTracker[symbol][key]) {
+      // Primera vez que vemos esta pared
+      wallTracker[symbol][key] = {
+        price: wall.price,
+        qty: wall.qty,
+        avgQty: wall.avgQty,
+        side: wall.side,
+        firstSeen: now,
+        lastSeen: now,
+        maxQty: wall.qty,
+        minQty: wall.qty,
+      };
+    } else {
+      // Actualizar pared existente
+      const w = wallTracker[symbol][key];
+      w.lastSeen = now;
+      w.qty = wall.qty;
+      w.minQty = Math.min(w.minQty, wall.qty);
+      w.maxQty = Math.max(w.maxQty, wall.qty);
+    }
+  }
+
+  // Evaluar paredes confirmadas (>10s en el book = anti-spoof)
+  const ANTISPOOF_MS = 15000;  // v4.4.33: 15s más tiempo para descartar spoofs
+  const NEAR_THRESHOLD = symbol.includes('BTC') ? 0.0008 : 0.0012;
+
+  for (const [key, wall] of Object.entries(wallTracker[symbol] || {})) {
+    const age = now - wall.firstSeen;
+    if (age < ANTISPOOF_MS) continue; // aún en período anti-spoof
+
+    // ¿El precio está cerca de la pared?
+    const distPct = Math.abs(currentPrice - wall.price) / currentPrice;
+    if (distPct > NEAR_THRESHOLD) continue;
+
+    // PASO 4: Medir absorción
+    // ¿Cuánto volumen agresivo golpeó este nivel en los últimos 10s?
+    const recentTrades = wsState[symbol]?.trades?.filter(t => now - t.time < 10000) || [];
+    const wallPriceRange = wall.price * 0.0005; // ±0.05% del nivel
+
+    let aggressiveVol = 0;
+    for (const trade of recentTrades) {
+      if (Math.abs(trade.price - wall.price) <= wallPriceRange) {
+        // Trade agresivo en el nivel de la pared
+        if (wall.side === 'bid' && !trade.isBuy) aggressiveVol += trade.usdVal; // vendedores golpeando bid
+        if (wall.side === 'ask' && trade.isBuy)  aggressiveVol += trade.usdVal; // compradores golpeando ask
+      }
+    }
+
+    const wallUsdVal = wall.price * wall.qty;
+    const absorptionPct = wallUsdVal > 0 ? (aggressiveVol / wallUsdVal) * 100 : 0;
+
+    // Decisión de absorción:
+    // < 30% comida → pared sostuvo → rebote → ENTRAR
+    // > 50% comida → pared perforando → NO entrar
+    // 30-50%       → indefinido → NO entrar
+
+    if (absorptionPct > 15) {
+      continue; // v4.4.33: absorción >15% = pared bajo ataque, ganadores tienen promedio 8% — no entrar
+    }
+
+    // Pared sostuvo con <30% absorción → rebote confirmado
+    const direction = wall.side === 'bid' ? 'LONG' : 'SHORT';
+    const strength = wall.avgQty > 0 ? wall.qty / wall.avgQty : wall.qty;
+
+    // Disparar señal de entrada (async, no bloquea el loop)
+    processWallSignal(symbol, wall, direction, strength, absorptionPct, currentPrice).catch(() => {});
+
+    // Marcar pared como procesada para evitar doble entrada
+    delete wallTracker[symbol][key];
+  }
 }
 
-</script>
-</body>
-</html>
+// ── PASO 5: Procesar señal y abrir trade ─────────────────────────
+async function processWallSignal(symbol, wall, direction, strength, absorptionPct, price) {
+  try {
+    const now = Date.now();
+
+    // Lock en memoria — evita trades duplicados simultáneos
+    if (wallOpeningLock[symbol]) return;
+    wallOpeningLock[symbol] = true;
+
+    // Cooldown 10 min por símbolo
+    if (wallAbsorptionCooldown[symbol] && now - wallAbsorptionCooldown[symbol] < 10 * 60 * 1000) {
+      wallOpeningLock[symbol] = false; return;
+    }
+
+    // No abrir si ya hay trade abierto
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    if (existing?.length) { wallOpeningLock[symbol] = false; return; }
+
+    // Fix 1 — bias_1d + bias_1h: permite pullbacks en tendencia
+    // bias_1d define contexto macro, bias_1h confirma si hay corrección activa
+    try {
+      const [k1dWall, k1hWall] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=50`),
+      ]);
+      const bias1dWall = calcBias(k1dWall.data, null, 0);
+      const bias1hWall = calcBias(k1hWall.data, null, 0);
+      if (bias1dWall && bias1hWall) {
+        const trend1d_up   = bias1dWall.bias === 'long'  || bias1dWall.score > 58;
+        const trend1d_down = bias1dWall.bias === 'short' || bias1dWall.score < 42;
+        const pullback_down = bias1hWall.score < 40;  // 1H claramente bajista = pullback en alcista
+        const pullback_up   = bias1hWall.score > 60;  // 1H claramente alcista = rebote en bajista
+
+        // SHORT bloqueado si: 1D alcista Y 1H también alcista (no hay pullback)
+        if (direction === 'SHORT' && trend1d_up && !pullback_down) {
+          console.log(`Wall v2 SHORT omitido — bias_1d alcista (${bias1dWall.score}) sin pullback 1H (${bias1hWall.score}) (${symbol})`);
+          wallOpeningLock[symbol] = false; return;
+        }
+        // LONG bloqueado si: 1D bajista Y 1H también bajista (no hay rebote)
+        if (direction === 'LONG' && trend1d_down && !pullback_up) {
+          console.log(`Wall v2 LONG omitido — bias_1d bajista (${bias1dWall.score}) sin rebote 1H (${bias1hWall.score}) (${symbol})`);
+          wallOpeningLock[symbol] = false; return;
+        }
+      }
+    } catch(_) {}
+
+    // Fix 2 — tamaño mínimo de pared y strength mínimo 5x
+    const minWallUsd = symbol.includes('BTC') ? 5000000 : 2000000; // v4.4.33: $5M BTC, $2M ETH — datos muestran paredes pequeñas tienen WR 21%
+    const wallUsdCheck = wall.price * wall.qty;
+    if (wallUsdCheck < minWallUsd) {
+      console.log(`Wall v2 omitido — pared muy pequeña $${(wallUsdCheck/1e6).toFixed(2)}M < $${minWallUsd/1e6}M (${symbol})`);
+      wallOpeningLock[symbol] = false; return;
+    }
+    if (strength < 5) {
+      console.log(`Wall v2 omitido — strength ${strength.toFixed(1)}x < 5x (${symbol})`);
+      return;
+    }
+
+    // Calcular SL y TP
+    const slPct = symbol.includes('BTC') ? 0.0012 : 0.0015;
+    const wallLevel = wall.price;
+    const sl = direction === 'LONG' ? wallLevel * (1 - slPct) : wallLevel * (1 + slPct);
+
+    // TP = nivel significativo más cercano en la dirección del trade
+    const book = bookState[symbol];
+    let tp1 = null;
+    if (direction === 'LONG' && book?.asks?.length) {
+      const nextAsk = book.asks.filter(a => a.price > price * 1.001 && a.qty > 0.5).sort((a, b) => a.price - b.price)[0];
+      tp1 = nextAsk ? nextAsk.price : price * (1 + slPct * 2.5);
+    } else if (book?.bids?.length) {
+      const nextBid = book.bids.filter(b => b.price < price * 0.999 && b.qty > 0.5).sort((a, b) => b.price - a.price)[0];
+      tp1 = nextBid ? nextBid.price : price * (1 - slPct * 2.5);
+    }
+    if (!tp1) tp1 = direction === 'LONG' ? price * (1 + slPct * 2.5) : price * (1 - slPct * 2.5);
+
+    const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
+    if (rrVal < 1.2) {
+      console.log(`Wall v2 descartado — RR ${rrVal.toFixed(2)} < 1.2 (${symbol})`);
+      return;
+    }
+
+    wallAbsorptionCooldown[symbol] = now;
+    wallOpeningLock[symbol] = false;
+
+    const wallUsd = wall.price * wall.qty;
+    const wallUsdStr = wallUsd >= 1e6 ? `$${(wallUsd/1e6).toFixed(1)}M` : `$${(wallUsd/1e3).toFixed(0)}K`;
+    const wallConf = Math.min(88, Math.round(75 + (rrVal >= 1.5 ? 8 : 3) + (strength >= 8 ? 5 : 0)));
+    const wallSide = wall.side === 'ask' ? 'ASK' : 'BID';
+
+    await supabase.from('paper_trades').insert({
+      symbol, direction, entry: price, tp1, tp2: tp1, sl,
+      rr: `1:${rrVal.toFixed(1)}`, confidence: wallConf,
+      size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+      leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+      source: 'wall', status: 'open',
+      opened_at: new Date().toISOString(),
+      market_data: {
+        mode: 'wall_absorption_v2',
+        wall_side: wallSide,
+        wall_price: wallLevel,
+        wall_usd: wallUsd,
+        wall_strength: strength,
+        wall_age_ms: now - wall.firstSeen,
+        absorption_pct: parseFloat(absorptionPct.toFixed(1)),
+        timestamp: new Date().toISOString(),
+      }
+    });
+
+    console.log(`Wall v2: ${direction} ${symbol} @ $${price.toFixed(1)} pared ${wallSide} $${wallLevel} (${wallUsdStr}) strength:${strength.toFixed(1)}x absorcion:${absorptionPct.toFixed(0)}% RR 1:${rrVal.toFixed(1)}`);
+
+    if (process.env.TELEGRAM_CHAT_ID) {
+      const e = direction === 'LONG' ? 'LONG' : 'SHORT';
+      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${new Date().toLocaleTimeString('es-PE')}`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+    }
+
+  } catch(_) { wallOpeningLock[symbol] = false; }
+}
+
+// Endpoint para ver estado del módulo Wall v2
+app.get('/api/wall/status', (req, res) => {
+  const status = {};
+  for (const symbol of Object.keys(wsState)) {
+    const cdMs = wallAbsorptionCooldown[symbol]
+      ? Math.max(0, 10*60*1000 - (Date.now() - wallAbsorptionCooldown[symbol]))
+      : 0;
+    const walls = Object.values(wallTracker[symbol] || {});
+    const confirmed = walls.filter(w => Date.now() - w.firstSeen >= 10000);
+    status[symbol] = {
+      lastPrice: wsState[symbol]?.lastPrice || 0,
+      depthConnected: !!wsDepthConnections[symbol],
+      wallsTracked: walls.length,
+      wallsConfirmed: confirmed.length,
+      cooldownMin: (cdMs/60000).toFixed(1),
+      active: cdMs === 0,
+    };
+  }
+  res.json({ module: 'Wall Absorption v2', version: '4.4.24', status });
+});
+
+
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO BACKTEST — Scalping y Sweep sobre datos históricos ────
+// ══════════════════════════════════════════════════════════════════
+
+function btCalcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  const avgGain = gains / period, avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Math.round(100 - 100 / (1 + rs));
+}
+
+function btCalcCVD(klines) {
+  // CVD aproximado: si close > open → compra, sino venta
+  const recent = klines.slice(-10);
+  let buyVol = 0, sellVol = 0;
+  for (const k of recent) {
+    const vol = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += vol;
+    else sellVol += vol;
+  }
+  const total = buyVol + sellVol;
+  return total > 0 ? ((buyVol - sellVol) / total * 100) : 0;
+}
+
+function btCalcImbalance(klines) {
+  const recent = klines.slice(-5);
+  let buyVol = 0, sellVol = 0;
+  for (const k of recent) {
+    const vol = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += vol;
+    else sellVol += vol;
+  }
+  const total = buyVol + sellVol;
+  return total > 0 ? ((buyVol - sellVol) / total * 100) : 0;
+}
+
+function btCalcATR(klines, period = 10) {
+  if (klines.length < period + 1) return parseFloat(klines[0][4]) * 0.005;
+  let atrSum = 0;
+  for (let i = klines.length - period; i < klines.length; i++) {
+    const high = parseFloat(klines[i][2]), low = parseFloat(klines[i][3]);
+    const prevClose = parseFloat(klines[i - 1][4]);
+    atrSum += Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+  }
+  return atrSum / period;
+}
+
+function btCalcBias1d(klines1d) {
+  if (!klines1d || klines1d.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines1d.map(k => parseFloat(k[4]));
+  const rsi = btCalcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev5 = closes[closes.length - 6];
+  const pricePct = (last - prev5) / prev5 * 100;
+  let score = 50;
+  if (pricePct > 3) score += 20; else if (pricePct > 1) score += 10;
+  else if (pricePct < -3) score -= 20; else if (pricePct < -1) score -= 10;
+  if (rsi > 60) score += 15; else if (rsi < 40) score -= 15;
+  score = Math.max(0, Math.min(100, score));
+  const bias = score > 58 ? 'long' : score < 42 ? 'short' : 'neutral';
+  return { bias, score };
+}
+
+function btCalcBias4h(klines4h) {
+  if (!klines4h || klines4h.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines4h.map(k => parseFloat(k[4]));
+  const rsi = btCalcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 5];
+  const pricePct = (last - prev) / prev * 100;
+  let score = 50;
+  if (pricePct > 1) score += 15; else if (pricePct < -1) score -= 15;
+  if (rsi > 60) score += 10; else if (rsi < 40) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+  return { bias: score > 58 ? 'long' : score < 42 ? 'short' : 'neutral', score };
+}
+
+function btCalcBias1h(klines1h) {
+  if (!klines1h || klines1h.length < 5) return { bias: 'neutral', score: 50 };
+  const closes = klines1h.map(k => parseFloat(k[4]));
+  const rsi = btCalcRSI(closes, 14);
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 4];
+  const pricePct = (last - prev) / prev * 100;
+  let score = 50;
+  if (pricePct > 0.5) score += 15; else if (pricePct < -0.5) score -= 15;
+  if (rsi > 60) score += 10; else if (rsi < 40) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+  return { bias: score > 55 ? 'long' : score < 45 ? 'short' : 'neutral', score };
+}
+
+function simulateScalpEntry(klines3m, klines4h, klines1h, idx, params) {
+  const { rsiMin, rsiMax, minImbalance, momentumPct, volMultMin } = params;
+  const window3m = klines3m.slice(0, idx + 1);
+  if (window3m.length < 20) return null;
+
+  const closes = window3m.map(k => parseFloat(k[4]));
+  const rsi = btCalcRSI(closes, 14);
+  const cvd = btCalcCVD(window3m);
+  const imb = btCalcImbalance(window3m);
+  const price = parseFloat(window3m[window3m.length - 1][4]);
+
+  // Simular momentum con diferencia de precio en últimas 20 velas de 3m = 60s
+  const prevPrice = parseFloat(window3m[window3m.length - 5]?.[4] || window3m[0][4]);
+  const movePct = (price - prevPrice) / prevPrice * 100;
+
+  const bias4h = btCalcBias4h(klines4h.slice(0, Math.floor(idx / 80) + 1));
+  const bias1h = btCalcBias1h(klines1h.slice(0, Math.floor(idx / 20) + 1));
+
+  // Determinar dirección
+  let longScore = 50, shortScore = 50;
+  if (cvd > 10) longScore += 25; else if (cvd < -10) shortScore += 25;
+  if (imb > 20) longScore += 30; else if (imb < -20) shortScore += 30;
+  if (rsi < 40) longScore += 15; else if (rsi > 60) shortScore += 15;
+
+  const totalScore = longScore + shortScore;
+  const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
+  const scalpProb = Math.round((Math.max(longScore, shortScore) / Math.max(totalScore, 1)) * 100);
+
+  if (scalpProb < 88) return null;
+  if (rsi > rsiMax && scalpDir === 'SHORT') return null;
+  if (rsi < rsiMin && scalpDir === 'LONG') return null;
+  if (Math.abs(imb) < minImbalance) return null;
+  if (scalpDir === 'LONG' && imb < 0) return null;
+  if (scalpDir === 'SHORT' && imb > 0) return null;
+
+  // Fix C — momentum
+  const needsUp = scalpDir === 'LONG' && movePct < momentumPct;
+  const needsDown = scalpDir === 'SHORT' && movePct > -momentumPct;
+  if (needsUp || needsDown) return null;
+
+  // Pullback 4H+1H
+  const isPullback = (bias4h.bias === 'long' && bias1h.bias === 'short') ||
+                     (bias4h.bias === 'short' && bias1h.bias === 'long');
+  if (!isPullback && (bias4h.score > 70 || bias4h.score < 30)) return null;
+
+  const atr = btCalcATR(window3m);
+  const sl = scalpDir === 'LONG' ? price - Math.max(atr * 0.8, price * 0.008)
+                                  : price + Math.max(atr * 0.8, price * 0.008);
+  const tp = scalpDir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.5) return null;
+
+  return { dir: scalpDir, entry: price, tp, sl, rr, idx };
+}
+
+function simulateSweepEntry(klines15m, klines1d, idx, params) {
+  const { minVolMult, minCVD, bias1dScoreBlock } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 20) return null;
+
+  const closes = window.map(k => parseFloat(k[4]));
+  const volumes = window.map(k => parseFloat(k[5]));
+  const cvd = btCalcCVD(window);
+  const price = parseFloat(window[window.length - 1][4]);
+  const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = lastVol / Math.max(avgVol, 0.001);
+
+  if (volMult < minVolMult) return null;
+  if (Math.abs(cvd) < minCVD) return null;
+
+  // Verificar precio moviéndose
+  const prev = parseFloat(window[window.length - 4]?.[4] || window[0][4]);
+  const movePct = Math.abs((price - prev) / prev * 100);
+  if (movePct < 0.5) return null;
+
+  const dir = cvd > 0 ? 'LONG' : 'SHORT';
+
+  // Fix B — bias_1d bloquea
+  const bias1d = btCalcBias1d(klines1d.slice(0, Math.floor(idx / 96) + 1));
+  const blockShort = bias1d.bias === 'long' || bias1d.score > bias1dScoreBlock;
+  const blockLong = bias1d.bias === 'short' || bias1d.score < (100 - bias1dScoreBlock);
+  if (dir === 'SHORT' && blockShort) return null;
+  if (dir === 'LONG' && blockLong) return null;
+
+  // Fix C2 — confirmación precio 5 velas (75min ~ 5min original)
+  const prev5 = parseFloat(window[window.length - 5]?.[4] || window[0][4]);
+  const move5 = (price - prev5) / prev5 * 100;
+  if (dir === 'SHORT' && move5 > -0.1) return null;
+  if (dir === 'LONG' && move5 < 0.1) return null;
+
+  const atr = btCalcATR(window);
+  const sl = dir === 'LONG' ? price - atr * 0.8 : price + atr * 0.8;
+  const tp = dir === 'LONG' ? price + atr * 1.2 : price - atr * 1.2;
+  const rr = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.5) return null;
+
+  return { dir, entry: price, tp, sl, rr, idx };
+}
+
+function simulateTrade(klines, trade, startIdx) {
+  for (let i = startIdx + 1; i < Math.min(startIdx + 100, klines.length); i++) {
+    const high = parseFloat(klines[i][2]);
+    const low = parseFloat(klines[i][3]);
+    if (trade.dir === 'LONG') {
+      if (high >= trade.tp) return { status: 'won', exitIdx: i, exitPrice: trade.tp };
+      if (low <= trade.sl) return { status: 'lost', exitIdx: i, exitPrice: trade.sl };
+    } else {
+      if (low <= trade.tp) return { status: 'won', exitIdx: i, exitPrice: trade.tp };
+      if (high >= trade.sl) return { status: 'lost', exitIdx: i, exitPrice: trade.sl };
+    }
+  }
+  return { status: 'timeout', exitIdx: startIdx + 100, exitPrice: parseFloat(klines[Math.min(startIdx + 99, klines.length - 1)][4]) };
+}
+
+// ── Backtest modo MOMENTUM — volume spike A FAVOR de la tendencia ──
+// Opuesto a mean reversion: el spike continúa en la dirección de la tendencia
+function simulateMomentumEntry(klines15m, klines1d, idx, params = {}) {
+  const { baseVolMult = 5 } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 30) return null;
+
+  const volumes = window.map(k => parseFloat(k[5]));
+  const closes  = window.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
+
+  // MOMENTUM: spike en downtrend → SHORT, en uptrend → LONG
+  let dir = null;
+  if (bias1d.bias === 'short' || bias1d.score < 42) dir = 'SHORT';
+  else if (bias1d.bias === 'long' || bias1d.score > 58) dir = 'LONG';
+  else return null;
+
+  const atr = btCalcATR(window, 14);
+  const sl  = dir === 'LONG' ? price - atr * 1.0 : price + atr * 1.0;
+  const tp  = dir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.2) return null;
+
+  return { dir, entry: price, tp, sl, rr, volMult, bias1dScore: bias1d.score, idx };
+}
+
+// ── Backtest modo BASE — volume spike + tendencia en 15m ──────────
+// Usa velas de 15m para capturar mejor el timing del sweep/wall
+// Tendencia 1D como contexto macro — mean reversion como edge
+function simulateBaseEntry(klines15m, klines1d, idx, params = {}) {
+  const { baseVolMult = 5 } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 30) return null;
+
+  const volumes = window.map(k => parseFloat(k[5]));
+  const closes  = window.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  // Volume spike: última vela > baseVolMult x promedio últimas 20 velas
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  // Tendencia 1D — 1 vela diaria = 96 velas de 15m
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
+
+  // Mean reversion: spike en downtrend → LONG, en uptrend → SHORT
+  let dir = null;
+  if (bias1d.bias === 'short' || bias1d.score < 42) dir = 'LONG';
+  else if (bias1d.bias === 'long' || bias1d.score > 58) dir = 'SHORT';
+  else return null;
+
+  // SL y TP basados en ATR de 15m
+  const atr = btCalcATR(window, 14);
+  const sl  = dir === 'LONG' ? price - atr * 1.0 : price + atr * 1.0;
+  const tp  = dir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.2) return null;
+
+  return { dir, entry: price, tp, sl, rr, volMult, bias1dScore: bias1d.score, idx };
+}
+
+
+// ── Backtest modo FILTERED — aplica todos los filtros del sistema real ──
+// Replica exactamente la lógica de sweep/whale con datos históricos de 15m
+// Fix A: vol mínimo 4x | Fix B: bias_1d + bias_1h | CVD + price move
+
+function simulateFilteredEntry(klines15m, klines1d, klines1h, idx, params = {}) {
+  const {
+    baseVolMult = 4,       // Fix A — vol mínimo 4x
+    bias1dScore = 58,      // Fix B — score umbral 1D
+    bias1hScore = 40,      // Fix B2 — score umbral 1H para pullback
+    minCVD = 25,           // CVD mínimo en dirección
+    minPriceMove = 0.1,    // confirmación precio 5 velas (C2)
+  } = params;
+
+  const window15m = klines15m.slice(0, idx + 1);
+  if (window15m.length < 30) return null;
+
+  const volumes = window15m.map(k => parseFloat(k[5]));
+  const closes  = window15m.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  // Fix A — Volume spike mínimo
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  // CVD aproximado: compras vs ventas en últimas 5 velas
+  const last5 = window15m.slice(-5);
+  let buyVol = 0, sellVol = 0;
+  for (const k of last5) {
+    const v = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += v;
+    else sellVol += v;
+  }
+  const totalVol = buyVol + sellVol;
+  const cvdPct = totalVol > 0 ? (buyVol - sellVol) / totalVol * 100 : 0;
+
+  // Dirección basada en CVD
+  let dir = null;
+  if (cvdPct < -minCVD) dir = 'SHORT';      // vendedores dominan → SHORT
+  else if (cvdPct > minCVD) dir = 'LONG';   // compradores dominan → LONG
+  else return null;
+
+  // C2 — Confirmación de precio en últimas 5 velas
+  const prev5Price = parseFloat(window15m[window15m.length - 6]?.[4] || window15m[0][4]);
+  const priceMove = (price - prev5Price) / prev5Price * 100;
+  if (dir === 'SHORT' && priceMove > -minPriceMove) return null;
+  if (dir === 'LONG'  && priceMove < minPriceMove) return null;
+
+  // Fix B — bias_1d bloquea si mercado en tendencia contraria
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
+  if (!bias1d) return null;
+
+  const trend1d_up   = bias1d.bias === 'long'  || bias1d.score > bias1dScore;
+  const trend1d_down = bias1d.bias === 'short' || bias1d.score < (100 - bias1dScore);
+
+  // Fix B2 — bias_1h: permite pullbacks en tendencia
+  const h1idx = Math.min(Math.floor(idx / 4), klines1h.length - 1);
+  if (h1idx < 5) return null;
+  const bias1h = btCalcBias1h(klines1h.slice(0, h1idx + 1));
+  if (!bias1h) return null;
+
+  const pullback_down = bias1h.score < bias1hScore;   // 1H bajista = pullback en alcista
+  const pullback_up   = bias1h.score > (100 - bias1hScore); // 1H alcista = rebote en bajista
+
+  // Bloquear si: 1D alcista Y 1H también alcista (sin pullback real)
+  if (dir === 'SHORT' && trend1d_up && !pullback_down) return null;
+  // Bloquear si: 1D bajista Y 1H también bajista (sin rebote real)
+  if (dir === 'LONG'  && trend1d_down && !pullback_up) return null;
+
+  // SL y TP basados en ATR de 15m
+  const atr = btCalcATR(window15m, 14);
+  const sl  = dir === 'LONG' ? price - atr * 0.8 : price + atr * 0.8;
+  const tp  = dir === 'LONG' ? price + atr * 1.2 : price - atr * 1.2;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.3) return null;
+
+  return {
+    dir, entry: price, tp, sl, rr,
+    volMult, cvdPct: parseFloat(cvdPct.toFixed(1)),
+    bias1dScore: bias1d.score, bias1hScore: bias1h.score,
+    idx
+  };
+}
+
+app.post('/api/backtest', async (req, res) => {
+  try {
+    const {
+      symbol = 'BTCUSDT',
+      days = 30,
+      module = 'both',
+      baseVolMult = 5,
+      // Parámetros modo filtered
+      filteredVolMult = 4,
+      filteredBias1dScore = 58,
+      filteredBias1hScore = 40,
+      filteredMinCVD = 25,
+      filteredMinPriceMove = 0.1,
+      // Parámetros ajustables scalping
+      scalpRsiMin = 35, scalpRsiMax = 65,
+      scalpMinImbalance = 30, scalpMomentumPct = 0.05,
+      // Parámetros ajustables sweep
+      sweepMinVolMult = 4, sweepMinCVD = 40,
+      sweepBias1dScore = 58,
+    } = req.body;
+
+    // Descargar hasta 365 días de velas 15m con múltiples requests
+    const VELAS_POR_DIA_15M = 96; // 96 velas de 15m por día
+    const totalVelas15m = Math.min(days * VELAS_POR_DIA_15M, 35040); // máx 365 días
+    const requestsNeeded = Math.ceil(totalVelas15m / 1500);
+
+    // Descargar velas 15m en múltiples batches desde el más antiguo al más reciente
+    let klines15m = [];
+    let endTime = Date.now();
+    for (let r = 0; r < requestsNeeded; r++) {
+      try {
+        const res = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=1500&endTime=${endTime}`);
+        if (!res.data?.length) break;
+        klines15m = [...res.data, ...klines15m]; // prepend — más antiguo primero
+        endTime = res.data[0][0] - 1; // siguiente batch termina antes del primero actual
+      } catch(_) { break; }
+    }
+    // Limitar al período solicitado
+    klines15m = klines15m.slice(-totalVelas15m);
+
+    // Datos auxiliares para scalping y sweep (período más corto)
+    const limitShort = Math.min(days * 96, 1500);
+    const limit3m = Math.min(days * 480, 1500);
+    const [k3m, k4h, k1h, k1d] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=${limit3m}`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=200`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=500`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=500`),
+    ]);
+
+    const klines3m = k3m.data;
+    const klines4h = k4h.data, klines1h = k1h.data, klines1d = k1d.data;
+    console.log(`Backtest ${symbol}: ${klines15m.length} velas 15m (${(klines15m.length/96).toFixed(0)} días)`);
+
+    const scalpParams = { rsiMin: scalpRsiMin, rsiMax: scalpRsiMax, minImbalance: scalpMinImbalance, momentumPct: scalpMomentumPct };
+    const sweepParams = { minVolMult: sweepMinVolMult, minCVD: sweepMinCVD, bias1dScoreBlock: sweepBias1dScore };
+
+    const results = { scalping: [], sweep: [] };
+    const SIZE_USD = 1000, LEVERAGE = 5;
+
+    // ── BACKTEST SCALPING (velas 3m)
+    if (module === 'scalping' || module === 'both') {
+      let inTrade = false, skipUntil = 0;
+      for (let i = 50; i < klines3m.length - 10; i++) {
+        if (i < skipUntil) continue;
+        if (inTrade) continue;
+        const entry = simulateScalpEntry(klines3m, klines4h, klines1h, i, scalpParams);
+        if (!entry) continue;
+        const result = simulateTrade(klines3m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.scalping.push({
+          time: new Date(klines3m[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status, pnl: parseFloat(pnl.toFixed(2)),
+        });
+        skipUntil = result.exitIdx + 5;
+      }
+    }
+
+    // ── BACKTEST SWEEP (velas 15m)
+    if (module === 'sweep' || module === 'both') {
+      let skipUntil = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntil) continue;
+        const entry = simulateSweepEntry(klines15m, klines1d, i, sweepParams);
+        if (!entry) continue;
+        const result = simulateTrade(klines15m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.sweep.push({
+          time: new Date(klines15m[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status, pnl: parseFloat(pnl.toFixed(2)),
+        });
+        skipUntil = result.exitIdx + 3;
+      }
+    }
+
+    // ── Calcular estadísticas
+    function calcStats(trades) {
+      if (!trades.length) return { total: 0, won: 0, lost: 0, winRate: 0, totalPnl: 0, profitFactor: 0, avgWin: 0, avgLoss: 0, maxDrawdown: 0 };
+      const won = trades.filter(t => t.status === 'won');
+      const lost = trades.filter(t => t.status === 'lost');
+      const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+      const grossWin = won.reduce((s, t) => s + t.pnl, 0);
+      const grossLoss = Math.abs(lost.reduce((s, t) => s + t.pnl, 0));
+      let peak = 0, equity = 0, maxDD = 0;
+      for (const t of trades) {
+        equity += t.pnl;
+        if (equity > peak) peak = equity;
+        const dd = peak - equity;
+        if (dd > maxDD) maxDD = dd;
+      }
+      return {
+        total: trades.length,
+        won: won.length, lost: lost.length,
+        winRate: Math.round(won.length / trades.length * 100),
+        totalPnl: parseFloat(totalPnl.toFixed(2)),
+        profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : grossWin > 0 ? 99 : 0,
+        avgWin: won.length ? parseFloat((grossWin / won.length).toFixed(2)) : 0,
+        avgLoss: lost.length ? parseFloat((grossLoss / lost.length).toFixed(2)) : 0,
+        maxDrawdown: parseFloat(maxDD.toFixed(2)),
+      };
+    }
+
+    // ── BACKTEST MOMENTUM (volume spike a favor de tendencia)
+    if (module === 'momentum') {
+      let skipUntilMom = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilMom) continue;
+        try {
+          const entry = simulateMomentumEntry(klines15m, klines1d, i, { baseVolMult });
+          if (!entry) continue;
+          const result = simulateTrade(klines15m, entry, i);
+          const pnl = result.status === 'won'
+            ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+            : result.status === 'lost'
+            ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+            : 0;
+          results.momentum = results.momentum || [];
+          results.momentum.push({
+            time: new Date(klines15m[i][0]).toISOString(),
+            dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+            rr: entry.rr.toFixed(2), status: result.status,
+            pnl: parseFloat(pnl.toFixed(2)),
+            volMult: entry.volMult.toFixed(1),
+            bias1dScore: entry.bias1dScore,
+          });
+          skipUntilMom = result.exitIdx + 2;
+        } catch(_) {}
+      }
+    }
+
+    // ── BACKTEST FILTERED — todos los filtros del sistema real
+    if (module === 'filtered') {
+      const filteredParams = {
+        baseVolMult: filteredVolMult,
+        bias1dScore: filteredBias1dScore,
+        bias1hScore: filteredBias1hScore,
+        minCVD: filteredMinCVD,
+        minPriceMove: filteredMinPriceMove,
+      };
+      let skipUntilFilt = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilFilt) continue;
+        try {
+          const entry = simulateFilteredEntry(klines15m, klines1d, klines1h, i, filteredParams);
+          if (!entry) continue;
+          const result = simulateTrade(klines15m, entry, i);
+          const pnl = result.status === 'won'
+            ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+            : result.status === 'lost'
+            ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+            : 0;
+          results.filtered = results.filtered || [];
+          results.filtered.push({
+            time: new Date(klines15m[i][0]).toISOString(),
+            dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+            rr: entry.rr.toFixed(2), status: result.status,
+            pnl: parseFloat(pnl.toFixed(2)),
+            volMult: entry.volMult.toFixed(1),
+            cvdPct: entry.cvdPct,
+            bias1dScore: entry.bias1dScore,
+            bias1hScore: entry.bias1hScore,
+          });
+          skipUntilFilt = result.exitIdx + 2;
+        } catch(_) {}
+      }
+    }
+
+    // ── BACKTEST BASE (volume spike + mean reversion en 15m)
+    if (module === 'base' || module === 'both') {
+      let skipUntilBase = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilBase) continue;
+        const entry = simulateBaseEntry(klines15m, klines1d, i, { baseVolMult });
+        if (!entry) continue;
+        const result = simulateTrade(klines15m, entry, i);
+        const pnl = result.status === 'won'
+          ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+          : result.status === 'lost'
+          ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+          : 0;
+        results.base = results.base || [];
+        results.base.push({
+          time: new Date(klines15m[i][0]).toISOString(),
+          dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+          rr: entry.rr.toFixed(2), status: result.status,
+          pnl: parseFloat(pnl.toFixed(2)),
+          volMult: entry.volMult.toFixed(1),
+          bias1dScore: entry.bias1dScore,
+        });
+        skipUntilBase = result.exitIdx + 2;
+      }
+    }
+
+    // Calcular z-score para validación estadística
+    function calcZScore(trades) {
+      if (!trades || trades.length < 30) return null;
+      const n = trades.length;
+      const won = trades.filter(t => t.status === 'won').length;
+      const wr = won / n;
+      const p0 = 0.5; // hipótesis nula: 50% WR
+      const z = (wr - p0) / Math.sqrt(p0 * (1 - p0) / n);
+      return parseFloat(z.toFixed(2));
+    }
+
+    const response = {
+      symbol, days, params: { scalping: scalpParams, sweep: sweepParams, baseVolMult },
+      scalping: { stats: calcStats(results.scalping), trades: results.scalping.slice(-50) },
+      sweep: { stats: calcStats(results.sweep), trades: results.sweep.slice(-50) },
+      base: results.base ? {
+        stats: { ...calcStats(results.base), zScore: calcZScore(results.base), n: results.base.length },
+        trades: results.base.slice(-50)
+      } : null,
+      momentum: results.momentum ? {
+        stats: { ...calcStats(results.momentum), zScore: calcZScore(results.momentum), n: results.momentum.length },
+        trades: results.momentum.slice(-50)
+      } : null,
+      filtered: results.filtered ? {
+        stats: { ...calcStats(results.filtered), zScore: calcZScore(results.filtered), n: results.filtered.length },
+        trades: results.filtered.slice(-50)
+      } : null,
+    };
+
+    console.log(`Backtest ${symbol} ${days}d — Scalp: ${results.scalping.length} trades WR${calcStats(results.scalping).winRate}% | Sweep: ${results.sweep.length} trades WR${calcStats(results.sweep).winRate}%`);
+    res.json(response);
+
+  } catch(e) {
+    console.error('Backtest error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO MEAN REVERSION — Volume Spike + Agotamiento de tendencia
+// ══════════════════════════════════════════════════════════════════
+// Basado en Samael Zero v4 con Z-scores BTC=7.20, ETH=7.42
+// Lógica: 1H cayó/subió >1% + volume spike >3x en 1m → mean reversion
+// SL: 0.3% fijo | TP: 1.0% fijo | R:R 1:3.3 | Exit máx: 60min BTC, 45min ETH
+
+const meanRevCooldown = {};
+const MEANREV_COOLDOWN_MS = 15 * 60 * 1000; // 15 min entre trades por símbolo
+
+async function runMeanRevScanner() {
+  for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+    try {
+      await detectMeanReversion(symbol);
+    } catch(e) {
+      console.log(`MeanRev error ${symbol}: ${e.message}`);
+    }
+  }
+}
+
+async function detectMeanReversion(symbol) {
+  const now = Date.now();
+
+  // Filtro horario
+  if (isHoraBloqueada()) return;
+
+  // Cooldown
+  if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
+
+  // No abrir si ya hay trade abierto
+  const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+  if (existing?.length) return;
+
+  const price = wsState[symbol]?.lastPrice;
+  if (!price) return;
+
+  // ── CONDICIÓN 1: Pre-trend 1H >1% ────────────────────────────────
+  // ¿El precio de 1H se movió >1% en alguna dirección?
+  const k1h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=3`);
+  const h1Open  = parseFloat(k1h.data[0][1]); // apertura hace 1H
+  const h1Close = parseFloat(k1h.data[k1h.data.length - 2][4]); // cierre de la vela 1H cerrada
+  const h1Move  = (h1Close - h1Open) / h1Open * 100;
+  const absH1   = Math.abs(h1Move);
+
+  if (absH1 < 1.0) return; // movimiento insuficiente en 1H
+
+  // ── CONDICIÓN 2: Filtro 4H — no pelear contra tendencia fuerte ────
+  // Si 4H va en la misma dirección que 1H con >1% → NO tradear
+  const k4h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=2`);
+  const h4Open  = parseFloat(k4h.data[0][1]);
+  const h4Close = parseFloat(k4h.data[0][4]);
+  const h4Move  = (h4Close - h4Open) / h4Open * 100;
+
+  const h1Dir = h1Move < 0 ? 'down' : 'up';
+  const h4Dir = h4Move < 0 ? 'down' : 'up';
+
+  // Si 4H va en misma dirección que 1H con fuerza → tendencia fuerte, no entrar contra ella
+  if (h1Dir === h4Dir && Math.abs(h4Move) > 1.0) {
+    console.log(`MeanRev ${symbol} omitido — tendencia 4H (${h4Move.toFixed(2)}%) confirma 1H (${h1Move.toFixed(2)}%) — sin reversión`);
+    return;
+  }
+
+  // ── CONDICIÓN 3: Volume spike >3x mediana en velas 1m ─────────────
+  const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=21`);
+  const vols1m  = k1m.data.map(k => parseFloat(k[5]));
+  const lastVol = vols1m[vols1m.length - 1];
+
+  // Mediana de las últimas 20 velas (excluyendo la última)
+  const sorted = [...vols1m.slice(0, -1)].sort((a, b) => a - b);
+  const median  = sorted[Math.floor(sorted.length / 2)];
+  const volMult = median > 0 ? lastVol / median : 0;
+
+  if (volMult < 3) return; // spike insuficiente
+
+  // ── DIRECCIÓN: Mean reversion contra el movimiento de 1H ──────────
+  // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
+  // 1H subió >1% + spike → vendedores agotaron compradores → SHORT
+  const direction = h1Move < -1.0 ? 'LONG' : 'SHORT';
+
+  // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
+  const k1d = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+  const bias1d = calcBias(k1d.data, null, 0);
+
+  // Solo bloquear si 1D es extremamente contrario (score <35 para LONG o >65 para SHORT)
+  if (direction === 'LONG'  && bias1d.score < 35) {
+    console.log(`MeanRev LONG ${symbol} omitido — 1D muy bajista (score:${bias1d.score})`);
+    return;
+  }
+  if (direction === 'SHORT' && bias1d.score > 65) {
+    console.log(`MeanRev SHORT ${symbol} omitido — 1D muy alcista (score:${bias1d.score})`);
+    return;
+  }
+
+  // ── CALCULAR SL y TP FIJOS ────────────────────────────────────────
+  // SL: 0.3% fijo | TP: 1.0% fijo | R:R 1:3.3
+  const slPct = 0.003; // 0.3%
+  const tpPct = 0.010; // 1.0%
+  const sl = direction === 'LONG' ? price * (1 - slPct) : price * (1 + slPct);
+  const tp = direction === 'LONG' ? price * (1 + tpPct) : price * (1 - tpPct);
+  const rr = tpPct / slPct; // 3.3
+
+  // ── ABRIR TRADE ───────────────────────────────────────────────────
+  meanRevCooldown[symbol] = now;
+
+  const exitMins = symbol.includes('BTC') ? 60 : 45;
+  const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
+
+  const tradeCtxMR = await captureTradeContext(symbol);
+  await supabase.from('paper_trades').insert({
+    symbol, direction, entry: price, tp1: tp, tp2: tp, sl,
+    rr: `1:${rr.toFixed(1)}`,
+    confidence: conf,
+    size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+    leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+    source: 'meanrev',
+    status: 'open',
+    opened_at: new Date().toISOString(),
+    market_data: {
+      mode: 'mean_reversion',
+      h1_move_pct: parseFloat(h1Move.toFixed(3)),
+      h4_move_pct: parseFloat(h4Move.toFixed(3)),
+      vol_mult: parseFloat(volMult.toFixed(2)),
+      vol_median: parseFloat(median.toFixed(0)),
+      bias_1d_score: bias1d.score,
+      exit_mins: exitMins,
+      timestamp: new Date().toISOString(),
+      ...tradeCtxMR,
+    }
+  });
+
+  console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
+
+  if (process.env.TELEGRAM_CHAT_ID) {
+    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${new Date().toLocaleTimeString('es-PE')}`;
+    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+  }
+}
+
+// Endpoint para ver estado del módulo
+app.get('/api/meanrev/status', (req, res) => {
+  const status = {};
+  for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+    const cdMs = meanRevCooldown[symbol]
+      ? Math.max(0, MEANREV_COOLDOWN_MS - (Date.now() - meanRevCooldown[symbol]))
+      : 0;
+    status[symbol] = {
+      lastPrice: wsState[symbol]?.lastPrice || 0,
+      cooldownMin: (cdMs / 60000).toFixed(1),
+      active: cdMs === 0,
+    };
+  }
+  res.json({ module: 'Mean Reversion', version: '4.4.35', status });
+
+// ── Journal automático — captura contexto macro en cada entrada ──────────────
+async function captureTradeContext(symbol) {
+  try {
+    const [k1h, k4h] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=10`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=5`),
+    ]);
+    const cvd = (klines) => {
+      let b = 0, s = 0;
+      for (const k of klines) { const v = parseFloat(k[5]); if (parseFloat(k[4]) >= parseFloat(k[1])) b += v; else s += v; }
+      const t = b + s; return t > 0 ? parseFloat(((b - s) / t * 100).toFixed(1)) : 0;
+    };
+    const sesion = getSesionActual();
+    const bias1h = calcBias(k1h.data, null, 0);
+    const bias4h = calcBias(k4h.data, null, 0);
+    return {
+      journal_cvd_1h: cvd(k1h.data),
+      journal_cvd_4h: cvd(k4h.data),
+      journal_sesion: sesion.nombre,
+      journal_hora_lima: new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours(),
+      journal_bias_1h: bias1h?.score || 50,
+      journal_bias_4h: bias4h?.score || 50,
+    };
+  } catch(_) { return {}; }
+}
+
+
+app.get('/api/sesion', (req, res) => {
+  const sesion = getSesionActual();
+  const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  res.json({ ...sesion, horaLima, bloqueada: isHoraBloqueada() });
+});
+
+});
+
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.37 corriendo en puerto ${PORT}`);
+  syncBinanceTime();
+  startAlertJob();
+  // ── Wall Absorption v2 — DESACTIVADO temporalmente
+  // Wall detector no predice dirección (N=245, WR 33%) — datos confirman sin edge
+  // connectDepthWebSocket('BTCUSDT');
+  // connectDepthWebSocket('ETHUSDT');
+  // console.log('🧱 Wall Absorption v2 iniciado — streaming depth20 100ms');
+  console.log('🧱 Wall Absorption v2 DESACTIVADO — sin edge estadístico confirmado');
+});
