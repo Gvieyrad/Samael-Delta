@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.29' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.30' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2142,6 +2142,41 @@ function simulateTrade(klines, trade, startIdx) {
   return { status: 'timeout', exitIdx: startIdx + 100, exitPrice: parseFloat(klines[Math.min(startIdx + 99, klines.length - 1)][4]) };
 }
 
+// ── Backtest modo MOMENTUM — volume spike A FAVOR de la tendencia ──
+// Opuesto a mean reversion: el spike continúa en la dirección de la tendencia
+function simulateMomentumEntry(klines15m, klines1d, idx, params = {}) {
+  const { baseVolMult = 5 } = params;
+  const window = klines15m.slice(0, idx + 1);
+  if (window.length < 30) return null;
+
+  const volumes = window.map(k => parseFloat(k[5]));
+  const closes  = window.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
+
+  // MOMENTUM: spike en downtrend → SHORT, en uptrend → LONG
+  let dir = null;
+  if (bias1d.bias === 'short' || bias1d.score < 42) dir = 'SHORT';
+  else if (bias1d.bias === 'long' || bias1d.score > 58) dir = 'LONG';
+  else return null;
+
+  const atr = btCalcATR(window, 14);
+  const sl  = dir === 'LONG' ? price - atr * 1.0 : price + atr * 1.0;
+  const tp  = dir === 'LONG' ? price + atr * 1.5 : price - atr * 1.5;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.2) return null;
+
+  return { dir, entry: price, tp, sl, rr, volMult, bias1dScore: bias1d.score, idx };
+}
+
 // ── Backtest modo BASE — volume spike + tendencia en 15m ──────────
 // Usa velas de 15m para capturar mejor el timing del sweep/wall
 // Tendencia 1D como contexto macro — mean reversion como edge
@@ -2308,6 +2343,34 @@ app.post('/api/backtest', async (req, res) => {
       };
     }
 
+    // ── BACKTEST MOMENTUM (volume spike a favor de tendencia)
+    if (module === 'momentum') {
+      let skipUntilMom = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilMom) continue;
+        try {
+          const entry = simulateMomentumEntry(klines15m, klines1d, i, { baseVolMult });
+          if (!entry) continue;
+          const result = simulateTrade(klines15m, entry, i);
+          const pnl = result.status === 'won'
+            ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+            : result.status === 'lost'
+            ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+            : 0;
+          results.momentum = results.momentum || [];
+          results.momentum.push({
+            time: new Date(klines15m[i][0]).toISOString(),
+            dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+            rr: entry.rr.toFixed(2), status: result.status,
+            pnl: parseFloat(pnl.toFixed(2)),
+            volMult: entry.volMult.toFixed(1),
+            bias1dScore: entry.bias1dScore,
+          });
+          skipUntilMom = result.exitIdx + 2;
+        } catch(_) {}
+      }
+    }
+
     // ── BACKTEST BASE (volume spike + mean reversion en 15m)
     if (module === 'base' || module === 'both') {
       let skipUntilBase = 0;
@@ -2353,6 +2416,10 @@ app.post('/api/backtest', async (req, res) => {
         stats: { ...calcStats(results.base), zScore: calcZScore(results.base), n: results.base.length },
         trades: results.base.slice(-50)
       } : null,
+      momentum: results.momentum ? {
+        stats: { ...calcStats(results.momentum), zScore: calcZScore(results.momentum), n: results.momentum.length },
+        trades: results.momentum.slice(-50)
+      } : null,
     };
 
     console.log(`Backtest ${symbol} ${days}d — Scalp: ${results.scalping.length} trades WR${calcStats(results.scalping).winRate}% | Sweep: ${results.sweep.length} trades WR${calcStats(results.sweep).winRate}%`);
@@ -2367,7 +2434,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.29 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.30 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
