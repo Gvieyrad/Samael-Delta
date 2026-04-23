@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.32' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.33' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1745,7 +1745,7 @@ function evaluateWalls(symbol) {
   }
 
   // Evaluar paredes confirmadas (>10s en el book = anti-spoof)
-  const ANTISPOOF_MS = 10000;
+  const ANTISPOOF_MS = 15000;  // v4.4.33: 15s más tiempo para descartar spoofs
   const NEAR_THRESHOLD = symbol.includes('BTC') ? 0.0008 : 0.0012;
 
   for (const [key, wall] of Object.entries(wallTracker[symbol] || {})) {
@@ -1778,8 +1778,8 @@ function evaluateWalls(symbol) {
     // > 50% comida → pared perforando → NO entrar
     // 30-50%       → indefinido → NO entrar
 
-    if (absorptionPct > 30) {
-      continue; // perforando o absorción significativa — no entrar
+    if (absorptionPct > 15) {
+      continue; // v4.4.33: absorción >15% = pared bajo ataque, ganadores tienen promedio 8% — no entrar
     }
 
     // Pared sostuvo con <30% absorción → rebote confirmado
@@ -1841,7 +1841,7 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
     } catch(_) {}
 
     // Fix 2 — tamaño mínimo de pared y strength mínimo 5x
-    const minWallUsd = symbol.includes('BTC') ? 3000000 : 1000000; // $3M BTC, $1M ETH
+    const minWallUsd = symbol.includes('BTC') ? 5000000 : 2000000; // v4.4.33: $5M BTC, $2M ETH — datos muestran paredes pequeñas tienen WR 21%
     const wallUsdCheck = wall.price * wall.qty;
     if (wallUsdCheck < minWallUsd) {
       console.log(`Wall v2 omitido — pared muy pequeña $${(wallUsdCheck/1e6).toFixed(2)}M < $${minWallUsd/1e6}M (${symbol})`);
@@ -2573,7 +2573,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.32 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.33 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
