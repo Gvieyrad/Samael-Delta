@@ -15,6 +15,17 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SEC
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
+// ── Filtro de horario — análisis estadístico 256 trades ─────────────────────
+// Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
+// Horas Lima con WR >50%: 13,15,18,21,23
+const HORAS_BLOQUEADAS_LIMA = new Set([0, 1, 2, 7, 10, 11, 14, 16, 22]);
+
+function isHoraBloqueada() {
+  const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  return HORAS_BLOQUEADAS_LIMA.has(horaLima);
+}
+
+
 let analyzeCache = {};
 
 // ══════════════════════════════════════════════════════════════════
@@ -106,7 +117,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.35' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.36' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -255,6 +266,12 @@ async function evaluateAnomaly(symbol) {
 
 async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
+    // Filtro horario
+    if (isHoraBloqueada()) {
+      const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+      console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+      return;
+    }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const { data: recentWhale } = await supabase.from('paper_trades').select('opened_at').eq('symbol', symbol).eq('source', 'sweep').order('opened_at', { ascending: false }).limit(1);
@@ -309,9 +326,9 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<6x) — señal débil (${symbol})`);
       return;
     }
-    // v4.4.32 Fix CVD: CVD mínimo 40% — backtest confirma que CVD<40 genera señales de baja calidad
-    if (Math.abs(metrics.cvdLive) < 40) {
-      console.log(`⏭ Whale trade omitido — CVD ${metrics.cvdLive.toFixed(1)}% insuficiente (<40%) (${symbol})`);
+    // v4.4.36 Fix CVD: CVD mínimo 60% — datos reales: CVD>60 WR 58.8% vs CVD 40-60 WR 39.3%
+    if (Math.abs(metrics.cvdLive) < 60) {
+      console.log(`⏭ Whale trade omitido — CVD ${metrics.cvdLive.toFixed(1)}% insuficiente (<60%) (${symbol})`);
       return;
     }
     // v4.4.34 Fix CVD 5min — confirmar flujo de dinero en contexto amplio
@@ -1468,6 +1485,12 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   if (scalpingInProgress[symbol]) return;
+  // Filtro horario — horas con WR <35%
+  if (isHoraBloqueada()) {
+    const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+    console.log(`⏰ Scalping bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+    return;
+  }
   scalpingInProgress[symbol] = true;
   try {
     const [tickerRes, k3m, obRes, fundingRes] = await Promise.all([
@@ -2630,6 +2653,9 @@ async function runMeanRevScanner() {
 async function detectMeanReversion(symbol) {
   const now = Date.now();
 
+  // Filtro horario
+  if (isHoraBloqueada()) return;
+
   // Cooldown
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
 
@@ -2759,7 +2785,7 @@ app.get('/api/meanrev/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.35 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.36 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
