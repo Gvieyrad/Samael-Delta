@@ -284,6 +284,7 @@ input[type=number]:focus{border-color:#f59e0b}
           <option value="both">Scalp+Sweep</option>
           <option value="base">📊 Base</option>
           <option value="momentum">📈 Momentum</option>
+          <option value="filtered">🔬 Filtered</option>
           <option value="scalping">Scalping</option>
           <option value="sweep">Sweep</option>
         </select>
@@ -1380,6 +1381,11 @@ async function runBacktest() {
       days: parseInt(document.getElementById('bt-days').value),
       module: document.getElementById('bt-mode').value,
       baseVolMult: 5,
+      filteredVolMult: parseFloat(document.getElementById('bt-vol')?.value || 4),
+      filteredBias1dScore: parseFloat(document.getElementById('bt-bias')?.value || 58),
+      filteredBias1hScore: 40,
+      filteredMinCVD: parseFloat(document.getElementById('bt-cvd')?.value || 25),
+      filteredMinPriceMove: 0.1,
       scalpRsiMin: parseFloat(document.getElementById('bt-rsi-min').value),
       scalpRsiMax: parseFloat(document.getElementById('bt-rsi-max').value),
       scalpMinImbalance: parseFloat(document.getElementById('bt-imb').value),
@@ -1433,6 +1439,20 @@ function renderBacktestResults(d) {
       </div>
       <div style="font-size:10px;color:${zCol}">${zLabel}</div>
       <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · z>1.96 = edge momentum · z<-1.96 = edge mean reversion</div>
+    </div>`;
+  } else if (mode === 'filtered' && d.filtered) {
+    const s = d.filtered.stats;
+    const zCol = s.zScore >= 5 ? '#00d68f' : s.zScore >= 1.96 ? '#f59e0b' : s.zScore <= -1.96 ? '#ff4d6d' : '#4b5563';
+    const zLabel = s.zScore >= 5 ? '★★★ Edge muy significativo' : s.zScore >= 1.96 ? '★ Edge significativo' : s.zScore <= -1.96 ? '✗ Edge inverso' : '— No significativo';
+    html += `${statsHtml(s, '#8b5cf6', 'Filtered (todos los filtros del sistema)', '🔬')}`;
+    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(139,92,246,.3)">
+      <div style="font-size:10px;color:#8b5cf6;font-weight:700;margin-bottom:6px">🔬 Validación estadística</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#4b5563">Z-Score</span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
+      </div>
+      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
+      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · Incluye Fix A/B/C2 · Parámetros ajustables arriba</div>
     </div>`;
   } else if (mode === 'base' && d.base) {
     const s = d.base.stats;
