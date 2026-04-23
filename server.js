@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.34' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.35' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1179,6 +1179,10 @@ function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas');
     setInterval(monitorPaperTrades, 2 * 60 * 1000);
+
+  // ── Mean Reversion scanner — cada 1 minuto
+  setInterval(runMeanRevScanner, 60 * 1000);
+  console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
     setTimeout(monitorPaperTrades, 15000);
     return;
   }
@@ -1363,7 +1367,7 @@ app.get('/api/ml/insights', async (req, res) => {
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
     const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
     const bySource = {};
-    for (const src of ['scalping','auto','manual','sweep','wall','backtest']) {
+    for (const src of ['scalping','auto','manual','sweep','wall','meanrev','backtest']) {
       const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
       if (!st.length) continue;
       bySource[src] = { total:st.length, won:sw.length, lost:st.length-sw.length, winRate:parseFloat(((sw.length/Math.max(st.length,1))*100).toFixed(1)), totalPnl:parseFloat(sp.toFixed(2)), avgPnl:parseFloat((sp/Math.max(st.length,1)).toFixed(2)) };
@@ -2602,13 +2606,166 @@ app.post('/api/backtest', async (req, res) => {
 });
 
 
+
+// ══════════════════════════════════════════════════════════════════
+// ─── MÓDULO MEAN REVERSION — Volume Spike + Agotamiento de tendencia
+// ══════════════════════════════════════════════════════════════════
+// Basado en Samael Zero v4 con Z-scores BTC=7.20, ETH=7.42
+// Lógica: 1H cayó/subió >1% + volume spike >3x en 1m → mean reversion
+// SL: 0.3% fijo | TP: 1.0% fijo | R:R 1:3.3 | Exit máx: 60min BTC, 45min ETH
+
+const meanRevCooldown = {};
+const MEANREV_COOLDOWN_MS = 15 * 60 * 1000; // 15 min entre trades por símbolo
+
+async function runMeanRevScanner() {
+  for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+    try {
+      await detectMeanReversion(symbol);
+    } catch(e) {
+      console.log(`MeanRev error ${symbol}: ${e.message}`);
+    }
+  }
+}
+
+async function detectMeanReversion(symbol) {
+  const now = Date.now();
+
+  // Cooldown
+  if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
+
+  // No abrir si ya hay trade abierto
+  const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+  if (existing?.length) return;
+
+  const price = wsState[symbol]?.lastPrice;
+  if (!price) return;
+
+  // ── CONDICIÓN 1: Pre-trend 1H >1% ────────────────────────────────
+  // ¿El precio de 1H se movió >1% en alguna dirección?
+  const k1h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=3`);
+  const h1Open  = parseFloat(k1h.data[0][1]); // apertura hace 1H
+  const h1Close = parseFloat(k1h.data[k1h.data.length - 2][4]); // cierre de la vela 1H cerrada
+  const h1Move  = (h1Close - h1Open) / h1Open * 100;
+  const absH1   = Math.abs(h1Move);
+
+  if (absH1 < 1.0) return; // movimiento insuficiente en 1H
+
+  // ── CONDICIÓN 2: Filtro 4H — no pelear contra tendencia fuerte ────
+  // Si 4H va en la misma dirección que 1H con >1% → NO tradear
+  const k4h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=2`);
+  const h4Open  = parseFloat(k4h.data[0][1]);
+  const h4Close = parseFloat(k4h.data[0][4]);
+  const h4Move  = (h4Close - h4Open) / h4Open * 100;
+
+  const h1Dir = h1Move < 0 ? 'down' : 'up';
+  const h4Dir = h4Move < 0 ? 'down' : 'up';
+
+  // Si 4H va en misma dirección que 1H con fuerza → tendencia fuerte, no entrar contra ella
+  if (h1Dir === h4Dir && Math.abs(h4Move) > 1.0) {
+    console.log(`MeanRev ${symbol} omitido — tendencia 4H (${h4Move.toFixed(2)}%) confirma 1H (${h1Move.toFixed(2)}%) — sin reversión`);
+    return;
+  }
+
+  // ── CONDICIÓN 3: Volume spike >3x mediana en velas 1m ─────────────
+  const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=21`);
+  const vols1m  = k1m.data.map(k => parseFloat(k[5]));
+  const lastVol = vols1m[vols1m.length - 1];
+
+  // Mediana de las últimas 20 velas (excluyendo la última)
+  const sorted = [...vols1m.slice(0, -1)].sort((a, b) => a - b);
+  const median  = sorted[Math.floor(sorted.length / 2)];
+  const volMult = median > 0 ? lastVol / median : 0;
+
+  if (volMult < 3) return; // spike insuficiente
+
+  // ── DIRECCIÓN: Mean reversion contra el movimiento de 1H ──────────
+  // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
+  // 1H subió >1% + spike → vendedores agotaron compradores → SHORT
+  const direction = h1Move < -1.0 ? 'LONG' : 'SHORT';
+
+  // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
+  const k1d = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
+  const bias1d = calcBias(k1d.data, null, 0);
+
+  // Solo bloquear si 1D es extremamente contrario (score <35 para LONG o >65 para SHORT)
+  if (direction === 'LONG'  && bias1d.score < 35) {
+    console.log(`MeanRev LONG ${symbol} omitido — 1D muy bajista (score:${bias1d.score})`);
+    return;
+  }
+  if (direction === 'SHORT' && bias1d.score > 65) {
+    console.log(`MeanRev SHORT ${symbol} omitido — 1D muy alcista (score:${bias1d.score})`);
+    return;
+  }
+
+  // ── CALCULAR SL y TP FIJOS ────────────────────────────────────────
+  // SL: 0.3% fijo | TP: 1.0% fijo | R:R 1:3.3
+  const slPct = 0.003; // 0.3%
+  const tpPct = 0.010; // 1.0%
+  const sl = direction === 'LONG' ? price * (1 - slPct) : price * (1 + slPct);
+  const tp = direction === 'LONG' ? price * (1 + tpPct) : price * (1 - tpPct);
+  const rr = tpPct / slPct; // 3.3
+
+  // ── ABRIR TRADE ───────────────────────────────────────────────────
+  meanRevCooldown[symbol] = now;
+
+  const exitMins = symbol.includes('BTC') ? 60 : 45;
+  const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
+
+  await supabase.from('paper_trades').insert({
+    symbol, direction, entry: price, tp1: tp, tp2: tp, sl,
+    rr: `1:${rr.toFixed(1)}`,
+    confidence: conf,
+    size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+    leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+    source: 'meanrev',
+    status: 'open',
+    opened_at: new Date().toISOString(),
+    market_data: {
+      mode: 'mean_reversion',
+      h1_move_pct: parseFloat(h1Move.toFixed(3)),
+      h4_move_pct: parseFloat(h4Move.toFixed(3)),
+      vol_mult: parseFloat(volMult.toFixed(2)),
+      vol_median: parseFloat(median.toFixed(0)),
+      bias_1d_score: bias1d.score,
+      exit_mins: exitMins,
+      timestamp: new Date().toISOString(),
+    }
+  });
+
+  console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
+
+  if (process.env.TELEGRAM_CHAT_ID) {
+    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${new Date().toLocaleTimeString('es-PE')}`;
+    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+  }
+}
+
+// Endpoint para ver estado del módulo
+app.get('/api/meanrev/status', (req, res) => {
+  const status = {};
+  for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+    const cdMs = meanRevCooldown[symbol]
+      ? Math.max(0, MEANREV_COOLDOWN_MS - (Date.now() - meanRevCooldown[symbol]))
+      : 0;
+    status[symbol] = {
+      lastPrice: wsState[symbol]?.lastPrice || 0,
+      cooldownMin: (cdMs / 60000).toFixed(1),
+      active: cdMs === 0,
+    };
+  }
+  res.json({ module: 'Mean Reversion', version: '4.4.35', status });
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.34 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.35 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
-  // ── Wall Absorption v2 — WebSocket depth20 streaming
-  connectDepthWebSocket('BTCUSDT');
-  connectDepthWebSocket('ETHUSDT');
-  console.log('🧱 Wall Absorption v2 iniciado — streaming depth20 100ms');
+  // ── Wall Absorption v2 — DESACTIVADO temporalmente
+  // Wall detector no predice dirección (N=245, WR 33%) — datos confirman sin edge
+  // connectDepthWebSocket('BTCUSDT');
+  // connectDepthWebSocket('ETHUSDT');
+  // console.log('🧱 Wall Absorption v2 iniciado — streaming depth20 100ms');
+  console.log('🧱 Wall Absorption v2 DESACTIVADO — sin edge estadístico confirmado');
 });
