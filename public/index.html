@@ -283,6 +283,7 @@ input[type=number]:focus{border-color:#f59e0b}
         <select id="bt-mode" style="background:#111520;border:1px solid #1e2330;color:#e2e4ea;font-size:10px;padding:3px 6px;border-radius:4px;font-family:monospace">
           <option value="both">Scalp+Sweep</option>
           <option value="base">📊 Base</option>
+          <option value="momentum">📈 Momentum</option>
           <option value="scalping">Scalping</option>
           <option value="sweep">Sweep</option>
         </select>
@@ -1419,7 +1420,21 @@ function renderBacktestResults(d) {
   }
   const mode = document.getElementById('bt-mode')?.value || 'both';
   let html = `<div style="font-size:10px;color:#4b5563;margin-bottom:8px;text-align:center">${d.symbol} · últimos ${d.days} días · $1,000 x5 por trade</div><div style="display:flex;flex-direction:column;gap:8px">`;
-  if (mode === 'base' && d.base) {
+  if (mode === 'momentum' && d.momentum) {
+    const s = d.momentum.stats;
+    const zCol = s.zScore >= 5 ? '#00d68f' : s.zScore >= 1.96 ? '#f59e0b' : s.zScore <= -1.96 ? '#ff4d6d' : '#4b5563';
+    const zLabel = s.zScore >= 5 ? '★★★ Muy significativo' : s.zScore >= 1.96 ? '★ Significativo' : s.zScore <= -5 ? '✗✗✗ Edge INVERSO muy fuerte' : s.zScore <= -1.96 ? '✗ Edge inverso' : '— No significativo';
+    html += `${statsHtml(s, '#00d68f', 'Momentum (vol spike + tendencia)', '📈')}`;
+    html += `<div style="background:#111520;border-radius:6px;padding:10px;border:1px solid rgba(0,214,143,.3)">
+      <div style="font-size:10px;color:#00d68f;font-weight:700;margin-bottom:6px">📈 Validación estadística</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#4b5563">Z-Score</span>
+        <span class="mono" style="font-size:13px;font-weight:700;color:${zCol}">${s.zScore || 'N/A'}</span>
+      </div>
+      <div style="font-size:10px;color:${zCol}">${zLabel}</div>
+      <div style="font-size:9px;color:#2a3040;margin-top:4px">N=${s.n} trades · z>1.96 = edge momentum · z<-1.96 = edge mean reversion</div>
+    </div>`;
+  } else if (mode === 'base' && d.base) {
     const s = d.base.stats;
     const zCol = Math.abs(s.zScore||0) >= 5 ? '#00d68f' : Math.abs(s.zScore||0) >= 1.96 ? '#f59e0b' : '#ff4d6d';
     const zLabel = Math.abs(s.zScore||0) >= 5 ? '★★★ Muy significativo' : Math.abs(s.zScore||0) >= 1.96 ? '★ Significativo' : '✗ No significativo';
