@@ -1393,8 +1393,7 @@ setInterval(fetchAll,30000);
 setInterval(fetchAllPrices,15000);
 setInterval(updateSesion, 60000);
 setInterval(updateMacroDashboard, 15000);
-setInterval(()=>{ updateMacroDashboard(); }, 100); // primera vez inmediata
-setInterval(()=>{ updateSesion(); }, 100); // primera vez inmediata
+setTimeout(()=>{ updateMacroDashboard(); updateSesion(); }, 1500);
 setTimeout(refreshWsWidget, 3000);
 setInterval(refreshWsWidget, 5000);
 setTimeout(refreshNews,5000);
