@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.33' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.34' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -314,6 +314,26 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       console.log(`⏭ Whale trade omitido — CVD ${metrics.cvdLive.toFixed(1)}% insuficiente (<40%) (${symbol})`);
       return;
     }
+    // v4.4.34 Fix CVD 5min — confirmar flujo de dinero en contexto amplio
+    try {
+      const kCvd5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=10`);
+      let buyVol5m = 0, sellVol5m = 0;
+      for (const k of kCvd5m.data) {
+        const v = parseFloat(k[5]);
+        if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol5m += v;
+        else sellVol5m += v;
+      }
+      const totalVol5m = buyVol5m + sellVol5m;
+      const cvd5mPct = totalVol5m > 0 ? (buyVol5m - sellVol5m) / totalVol5m * 100 : 0;
+      if (direction === 'LONG' && cvd5mPct < -20) {
+        console.log(`⏭ Whale LONG omitido — CVD 5min negativo (${cvd5mPct.toFixed(1)}%) instituciones vendiendo (${symbol})`);
+        return;
+      }
+      if (direction === 'SHORT' && cvd5mPct > 20) {
+        console.log(`⏭ Whale SHORT omitido — CVD 5min positivo (${cvd5mPct.toFixed(1)}%) instituciones comprando (${symbol})`);
+        return;
+      }
+    } catch(_) {}
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
@@ -1505,6 +1525,17 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'long' && scalpDirPreview === 'SHORT') { console.log("⛔ Scalp SHORT " + symbol + " bloqueado — 4H y 1H alcistas"); return; }
     if (bias4hScalp2?.bias === 'neutral' && bias1hScore >= 35 && bias1hScore <= 65) { console.log("⛔ Scalp " + symbol + " bloqueado — mercado lateral"); return; }
 
+    // v4.4.34 Fix bias_1h score — bloquear scalping cuando 1H contradice fuertemente la señal
+    // Si 1H es alcista fuerte (>65) no entrar SHORT — si 1H es bajista fuerte (<35) no entrar LONG
+    if (scalpDirPreview === 'SHORT' && bias1hScore > 65) {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 1H alcista fuerte (score:${bias1hScore}) contradice SHORT`);
+      return;
+    }
+    if (scalpDirPreview === 'LONG' && bias1hScore < 35) {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H bajista fuerte (score:${bias1hScore}) contradice LONG`);
+      return;
+    }
+
     // BONUS ZONAS DE LIQUIDACIÓN DINÁMICAS
     try {
       const dynZones = await calcDynamicLiqZones(symbol, price);
@@ -2573,7 +2604,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.33 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.34 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
