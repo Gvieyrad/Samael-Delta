@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.31' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.32' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -304,9 +304,14 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
         }
       }
     } catch(_) {}
-    // v4.4.18 Fix A: vol_multiplier mínimo 4x — ballenas débiles (<4x) tienen WR bajo
-    if (metrics.volumeMultiplier < 4) {
-      console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<4x) — señal débil (${symbol})`);
+    // v4.4.32 Fix A: vol_multiplier mínimo 6x — backtest 365d confirma: 6x da mejor Z-Score y WR que 4x
+    if (metrics.volumeMultiplier < 6) {
+      console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<6x) — señal débil (${symbol})`);
+      return;
+    }
+    // v4.4.32 Fix CVD: CVD mínimo 40% — backtest confirma que CVD<40 genera señales de baja calidad
+    if (Math.abs(metrics.cvdLive) < 40) {
+      console.log(`⏭ Whale trade omitido — CVD ${metrics.cvdLive.toFixed(1)}% insuficiente (<40%) (${symbol})`);
       return;
     }
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
@@ -2568,7 +2573,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.31 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.32 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
