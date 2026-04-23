@@ -143,6 +143,20 @@ input[type=number]:focus{border-color:#f59e0b}
   </div>
 </div>
 
+<!-- 📊 Dashboard Macro -->
+<div id="macro-dashboard" style="padding:5px 16px;border-bottom:1px solid #0d1420;background:#060a12;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+  <span style="font-size:8px;color:#1e2330;font-family:monospace;text-transform:uppercase;letter-spacing:1px;font-weight:700">MACRO</span>
+  <div id="macro-cvd1h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 1H: —</div>
+  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
+  <div id="macro-cvd4h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 4H: —</div>
+  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
+  <div id="macro-funding" style="font-size:10px;font-family:monospace;color:#2a3040">FR: —</div>
+  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
+  <div id="macro-oi" style="font-size:10px;font-family:monospace;color:#2a3040">OI 4H: —</div>
+  <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
+  <div id="macro-score" style="font-size:10px;font-family:monospace;font-weight:700;padding:1px 8px;border-radius:3px;background:rgba(30,35,48,.5);color:#4b5563">Score: —</div>
+</div>
+
 <!-- ⚡ Widget WebSocket Tiempo Real -->
 <div id="ws-widget" style="background:#080e18;border-bottom:2px solid #1e2330;padding:8px 16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap">
   <span style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#f59e0b;font-weight:700;display:flex;align-items:center;gap:5px">
@@ -555,7 +569,7 @@ async function refreshWsWidget() {
 
 async function fetchAll(){
   document.getElementById('upd').textContent='actualizando...';
-  try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());renderAll();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
+  try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());renderAll(); updateMacroDashboard();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
   catch(e){document.getElementById('upd').textContent='error — reintentando...';}
 }
 
@@ -1299,8 +1313,88 @@ async function refreshNews(){
 
 fetchAll();
 fetchAllPrices();
+// ── Semáforo de sesión ────────────────────────────────────────────────────
+async function updateSesion() {
+  try {
+    const d = await fetch('/api/sesion').then(r => r.json());
+    const dot = document.getElementById('sesion-dot');
+    const label = document.getElementById('sesion-label');
+    const badge = document.getElementById('sesion-badge');
+    if (!badge) return;
+    if (d.activa) {
+      badge.style.background = 'rgba(0,214,143,.1)';
+      badge.style.borderColor = 'rgba(0,214,143,.3)';
+      badge.style.color = '#00d68f';
+      dot.style.background = '#00d68f';
+      label.textContent = `${d.emoji} ${d.nombre} · ${d.horaLima}h Lima`;
+    } else {
+      badge.style.background = 'rgba(255,77,109,.08)';
+      badge.style.borderColor = 'rgba(255,77,109,.2)';
+      badge.style.color = '#ff4d6d';
+      dot.style.background = '#ff4d6d';
+      label.textContent = `${d.emoji} ${d.nombre} · ${d.horaLima}h Lima`;
+    }
+  } catch(_) {}
+}
+
+// ── Dashboard macro — actualiza con datos del análisis ────────────────────
+function updateMacroDashboard() {
+  if (!mkt || !mkt.timeframes) return;
+  const tf = mkt.timeframes;
+  const sym = currentSymbol || 'BTC';
+
+  const cvd1h = tf['1H']?.cvdPct;
+  const cvd4h = tf['4H']?.cvdPct;
+  const fr    = tf['15m']?.fundingRate;
+  const oi    = tf['4H']?.oiDeltaPct;
+
+  const fmt = (n, suffix='%') => `${n > 0 ? '+' : ''}${parseFloat(n).toFixed(n > 10 || n < -10 ? 1 : 2)}${suffix}`;
+  const col = n => n > 20 ? '#00d68f' : n < -20 ? '#ff4d6d' : n > 5 ? '#38bdf8' : n < -5 ? '#f59e0b' : '#4b5563';
+
+  const el1h = document.getElementById('macro-cvd1h');
+  if (el1h && cvd1h !== undefined) el1h.innerHTML = `CVD 1H: <span style="color:${col(cvd1h)};font-weight:700">${fmt(cvd1h)}</span>`;
+
+  const el4h = document.getElementById('macro-cvd4h');
+  if (el4h && cvd4h !== undefined) el4h.innerHTML = `CVD 4H: <span style="color:${col(cvd4h)};font-weight:700">${fmt(cvd4h)}</span>`;
+
+  if (fr !== undefined) {
+    const elFr = document.getElementById('macro-funding');
+    const n = parseFloat(fr) * 100;
+    const c = Math.abs(n) < 0.005 ? '#4b5563' : n > 0 ? '#ff4d6d' : '#00d68f';
+    if (elFr) elFr.innerHTML = `FR: <span style="color:${c};font-weight:700">${n > 0 ? '+' : ''}${n.toFixed(4)}%</span>`;
+  }
+
+  if (oi !== undefined) {
+    const elOi = document.getElementById('macro-oi');
+    const n = parseFloat(oi);
+    const c = n > 0.3 ? '#00d68f' : n < -0.3 ? '#ff4d6d' : '#4b5563';
+    if (elOi) elOi.innerHTML = `OI 4H: <span style="color:${c};font-weight:700">${fmt(n)}</span>`;
+  }
+
+  // Score de confluencia
+  let score = 0;
+  if (cvd1h !== undefined) score += cvd1h > 20 ? 2 : cvd1h < -20 ? -2 : 0;
+  if (cvd4h !== undefined) score += cvd4h > 20 ? 2 : cvd4h < -20 ? -2 : 0;
+  if (fr !== undefined) score += parseFloat(fr) < -0.005 ? 1 : parseFloat(fr) > 0.005 ? -1 : 0;
+  if (oi !== undefined) score += parseFloat(oi) > 0.5 ? 1 : parseFloat(oi) < -0.5 ? -1 : 0;
+
+  const elScore = document.getElementById('macro-score');
+  if (elScore) {
+    const lbl = score >= 3 ? '🟢 Alcista' : score <= -3 ? '🔴 Bajista' : score >= 1 ? '🔵 Leve alcista' : score <= -1 ? '🟠 Leve bajista' : '🟡 Neutral';
+    const c = score >= 3 ? '#00d68f' : score <= -3 ? '#ff4d6d' : score >= 1 ? '#38bdf8' : score <= -1 ? '#f59e0b' : '#4b5563';
+    const bg = score >= 3 ? 'rgba(0,214,143,.1)' : score <= -3 ? 'rgba(255,77,109,.1)' : 'rgba(75,85,99,.1)';
+    elScore.style.color = c;
+    elScore.style.background = bg;
+    elScore.textContent = `Score ${score > 0 ? '+' : ''}${score} · ${lbl}`;
+  }
+}
+
 setInterval(fetchAll,30000);
 setInterval(fetchAllPrices,15000);
+setInterval(updateSesion, 60000);
+setInterval(updateMacroDashboard, 15000);
+setInterval(()=>{ updateMacroDashboard(); }, 100); // primera vez inmediata
+setInterval(()=>{ updateSesion(); }, 100); // primera vez inmediata
 setTimeout(refreshWsWidget, 3000);
 setInterval(refreshWsWidget, 5000);
 setTimeout(refreshNews,5000);
