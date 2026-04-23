@@ -106,7 +106,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.30' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.31' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2217,6 +2217,93 @@ function simulateBaseEntry(klines15m, klines1d, idx, params = {}) {
 }
 
 
+// ── Backtest modo FILTERED — aplica todos los filtros del sistema real ──
+// Replica exactamente la lógica de sweep/whale con datos históricos de 15m
+// Fix A: vol mínimo 4x | Fix B: bias_1d + bias_1h | CVD + price move
+
+function simulateFilteredEntry(klines15m, klines1d, klines1h, idx, params = {}) {
+  const {
+    baseVolMult = 4,       // Fix A — vol mínimo 4x
+    bias1dScore = 58,      // Fix B — score umbral 1D
+    bias1hScore = 40,      // Fix B2 — score umbral 1H para pullback
+    minCVD = 25,           // CVD mínimo en dirección
+    minPriceMove = 0.1,    // confirmación precio 5 velas (C2)
+  } = params;
+
+  const window15m = klines15m.slice(0, idx + 1);
+  if (window15m.length < 30) return null;
+
+  const volumes = window15m.map(k => parseFloat(k[5]));
+  const closes  = window15m.map(k => parseFloat(k[4]));
+  const price   = closes[closes.length - 1];
+
+  // Fix A — Volume spike mínimo
+  const avgVol  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volMult = avgVol > 0 ? lastVol / avgVol : 0;
+  if (volMult < baseVolMult) return null;
+
+  // CVD aproximado: compras vs ventas en últimas 5 velas
+  const last5 = window15m.slice(-5);
+  let buyVol = 0, sellVol = 0;
+  for (const k of last5) {
+    const v = parseFloat(k[5]);
+    if (parseFloat(k[4]) >= parseFloat(k[1])) buyVol += v;
+    else sellVol += v;
+  }
+  const totalVol = buyVol + sellVol;
+  const cvdPct = totalVol > 0 ? (buyVol - sellVol) / totalVol * 100 : 0;
+
+  // Dirección basada en CVD
+  let dir = null;
+  if (cvdPct < -minCVD) dir = 'SHORT';      // vendedores dominan → SHORT
+  else if (cvdPct > minCVD) dir = 'LONG';   // compradores dominan → LONG
+  else return null;
+
+  // C2 — Confirmación de precio en últimas 5 velas
+  const prev5Price = parseFloat(window15m[window15m.length - 6]?.[4] || window15m[0][4]);
+  const priceMove = (price - prev5Price) / prev5Price * 100;
+  if (dir === 'SHORT' && priceMove > -minPriceMove) return null;
+  if (dir === 'LONG'  && priceMove < minPriceMove) return null;
+
+  // Fix B — bias_1d bloquea si mercado en tendencia contraria
+  const d1idx = Math.min(Math.floor(idx / 96), klines1d.length - 1);
+  if (d1idx < 5) return null;
+  const bias1d = btCalcBias1d(klines1d.slice(0, d1idx + 1));
+  if (!bias1d) return null;
+
+  const trend1d_up   = bias1d.bias === 'long'  || bias1d.score > bias1dScore;
+  const trend1d_down = bias1d.bias === 'short' || bias1d.score < (100 - bias1dScore);
+
+  // Fix B2 — bias_1h: permite pullbacks en tendencia
+  const h1idx = Math.min(Math.floor(idx / 4), klines1h.length - 1);
+  if (h1idx < 5) return null;
+  const bias1h = btCalcBias1h(klines1h.slice(0, h1idx + 1));
+  if (!bias1h) return null;
+
+  const pullback_down = bias1h.score < bias1hScore;   // 1H bajista = pullback en alcista
+  const pullback_up   = bias1h.score > (100 - bias1hScore); // 1H alcista = rebote en bajista
+
+  // Bloquear si: 1D alcista Y 1H también alcista (sin pullback real)
+  if (dir === 'SHORT' && trend1d_up && !pullback_down) return null;
+  // Bloquear si: 1D bajista Y 1H también bajista (sin rebote real)
+  if (dir === 'LONG'  && trend1d_down && !pullback_up) return null;
+
+  // SL y TP basados en ATR de 15m
+  const atr = btCalcATR(window15m, 14);
+  const sl  = dir === 'LONG' ? price - atr * 0.8 : price + atr * 0.8;
+  const tp  = dir === 'LONG' ? price + atr * 1.2 : price - atr * 1.2;
+  const rr  = Math.abs(tp - price) / Math.abs(sl - price);
+  if (rr < 1.3) return null;
+
+  return {
+    dir, entry: price, tp, sl, rr,
+    volMult, cvdPct: parseFloat(cvdPct.toFixed(1)),
+    bias1dScore: bias1d.score, bias1hScore: bias1h.score,
+    idx
+  };
+}
+
 app.post('/api/backtest', async (req, res) => {
   try {
     const {
@@ -2224,6 +2311,12 @@ app.post('/api/backtest', async (req, res) => {
       days = 30,
       module = 'both',
       baseVolMult = 5,
+      // Parámetros modo filtered
+      filteredVolMult = 4,
+      filteredBias1dScore = 58,
+      filteredBias1hScore = 40,
+      filteredMinCVD = 25,
+      filteredMinPriceMove = 0.1,
       // Parámetros ajustables scalping
       scalpRsiMin = 35, scalpRsiMax = 65,
       scalpMinImbalance = 30, scalpMomentumPct = 0.05,
@@ -2371,6 +2464,43 @@ app.post('/api/backtest', async (req, res) => {
       }
     }
 
+    // ── BACKTEST FILTERED — todos los filtros del sistema real
+    if (module === 'filtered') {
+      const filteredParams = {
+        baseVolMult: filteredVolMult,
+        bias1dScore: filteredBias1dScore,
+        bias1hScore: filteredBias1hScore,
+        minCVD: filteredMinCVD,
+        minPriceMove: filteredMinPriceMove,
+      };
+      let skipUntilFilt = 0;
+      for (let i = 30; i < klines15m.length - 10; i++) {
+        if (i < skipUntilFilt) continue;
+        try {
+          const entry = simulateFilteredEntry(klines15m, klines1d, klines1h, i, filteredParams);
+          if (!entry) continue;
+          const result = simulateTrade(klines15m, entry, i);
+          const pnl = result.status === 'won'
+            ? SIZE_USD * LEVERAGE * Math.abs(entry.tp - entry.entry) / entry.entry
+            : result.status === 'lost'
+            ? -SIZE_USD * LEVERAGE * Math.abs(entry.entry - entry.sl) / entry.entry
+            : 0;
+          results.filtered = results.filtered || [];
+          results.filtered.push({
+            time: new Date(klines15m[i][0]).toISOString(),
+            dir: entry.dir, entry: entry.entry, tp: entry.tp, sl: entry.sl,
+            rr: entry.rr.toFixed(2), status: result.status,
+            pnl: parseFloat(pnl.toFixed(2)),
+            volMult: entry.volMult.toFixed(1),
+            cvdPct: entry.cvdPct,
+            bias1dScore: entry.bias1dScore,
+            bias1hScore: entry.bias1hScore,
+          });
+          skipUntilFilt = result.exitIdx + 2;
+        } catch(_) {}
+      }
+    }
+
     // ── BACKTEST BASE (volume spike + mean reversion en 15m)
     if (module === 'base' || module === 'both') {
       let skipUntilBase = 0;
@@ -2420,6 +2550,10 @@ app.post('/api/backtest', async (req, res) => {
         stats: { ...calcStats(results.momentum), zScore: calcZScore(results.momentum), n: results.momentum.length },
         trades: results.momentum.slice(-50)
       } : null,
+      filtered: results.filtered ? {
+        stats: { ...calcStats(results.filtered), zScore: calcZScore(results.filtered), n: results.filtered.length },
+        trades: results.filtered.slice(-50)
+      } : null,
     };
 
     console.log(`Backtest ${symbol} ${days}d — Scalp: ${results.scalping.length} trades WR${calcStats(results.scalping).winRate}% | Sweep: ${results.sweep.length} trades WR${calcStats(results.sweep).winRate}%`);
@@ -2434,7 +2568,7 @@ app.post('/api/backtest', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.30 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.31 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — WebSocket depth20 streaming
