@@ -1206,13 +1206,14 @@ function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas');
     setInterval(monitorPaperTrades, 2 * 60 * 1000);
-
-  // ── Mean Reversion scanner — cada 1 minuto
-  setInterval(runMeanRevScanner, 60 * 1000);
-  console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
     setTimeout(monitorPaperTrades, 15000);
     return;
   }
+
+    // ── Mean Reversion scanner — cada 1 minuto
+  setInterval(runMeanRevScanner, 60 * 1000);
+  console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
+  
   const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
   console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
   setInterval(monitorPaperTrades, 2 * 60 * 1000);
