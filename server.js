@@ -17,12 +17,22 @@ const BINANCE = 'https://fapi.binance.com';
 const BINANCE_WS = 'wss://fstream.binance.com';
 // ── Filtro de horario — análisis estadístico 256 trades ─────────────────────
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
-// Horas Lima con WR >50%: 13,15,18,21,23
-const HORAS_BLOQUEADAS_LIMA = new Set([0, 1, 2, 7, 10, 11, 14, 16, 22]);
+// Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
+// Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
+const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 13, 15, 16, 17, 18, 19, 21, 23]);
 
 function isHoraBloqueada() {
   const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
-  return HORAS_BLOQUEADAS_LIMA.has(horaLima);
+  return !HORAS_ACTIVAS_LIMA.has(horaLima);
+}
+
+function getSesionActual() {
+  const h = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  if (h >= 7 && h <= 9)   return { nombre: 'Mañana', emoji: '🌅', activa: true };
+  if (h >= 15 && h <= 19) return { nombre: 'Tarde NY', emoji: '🌆', activa: true };
+  if (h === 13)            return { nombre: 'Mediodía', emoji: '☀️', activa: true };
+  if (h === 21 || h === 23) return { nombre: 'Noche', emoji: '🌙', activa: true };
+  return { nombre: 'Fuera de sesión', emoji: '💤', activa: false };
 }
 
 
@@ -117,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.36' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.37' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -364,7 +374,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (rrVal < 1.5) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
     // v4.4.16 C1: confianza mínima 82 — conf=77 tenía WR 40% y PnL negativo
     const whaleConfidence = Math.max(82, Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus)));
-    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString() } });
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
@@ -1157,7 +1167,7 @@ Responde SOLO JSON sin markdown:
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
     try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
-    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '93'), trend1d = bias1d.bias;
+    const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90'), trend1d = bias1d.bias;
     const trendOk = signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : false;
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
@@ -2737,6 +2747,7 @@ async function detectMeanReversion(symbol) {
   const exitMins = symbol.includes('BTC') ? 60 : 45;
   const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
 
+  const tradeCtxMR = await captureTradeContext(symbol);
   await supabase.from('paper_trades').insert({
     symbol, direction, entry: price, tp1: tp, tp2: tp, sl,
     rr: `1:${rr.toFixed(1)}`,
@@ -2755,6 +2766,7 @@ async function detectMeanReversion(symbol) {
       bias_1d_score: bias1d.score,
       exit_mins: exitMins,
       timestamp: new Date().toISOString(),
+      ...tradeCtxMR,
     }
   });
 
@@ -2780,12 +2792,46 @@ app.get('/api/meanrev/status', (req, res) => {
     };
   }
   res.json({ module: 'Mean Reversion', version: '4.4.35', status });
+
+// ── Journal automático — captura contexto macro en cada entrada ──────────────
+async function captureTradeContext(symbol) {
+  try {
+    const [k1h, k4h] = await Promise.all([
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=10`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=5`),
+    ]);
+    const cvd = (klines) => {
+      let b = 0, s = 0;
+      for (const k of klines) { const v = parseFloat(k[5]); if (parseFloat(k[4]) >= parseFloat(k[1])) b += v; else s += v; }
+      const t = b + s; return t > 0 ? parseFloat(((b - s) / t * 100).toFixed(1)) : 0;
+    };
+    const sesion = getSesionActual();
+    const bias1h = calcBias(k1h.data, null, 0);
+    const bias4h = calcBias(k4h.data, null, 0);
+    return {
+      journal_cvd_1h: cvd(k1h.data),
+      journal_cvd_4h: cvd(k4h.data),
+      journal_sesion: sesion.nombre,
+      journal_hora_lima: new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours(),
+      journal_bias_1h: bias1h?.score || 50,
+      journal_bias_4h: bias4h?.score || 50,
+    };
+  } catch(_) { return {}; }
+}
+
+
+app.get('/api/sesion', (req, res) => {
+  const sesion = getSesionActual();
+  const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  res.json({ ...sesion, horaLima, bloqueada: isHoraBloqueada() });
+});
+
 });
 
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.36 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.37 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
