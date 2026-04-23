@@ -2826,7 +2826,6 @@ app.get('/api/sesion', (req, res) => {
   res.json({ ...sesion, horaLima, bloqueada: isHoraBloqueada() });
 });
 
-});
 
 
 const PORT = process.env.PORT || 3000;
