@@ -204,6 +204,7 @@ input[type=number]:focus{border-color:#f59e0b}
         <button class="btn-ai" id="alert-btn" onclick="triggerAlert()" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);color:#f59e0b" title="Disparar alerta Telegram ahora"><span id="alert-icon">🔔</span></button>
         <button class="btn-ai" id="scalp-btn" onclick="toggleScalping()" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.35);color:#8b5cf6" title="Modo Scalping — análisis cada 3 min"><span id="scalp-icon">⚡</span> Scalp</button>
         <span id="scalp-signal-badge" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700;display:none;margin-left:4px"></span>
+        <span id="macro-filter-badge" style="display:none;font-size:9px;padding:2px 7px;border-radius:3px;font-weight:700;background:rgba(139,92,246,.15);color:#8b5cf6;border:1px solid rgba(139,92,246,.3)" title="Macro Filter activo"></span>
         <button id="lock-btn" onclick="toggleLock()" title="Candado — desbloquear para modo prueba/clases" style="background:transparent;border:1px solid #1e2330;color:#4b5563;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:13px">🔒</button>
       </div>
     </div>
@@ -591,15 +592,33 @@ async function fetchTrackerStatus() {
     const r = await fetch(`${API}/api/tracker/status`);
     if (!r.ok) return;
     const d = await r.json();
+    // Circuit Breaker
     const cb = document.getElementById('circuit-breaker-badge');
-    const eb = document.getElementById('eth-pause-badge');
     if (cb) cb.style.display = d.circuitBreaker ? 'inline-block' : 'none';
+    // ETH pause
+    const eb = document.getElementById('eth-pause-badge');
     if (eb) {
       if (d.ethPaused) {
         eb.textContent = `⏸️ ETH pausado ${d.ethMinLeft}min`;
         eb.style.display = 'inline-block';
       } else {
         eb.style.display = 'none';
+      }
+    }
+    // Macro Filter badge — muestra penalizaciones activas
+    const mb = document.getElementById('macro-filter-badge');
+    if (mb) {
+      if (d.macroPenalizaciones >= 2) {
+        const color = d.macroPenalizaciones >= 3 ? '#ff4d6d' : '#f59e0b';
+        const bg = d.macroPenalizaciones >= 3 ? 'rgba(255,77,109,.15)' : 'rgba(245,158,11,.15)';
+        mb.style.display = 'inline-block';
+        mb.style.color = color;
+        mb.style.background = bg;
+        mb.style.borderColor = color.replace(')', ',.3)').replace('rgb', 'rgba');
+        mb.textContent = `🌐 Macro ${d.macroPenalizaciones}/5`;
+        mb.title = d.macroCondiciones ? d.macroCondiciones.join(' | ') : 'Contexto adverso';
+      } else {
+        mb.style.display = 'none';
       }
     }
   } catch(_) {}
