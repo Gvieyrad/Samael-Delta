@@ -148,17 +148,17 @@ input[type=number]:focus{border-color:#f59e0b}
 </div>
 
 <!-- 📊 Dashboard Macro -->
-<div id="macro-dashboard" style="padding:5px 16px;border-bottom:1px solid #0d1420;background:#060a12;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-  <span style="font-size:8px;color:#1e2330;font-family:monospace;text-transform:uppercase;letter-spacing:1px;font-weight:700">MACRO</span>
-  <div id="macro-cvd1h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 1H: —</div>
+<div id="macro-dashboard" style="padding:6px 16px;border-bottom:1px solid #1e2330;background:#0d1520;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+  <span style="font-size:8px;color:#4b5563;font-family:monospace;text-transform:uppercase;letter-spacing:1px;font-weight:700">MACRO</span>
+  <div id="macro-cvd1h" style="font-size:10px;font-family:monospace;color:#6b7280">CVD 1H: <span style="color:#e2e4ea">—</span></div>
   <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-cvd4h" style="font-size:10px;font-family:monospace;color:#2a3040">CVD 4H: —</div>
+  <div id="macro-cvd4h" style="font-size:10px;font-family:monospace;color:#6b7280">CVD 4H: <span style="color:#e2e4ea">—</span></div>
   <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-funding" style="font-size:10px;font-family:monospace;color:#2a3040">FR: —</div>
+  <div id="macro-funding" style="font-size:10px;font-family:monospace;color:#6b7280">FR: <span style="color:#e2e4ea">—</span></div>
   <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-oi" style="font-size:10px;font-family:monospace;color:#2a3040">OI 4H: —</div>
+  <div id="macro-oi" style="font-size:10px;font-family:monospace;color:#6b7280">OI 4H: <span style="color:#e2e4ea">—</span></div>
   <div style="width:1px;height:10px;background:#1e2330;display:inline-block"></div>
-  <div id="macro-score" style="font-size:10px;font-family:monospace;font-weight:700;padding:1px 8px;border-radius:3px;background:rgba(30,35,48,.5);color:#4b5563">Score: —</div>
+  <div id="macro-score" style="font-size:10px;font-family:monospace;font-weight:700;padding:2px 10px;border-radius:4px;background:rgba(75,85,99,.2);color:#9ca3af;border:1px solid #1e2330">Score: —</div>
 </div>
 
 <!-- ⚡ Widget WebSocket Tiempo Real -->
@@ -1343,14 +1343,13 @@ async function updateSesion() {
 
 // ── Dashboard macro — actualiza con datos del análisis ────────────────────
 function updateMacroDashboard() {
-  if (!mkt || !mkt.timeframes) return;
-  const tf = mkt.timeframes;
+  if (!mkt || !mkt.bias) return;
   const sym = currentSymbol || 'BTC';
 
-  const cvd1h = tf['1H']?.cvdPct;
-  const cvd4h = tf['4H']?.cvdPct;
-  const fr    = tf['15m']?.fundingRate;
-  const oi    = tf['4H']?.oiDeltaPct;
+  const cvd1h = mkt.bias.tf1h?.cvdPct;
+  const cvd4h = mkt.bias.tf4h?.cvdPct;
+  const fr    = mkt.bias.tf15m?.fundingRate;
+  const oi    = mkt.bias.tf4h?.oiDeltaPct;
 
   const fmt = (n, suffix='%') => `${n > 0 ? '+' : ''}${parseFloat(n).toFixed(n > 10 || n < -10 ? 1 : 2)}${suffix}`;
   const col = n => n > 20 ? '#00d68f' : n < -20 ? '#ff4d6d' : n > 5 ? '#38bdf8' : n < -5 ? '#f59e0b' : '#4b5563';
