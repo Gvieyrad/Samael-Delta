@@ -2793,7 +2793,7 @@ app.get('/api/meanrev/status', (req, res) => {
     };
   }
   res.json({ module: 'Mean Reversion', version: '4.4.35', status });
-  };
+  });
 
 // ── Journal automático — captura contexto macro en cada entrada ──────────────
 async function captureTradeContext(symbol) {
