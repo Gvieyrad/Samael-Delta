@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.42' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.43' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -263,13 +263,9 @@ async function evaluateAnomaly(symbol) {
   }
   if (process.env.TELEGRAM_CHAT_ID) {
     if (isSweep) {
-      const sweepLabel = isRealBearishSweep ? '🔴 BARRIDA BAJISTA' : '🟢 BARRIDA ALCISTA';
-      const msg = `${sweepLabel} — ${symbol}\n⚡ ${reason}\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n🐋 Ballenas: ${metrics.whaleCount} (${(metrics.whaleBuyVol/1e6).toFixed(2)}M buy / ${(metrics.whaleSellVol/1e6).toFixed(2)}M sell)${liqZoneBonus > 0 ? '\n🧲 Imán liq +' + liqZoneBonus + '%' : ''}\n🛡️ Kill Switch + Sweep trade abierto\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      // Telegram de sweep enviado dentro de openSweepCounterTrade — no duplicar aquí
     } else if (isMassiveWhale) {
-      const emoji = massiveWhaleDirection === 'LONG' ? '🟢' : '🔴';
-      const msg = `${emoji} 🐋 BALLENA MASIVA — ${symbol}\n${reason}\n📊 CVD 60s: ${metrics.cvdLive.toFixed(1)}%\n💹 Vol: ${metrics.volumeMultiplier.toFixed(1)}x promedio\n⚡ Trade automático abierto en dirección ${massiveWhaleDirection}\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      // Telegram de ballena enviado dentro de openWhaleCounterTrade — no duplicar aquí
     }
   }
 }
@@ -3123,7 +3119,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.42 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.43 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
