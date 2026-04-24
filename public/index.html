@@ -1344,7 +1344,6 @@ async function updateSesion() {
 // ── Dashboard macro — actualiza con datos del análisis ────────────────────
 function updateMacroDashboard() {
   if (!mkt || !mkt.bias) return;
-  const sym = currentSymbol || 'BTC';
 
   const cvd1h = mkt.bias.tf1h?.cvdPct;
   const cvd4h = mkt.bias.tf4h?.cvdPct;
