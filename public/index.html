@@ -174,6 +174,7 @@ input[type=number]:focus{border-color:#f59e0b}
     <span id="ws-btc-status" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700">–</span>
   </div>
   <div id="ws-eth" style="display:flex;align-items:center;gap:8px;background:#0d1520;padding:5px 10px;border-radius:6px;border:1px solid #1e2330">
+    <span id="eth-pause-badge" style="display:none;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700">⏸️ ETH pausado</span>
     <span style="font-size:11px;font-weight:800;color:#8b5cf6;font-family:monospace;letter-spacing:1px">ETH</span>
     <span id="ws-eth-cvd" style="font-size:13px;font-family:monospace;font-weight:800">–</span>
     <span id="ws-eth-vol" style="font-size:10px;color:#4b5563;font-family:monospace">vol –x</span>
@@ -253,6 +254,7 @@ input[type=number]:focus{border-color:#f59e0b}
   <div class="card" id="paper-card">
     <div class="ch">
       <span class="ct">Posiciones — Paper Trading</span>
+      <span id="circuit-breaker-badge" style="display:none;background:rgba(255,77,109,.2);color:#ff4d6d;border:1px solid rgba(255,77,109,.4);padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;margin-left:6px">🔴 CIRCUIT BREAKER — pausado hoy</span>
       <div style="display:flex;gap:6px;align-items:center">
         <span id="paper-stats-summary" style="font-size:10px;color:#4b5563"></span>
         <div style="display:flex;gap:3px">
@@ -582,7 +584,29 @@ async function refreshWsWidget() {
   } catch(_) {}
 }
 
+
+// ── Estado Circuit Breaker y ETH Pause ──
+async function fetchTrackerStatus() {
+  try {
+    const r = await fetch(`${API}/api/tracker/status`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const cb = document.getElementById('circuit-breaker-badge');
+    const eb = document.getElementById('eth-pause-badge');
+    if (cb) cb.style.display = d.circuitBreaker ? 'inline-block' : 'none';
+    if (eb) {
+      if (d.ethPaused) {
+        eb.textContent = `⏸️ ETH pausado ${d.ethMinLeft}min`;
+        eb.style.display = 'inline-block';
+      } else {
+        eb.style.display = 'none';
+      }
+    }
+  } catch(_) {}
+}
+
 async function fetchAll(){
+  fetchTrackerStatus();
   document.getElementById('upd').textContent='actualizando...';
   try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());mkt._fetchedAt=Date.now();renderAll(); updateMacroDashboard();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
   catch(e){document.getElementById('upd').textContent='error — reintentando...';}
@@ -759,9 +783,7 @@ function renderOB(){
   const cvdLabel=cvd?.trend==='bull'?'Compras':'Ventas';
   const cvdAgresivo=Math.abs(cvdVal)>10;
   const cvdClass=cvdAgresivo?(cvd?.trend==='bull'?'blink-green':'blink-red'):'';
-  let wallsHtml='';
-  (ob.bidWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-bid">BID WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
-  (ob.askWalls||[]).slice(0,2).forEach(w=>{wallsHtml+=`<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="wall-badge wall-ask">ASK WALL</span><span class="mono" style="font-size:11px">$${w.price.toLocaleString()}</span><span style="font-size:10px;color:#4b5563">${w.size.toFixed(1)} BTC</span></div>`;});
+  let wallsHtml=''; // Walls eliminados — sin edge estadístico (v4.4.38)
   document.getElementById('ob-panel').innerHTML=`
     <div style="background:#111520;border-radius:7px;padding:9px 11px;margin-bottom:10px;border:1px solid #1e2330">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
