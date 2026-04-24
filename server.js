@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.38' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.39' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1504,6 +1504,77 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
 }
 
 
+
+// ── FILTRO MACRO DE CONTEXTO v4.4.39 ──
+// Bloquea scalping cuando el mercado macro está en condición desfavorable
+// Basado en: CVD 1H, OI 4H, precio vs VAH/VAL, Funding Rate, Score macro
+function calcMacroScore({ bias1h, bias4h, bias1d, fundingRate, vrvp, price, oi15m, cvd1hPct, scalpDir }) {
+  const condiciones = [];
+  let penalizaciones = 0;
+
+  // 1. CVD 1H negativo cuando queremos entrar LONG (ventas dominando)
+  if (scalpDir === 'LONG' && (bias1h?.cvdPct || 0) < -8) {
+    penalizaciones++;
+    condiciones.push(`CVD 1H ${bias1h.cvdPct?.toFixed(1)}% — ventas dominando`);
+  }
+  // CVD 1H positivo cuando queremos entrar SHORT
+  if (scalpDir === 'SHORT' && (bias1h?.cvdPct || 0) > 8) {
+    penalizaciones++;
+    condiciones.push(`CVD 1H ${bias1h.cvdPct?.toFixed(1)}% — compras dominando`);
+  }
+
+  // 2. OI 15m cayendo cuando queremos LONG (posiciones cerrando)
+  if (scalpDir === 'LONG' && oi15m?.trend === 'down' && parseFloat(oi15m?.deltaPct || 0) < -0.5) {
+    penalizaciones++;
+    condiciones.push(`OI 15m cayendo ${oi15m.deltaPct}%`);
+  }
+  // OI 15m subiendo cuando queremos SHORT con precio bajando (short squeeze risk)
+  if (scalpDir === 'SHORT' && oi15m?.trend === 'up' && parseFloat(oi15m?.deltaPct || 0) > 0.5) {
+    penalizaciones++;
+    condiciones.push(`OI 15m subiendo ${oi15m.deltaPct}% — riesgo short squeeze`);
+  }
+
+  // 3. Precio sobre VAH → resistencia clave → no entrar LONG
+  if (vrvp && price && scalpDir === 'LONG' && price > vrvp.vah * 1.002) {
+    penalizaciones++;
+    condiciones.push(`Precio $${price.toFixed(0)} sobre VAH $${vrvp.vah} — resistencia`);
+  }
+  // Precio bajo VAL → soporte clave roto → no entrar SHORT agresivo
+  if (vrvp && price && scalpDir === 'SHORT' && price < vrvp.val * 0.998) {
+    penalizaciones++;
+    condiciones.push(`Precio $${price.toFixed(0)} bajo VAL $${vrvp.val} — sobreextendido`);
+  }
+
+  // 4. Funding Rate en contra
+  if (scalpDir === 'LONG' && fundingRate > 0.002) {
+    penalizaciones++;
+    condiciones.push(`Funding +${(fundingRate*100).toFixed(4)}% — longs sobrecalentados`);
+  }
+  if (scalpDir === 'SHORT' && fundingRate < -0.002) {
+    penalizaciones++;
+    condiciones.push(`Funding ${(fundingRate*100).toFixed(4)}% — shorts sobrecalentados`);
+  }
+
+  // 5. Score macro (1H + 4H) en contra
+  const score1h = bias1h?.score || 50;
+  const score4h = bias4h?.score || 50;
+  const macroContra = scalpDir === 'LONG'
+    ? (score1h < 42 && score4h < 45)
+    : (score1h > 58 && score4h > 55);
+  if (macroContra) {
+    penalizaciones++;
+    condiciones.push(`Score macro contrario — 1H:${score1h} 4H:${score4h}`);
+  }
+
+  const bloqueado = penalizaciones >= 3;
+  if (bloqueado) {
+    console.log(`🌐 MACRO FILTER bloqueó ${scalpDir} — ${penalizaciones}/5 condiciones: ${condiciones.join(' | ')}`);
+  } else if (penalizaciones >= 1) {
+    console.log(`🌐 Macro: ${penalizaciones}/5 señales adversas (umbral 3) — ${scalpDir} permitido`);
+  }
+  return { bloqueado, penalizaciones, condiciones };
+}
+
 // ── CIRCUIT BREAKER DIARIO v4.4.38 ──
 const circuitBreaker = {
   dailyPnl: {},
@@ -1618,6 +1689,25 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     } catch(_) {}
     const bias1hScore = bias1hScalp?.score || 50, bias4hScore = bias4hScalp2?.score || 50;
     const scalpDirPreview = longScore > shortScore ? 'LONG' : 'SHORT';
+
+    // ── FILTRO MACRO v4.4.39 — bloquear si 3+ condiciones adversas ──
+    try {
+      const vrvpScalp = calcVRVP(k3m.data);
+      const macroCheck = calcMacroScore({
+        bias1h: bias1hScalp,
+        bias4h: bias4hScalp2,
+        fundingRate,
+        vrvp: vrvpScalp,
+        price,
+        oi15m: oi15mForFilter,
+        scalpDir: scalpDirPreview
+      });
+      global._lastMacroCheck = macroCheck;
+      if (macroCheck.bloqueado) {
+        console.log(`⛔ Scalp ${scalpDirPreview} ${symbol} bloqueado — Macro Filter (${macroCheck.penalizaciones}/5)`);
+        return;
+      }
+    } catch(_) {}
     const wsAnomaly = wsM?.anomaly;
     // PREMIAR pullback: 4H alineado + 1H en contra = señal de entrada óptima (100% WR)
     if (bias4hScalp2?.bias === 'long' && bias1hScalp?.bias === 'short' && scalpDirPreview === 'LONG') {
@@ -2910,18 +3000,23 @@ app.get('/api/tracker/status', (req, res) => {
     ethMinLeft = Math.ceil((ethLossTracker.pausedUntil - Date.now()) / 60000);
   }
   const today = circuitBreaker.getToday();
+  // Exponer último estado del macro filter
+  const macro = global._lastMacroCheck || { penalizaciones: 0, condiciones: [] };
   res.json({
     circuitBreaker: cb,
     dailyPnl: circuitBreaker.dailyPnl[today] || 0,
     ethPaused,
     ethMinLeft,
-    ethConsecutive: ethLossTracker.consecutive
+    ethConsecutive: ethLossTracker.consecutive,
+    macroPenalizaciones: macro.penalizaciones,
+    macroCondiciones: macro.condiciones,
+    macroBloqueado: macro.bloqueado || false
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.38 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.39 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
