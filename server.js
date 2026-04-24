@@ -546,7 +546,11 @@ app.get('/api/ws/status', (req, res) => {
   const status = {};
   for (const sym of symbols) {
     const metrics = getWsMetrics(sym.trim());
-    status[sym.trim()] = { connected: !!wsConnections[sym.trim()], lastUpdate: wsState[sym.trim()]?.lastUpdate || 0, lastPrice: wsState[sym.trim()]?.lastPrice || 0, metrics: metrics ? { cvdLive: metrics.cvdLive?.toFixed(1), volumeMultiplier: metrics.volumeMultiplier?.toFixed(2), whaleCount: metrics.whaleCount, anomaly: metrics.anomaly } : null };
+    // Si metrics es null pero WS conectado → devolver defaults para que el vol se muestre
+    const metricsOut = metrics
+      ? { cvdLive: metrics.cvdLive?.toFixed(1), volumeMultiplier: metrics.volumeMultiplier?.toFixed(2), whaleCount: metrics.whaleCount, anomaly: metrics.anomaly }
+      : wsConnections[sym.trim()] ? { cvdLive: '0.0', volumeMultiplier: '1.00', whaleCount: 0, anomaly: null } : null;
+    status[sym.trim()] = { connected: !!wsConnections[sym.trim()], lastUpdate: wsState[sym.trim()]?.lastUpdate || 0, lastPrice: wsState[sym.trim()]?.lastPrice || 0, metrics: metricsOut };
   }
   res.json(status);
 });
