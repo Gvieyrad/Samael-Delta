@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.40' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.41' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1169,8 +1169,22 @@ Responde SOLO JSON sin markdown:
     try { await supabase.from('signals').insert({ symbol, direction: signal.direction, confidence: signal.confidence, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, reasoning: signal.reasoning, market_data: marketData, source: 'auto_alert' }); } catch(_) {}
     const autoPaperThreshold = parseInt(process.env.AUTO_PAPER_THRESHOLD || '90'), trend1d = bias1d.bias;
     const trendOk = signal.direction === 'LONG' ? (trend1d !== 'short') : signal.direction === 'SHORT' ? (trend1d !== 'long') : false;
+    // ── Bloquear auto con Score macro ≤ -3 ──
+    const _macroScore = combinedSignal?.macroScore || 0;
+    if (_macroScore <= -3) {
+      console.log(`🚫 Auto trade bloqueado — Score macro ${_macroScore} ≤ -3 (mercado adverso)`);
+      return;
+    }
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
+      // ── Max pérdida check ──
+      const _capital = parseFloat(process.env.PAPER_SIZE_USD || '1000');
+      const _leverage = parseFloat(process.env.PAPER_LEVERAGE || '5');
+      const _maxLoss = calcMaxLossUsd(signal.entry, signal.sl, signal.direction, _capital, _leverage);
+      if (_maxLoss > MAX_TRADE_LOSS_USD) {
+        console.log(`🛑 Auto trade rechazado — pérdida máxima $${_maxLoss.toFixed(2)} > $${MAX_TRADE_LOSS_USD} — SL muy amplio`);
+        return;
+      }
       try {
         const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
         const { data: oppTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
@@ -1304,6 +1318,37 @@ app.get('/api/paper/stats', async (req, res) => {
 async function monitorPaperTrades() {
   try {
     const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('status', 'open');
+    // ── Timeout lateral — cerrar trades zombies ──
+    for (const trade of openTrades || []) {
+      if (trade.source === 'auto' || trade.source === 'manual') {
+        const minutosAbierto = (Date.now() - new Date(trade.opened_at).getTime()) / 60000;
+        if (minutosAbierto >= 45) {
+          const currentWsPrice = wsState[trade.symbol]?.lastPrice;
+          if (!currentWsPrice) continue;
+          const entry = parseFloat(trade.entry);
+          const movPct = Math.abs((currentWsPrice - entry) / entry * 100);
+          if (movPct < 0.25) {
+            // Precio no se movió ±0.25% en 45 min — trade lateral, cerrar
+            const pnl_usd = trade.direction === 'LONG'
+              ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * parseFloat(trade.leverage || 5)
+              : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * parseFloat(trade.leverage || 5);
+            const pnl_pct = trade.direction === 'LONG'
+              ? (currentWsPrice - entry) / entry * parseFloat(trade.leverage || 5) * 100
+              : (entry - currentWsPrice) / entry * parseFloat(trade.leverage || 5) * 100;
+            await supabase.from('paper_trades').update({
+              status: pnl_usd >= 0 ? 'won' : 'lost',
+              close_price: currentWsPrice,
+              close_reason: 'timeout_lateral',
+              pnl_usd: parseFloat(pnl_usd.toFixed(2)),
+              pnl_pct: parseFloat(pnl_pct.toFixed(2)),
+              closed_at: new Date().toISOString()
+            }).eq('id', trade.id);
+            circuitBreaker.addPnl(pnl_usd);
+            console.log(`⏱️ Timeout lateral: ${trade.direction} ${trade.symbol} cerrado a $${currentWsPrice} — ${minutosAbierto.toFixed(0)}min sin movimiento — PnL: $${pnl_usd.toFixed(2)}`);
+          }
+        }
+      }
+    }
     if (!openTrades?.length) return;
     for (const trade of openTrades) {
       try {
@@ -1580,6 +1625,42 @@ function calcMacroScore({ bias1h, bias4h, bias1d, fundingRate, vrvp, price, oi15
   return { bloqueado, penalizaciones, condiciones };
 }
 
+
+// ── VOLATILITY GATE v4.4.41 ──
+function calcVolatilityGate(klines) {
+  try {
+    if (!klines || klines.length < 21) return { activo: true };
+    const closes = klines.map(k => parseFloat(k[4]));
+    const highs  = klines.map(k => parseFloat(k[2]));
+    const lows   = klines.map(k => parseFloat(k[3]));
+    const vols   = klines.map(k => parseFloat(k[5]));
+    const atrs = [];
+    for (let i = 1; i < klines.length; i++) {
+      atrs.push(Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])));
+    }
+    const atrActual   = atrs[atrs.length-1];
+    const atrPromedio = atrs.slice(-20).reduce((a,b)=>a+b,0)/20;
+    const volActual   = vols[vols.length-1];
+    const volPromedio = vols.slice(-20).reduce((a,b)=>a+b,0)/20;
+    const movPct      = Math.abs(closes[closes.length-1]-closes[closes.length-4])/closes[closes.length-4]*100;
+    const atrOk  = (atrActual/atrPromedio) >= 0.7;
+    const volOk  = (volActual/volPromedio) >= 1.0;
+    const movOk  = movPct >= 0.15;
+    const cumplidas = [atrOk,volOk,movOk].filter(Boolean).length;
+    const activo = cumplidas >= 2;
+    if (!activo) console.log(`💤 Volatility Gate: mercado muerto — ATR ${(atrActual/atrPromedio).toFixed(2)}x Vol ${(volActual/volPromedio).toFixed(2)}x Mov ${movPct.toFixed(3)}%`);
+    return { activo, cumplidas, atrRatio: atrActual/atrPromedio, volRatio: volActual/volPromedio, movPct };
+  } catch(e) { return { activo: true }; }
+}
+
+
+// ── MAX PÉRDIDA POR TRADE v4.4.41 ──
+function calcMaxLossUsd(entry, sl, direction, capitalUsd, leverage) {
+  const risk = direction === 'LONG' ? (entry - sl) / entry : (sl - entry) / entry;
+  return risk * capitalUsd * leverage;
+}
+const MAX_TRADE_LOSS_USD = 20; // máximo pérdida por trade en USD
+
 // ── CIRCUIT BREAKER DIARIO v4.4.38 ──
 const circuitBreaker = {
   dailyPnl: {},
@@ -1649,10 +1730,10 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   // ── Consecutive loss por símbolo ──
   if (symbol.includes('ETH') && ethLossTracker.isPaused()) return;
   if (symbol.includes('SOL') && solLossTracker.isPaused()) return;
-  // Filtro horario — horas con WR <35%
-  if (isHoraBloqueada()) {
-    const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
-    console.log(`⏰ Scalping bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+  // ── Filtro horario — solo bloquear madrugada 0-5h Lima ──
+  const _horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  if (_horaLima >= 0 && _horaLima <= 5) {
+    console.log(`💤 Madrugada ${_horaLima}h Lima — scalping bloqueado`);
     return;
   }
   scalpingInProgress[symbol] = true;
@@ -1664,6 +1745,9 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
     ]);
     const price = parseFloat(tickerRes.data.lastPrice), fundingRate = parseFloat(fundingRes.data.lastFundingRate);
+    // ── Volatility Gate ──
+    const volGate = calcVolatilityGate(k3m.data);
+    if (!volGate.activo) { scalpingInProgress[symbol] = false; return; }
     const ob = analyzeOB(obRes.data.bids, obRes.data.asks), cvd3m = calcCVD(k3m.data), rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
     const fib3m = calcFibonacci(k3m.data, price), wsM = getWsMetrics(symbol);
 
@@ -3026,7 +3110,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.40 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.41 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
