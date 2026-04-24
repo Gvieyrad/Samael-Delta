@@ -255,9 +255,15 @@ input[type=number]:focus{border-color:#f59e0b}
       <span class="ct">Posiciones — Paper Trading</span>
       <div style="display:flex;gap:6px;align-items:center">
         <span id="paper-stats-summary" style="font-size:10px;color:#4b5563"></span>
+        <div style="display:flex;gap:3px">
+          <button class="btn" id="filter-all" onclick="setPaperFilter('ALL')" style="padding:2px 7px;font-size:9px;background:rgba(56,189,248,.2);color:#38bdf8">ALL</button>
+          <button class="btn" id="filter-btc" onclick="setPaperFilter('BTC')" style="padding:2px 7px;font-size:9px">BTC</button>
+          <button class="btn" id="filter-eth" onclick="setPaperFilter('ETH')" style="padding:2px 7px;font-size:9px">ETH</button>
+        </div>
         <button class="btn" onclick="refreshPaper()" style="padding:3px 8px;font-size:10px">↻</button>
       </div>
     </div>
+    <canvas id="equity-curve" height="50" style="width:100%;display:none;padding:4px 14px;box-sizing:border-box"></canvas>
     <div id="paper-panel" style="padding:0"></div>
   </div>
 
@@ -1018,8 +1024,19 @@ async function triggerAlert(){
   catch(e){icon.textContent='❌';setTimeout(()=>{icon.textContent='🔔';btn.disabled=false;},3000);}
 }
 
-let paperStats=null;let openTrades=[];
+let paperStats=null;let openTrades=[];let paperFilter='ALL';
 
+function setPaperFilter(f) {
+  paperFilter = f;
+  ['all','btc','eth'].forEach(k => {
+    const btn = document.getElementById('filter-'+k);
+    if (!btn) return;
+    const active = k.toUpperCase()===f;
+    btn.style.background = active ? 'rgba(56,189,248,.2)' : '';
+    btn.style.color = active ? '#38bdf8' : '#4b5563';
+  });
+  renderPaper();
+}
 async function refreshPaper(){
   try{
     const [statsRes,openRes]=await Promise.all([fetch(`${API}/api/paper/stats`).then(r=>r.json()),fetch(`${API}/api/paper/open`).then(r=>r.json())]);
@@ -1112,7 +1129,10 @@ function renderPaper(){
   const cs=mkt.combinedSignal;
   if(paperStats){
     const s=paperStats;const pnlCol=s.totalPnl>=0?'#00d68f':'#ff4d6d';
-    document.getElementById('paper-stats-summary').innerHTML=`<span style="color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}% WR</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:${pnlCol}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:#4b5563">${s.total} trades</span>`;
+    const recent20 = (s.recentTrades||[]).slice(0,20);
+    const wr20 = recent20.length > 0 ? Math.round(recent20.filter(t=>t.status==='won').length/recent20.length*100) : null;
+    const wrAlert = wr20 !== null && wr20 < 40 ? `<span style="background:rgba(255,77,109,.15);color:#ff4d6d;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;margin-left:6px">⚠️ WR últimos 20: ${wr20}%</span>` : '';
+    document.getElementById('paper-stats-summary').innerHTML=`<span style="color:${s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d'}">${s.winRate}% WR</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:${pnlCol}">${s.totalPnl>=0?'+':''}$${s.totalPnl}</span><span style="color:#4b5563;margin:0 3px">·</span><span style="color:#4b5563">${s.total} trades</span>${wrAlert}`;
   }
   let html='';
   if(openTrades.length>0){
@@ -1185,7 +1205,7 @@ function renderPaper(){
         <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">Max DD</div><div class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">-$${s.maxDrawdown}</div></div>
       </div>
       <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
-      ${s.recentTrades.slice(0,8).map(t=>{
+      ${(s.recentTrades||[]).filter(t=>paperFilter==='ALL'||t.symbol.includes(paperFilter)).slice(0,10).map(t=>{
         if(t.status==='closed'&&(t.pnl_usd===0||t.pnl_usd===null))return'';
         const won=t.status==='won',lost=t.status==='lost',cancelled=t.status==='cancelled';
         const pnlCol=won?'#00d68f':lost?'#ff4d6d':cancelled?'#4b5563':'#f59e0b';
@@ -1250,7 +1270,7 @@ function renderML(){
     <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#4b5563">4H alineado con señal</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h||0)>wr?'#00d68f':'#f59e0b'}">${d.winRateAligned4h||'–'}% WR</span></div>
   </div>
   ${topDivs.length?`<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Divergencias con más victorias</div>${topDivs.map(([type,count])=>{const barW=Math.round((count/maxDivCount)*100);return`<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#e2e4ea;margin-bottom:2px"><span>${divLabels[type]||type}</span><span style="color:#00d68f;font-weight:700">${count} victorias</span></div><div style="height:3px;background:#1e2330;border-radius:2px;overflow:hidden"><div style="height:100%;width:${barW}%;background:#00d68f;border-radius:2px"></div></div></div>`;}).join('')}</div>`:''}
-  ${(()=>{if(!d.bySource||Object.keys(d.bySource).length===0)return'';const rows=Object.entries(d.bySource).map(([src,s])=>{const srcLabel=src==='scalping'?'⚡ Scalping':src==='auto'?'🤖 Auto':src==='manual'?'👤 Manual':src==='sweep'?'🌊 Sweep':src==='wall'?'🧱 Wall':src==='meanrev'?'📈 MeanRev':'📊 Backtest';const srcCol=src==='scalping'?'#8b5cf6':src==='auto'?'#00d68f':src==='manual'?'#f59e0b':src==='sweep'?'#38bdf8':src==='wall'?'#f97316':src==='meanrev'?'#10b981':'#4b5563';const wrCol=s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d';const pnlCol=s.totalPnl>=0?'#00d68f':'#ff4d6d';const pnlStr=(s.totalPnl>=0?'+':'')+'$'+Math.abs(s.totalPnl).toFixed(0);return'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:11px;font-weight:700;color:'+srcCol+';min-width:90px">'+srcLabel+'</span><span style="font-size:10px;color:#4b5563;min-width:50px">'+s.total+' trades</span><span class="mono" style="font-size:11px;font-weight:700;color:'+wrCol+';min-width:45px">'+s.winRate+'%</span><span class="mono" style="font-size:11px;font-weight:700;color:'+pnlCol+';margin-left:auto">'+pnlStr+'</span></div>';}).join('');return'<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rendimiento por modo</div>'+rows+'</div>';})()}
+  ${(()=>{if(!d.bySource||Object.keys(d.bySource).length===0)return'';const rows=Object.entries(d.bySource).filter(([src])=>src!=='wall').map(([src,s])=>{const srcLabel=src==='scalping'?'⚡ Scalping':src==='auto'?'🤖 Auto':src==='manual'?'👤 Manual':src==='sweep'?'🌊 Sweep':src==='wall'?'🧱 Wall':src==='meanrev'?'📈 MeanRev':'📊 Backtest';const srcCol=src==='scalping'?'#8b5cf6':src==='auto'?'#00d68f':src==='manual'?'#f59e0b':src==='sweep'?'#38bdf8':src==='wall'?'#f97316':src==='meanrev'?'#10b981':'#4b5563';const wrCol=s.winRate>=55?'#00d68f':s.winRate>=45?'#f59e0b':'#ff4d6d';const pnlCol=s.totalPnl>=0?'#00d68f':'#ff4d6d';const pnlStr=(s.totalPnl>=0?'+':'')+'$'+Math.abs(s.totalPnl).toFixed(0);return'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:11px;font-weight:700;color:'+srcCol+';min-width:90px">'+srcLabel+'</span><span style="font-size:10px;color:#4b5563;min-width:50px">'+s.total+' trades</span><span class="mono" style="font-size:11px;font-weight:700;color:'+wrCol+';min-width:45px">'+s.winRate+'%</span><span class="mono" style="font-size:11px;font-weight:700;color:'+pnlCol+';margin-left:auto">'+pnlStr+'</span></div>';}).join('');return'<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rendimiento por modo</div>'+rows+'</div>';})()}
   ${d.recommendations?.length?`<div style="padding:10px 14px"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Recomendaciones del sistema</div>${d.recommendations.map(r=>`<div style="display:flex;gap:6px;padding:5px 8px;background:rgba(245,158,11,.06);border-radius:5px;border:1px solid rgba(245,158,11,.15);margin-bottom:5px"><span style="font-size:12px;flex-shrink:0">⬟</span><span style="font-size:10px;color:#f59e0b;line-height:1.5">${r}</span></div>`).join('')}</div>`:`<div style="padding:10px 14px;text-align:center;font-size:11px;color:#2a3040">Acumula más trades para ver recomendaciones</div>`}`;
 }
 
@@ -1374,7 +1394,7 @@ function updateMacroDashboard() {
   if (fr !== undefined) {
     const elFr = document.getElementById('macro-funding');
     const n = parseFloat(fr) * 100;
-    const c = Math.abs(n) < 0.005 ? '#4b5563' : n > 0 ? '#ff4d6d' : '#00d68f';
+    const c = Math.abs(n) < 0.001 ? '#4b5563' : n > 0 ? '#ff4d6d' : '#00d68f';
     if (elFr) elFr.innerHTML = `FR: <span style="color:${c};font-weight:700">${n > 0 ? '+' : ''}${n.toFixed(4)}%</span>`;
   }
 
