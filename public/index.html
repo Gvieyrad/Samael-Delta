@@ -1320,7 +1320,7 @@ fetchAllPrices();
 // ── Semáforo de sesión ────────────────────────────────────────────────────
 async function updateSesion() {
   try {
-    const d = await fetch('/api/sesion').then(r => r.json());
+    const d = await fetch(`${API}/api/sesion`).then(r => r.json());
     const dot = document.getElementById('sesion-dot');
     const label = document.getElementById('sesion-label');
     const badge = document.getElementById('sesion-badge');
