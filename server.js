@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.37' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.38' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1354,7 +1354,17 @@ async function monitorPaperTrades() {
           const _lev4 = parseFloat(trade.leverage || 10);
           const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
           if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; }
-          await supabase.from('paper_trades').update({ status: closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost', close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          const tradeStatus = closeReason === 'tp1' || closeReason === 'tp2' ? 'won' : 'lost';
+          await supabase.from('paper_trades').update({ status: tradeStatus, close_price: currentPrice, close_reason: closeReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          // ── Circuit Breaker: acumular PnL diario ──
+          if (trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto') {
+            circuitBreaker.addPnl(pnl_usd);
+          }
+          // ── ETH tracker ──
+          if (trade.symbol.includes('ETH') && trade.source === 'scalping') {
+            if (tradeStatus === 'lost') ethLossTracker.recordLoss();
+            else ethLossTracker.recordWin();
+          }
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
             const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
@@ -1440,7 +1450,7 @@ app.post('/api/scalping/stop', (req, res) => {
 });
 
 app.get('/api/scalping/status', (req, res) => {
-  res.json({ active: scalpingActive, intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'), threshold: parseInt(process.env.SCALP_THRESHOLD || '88'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',') });
+  res.json({ active: scalpingActive, intervalMin: parseFloat(process.env.SCALP_INTERVAL_MIN || '3'), threshold: parseInt(process.env.SCALP_THRESHOLD || '92'), symbols: (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',') });
 });
 
 function detectDoublePatterns(klines15m, price) {
@@ -1493,9 +1503,70 @@ function calcScalpSignal(divergences, bias15m, bias1h, bias4h) {
   } catch(e) { return { direction:'ESPERAR', probability:30, action:'ESPERAR' }; }
 }
 
+
+// ── CIRCUIT BREAKER DIARIO v4.4.38 ──
+const circuitBreaker = {
+  dailyPnl: {},
+  paused: {},
+  LIMIT: -50,
+  getToday() {
+    const lima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+    return lima.toISOString().slice(0, 10);
+  },
+  addPnl(pnl) {
+    const day = this.getToday();
+    this.dailyPnl[day] = (this.dailyPnl[day] || 0) + pnl;
+    if (this.dailyPnl[day] <= this.LIMIT) {
+      this.paused[day] = true;
+      console.log(`🔴 CIRCUIT BREAKER activado — PnL día: $${this.dailyPnl[day].toFixed(2)} ≤ $${this.LIMIT}`);
+    }
+  },
+  isActive() {
+    const day = this.getToday();
+    if (this.paused[day]) {
+      console.log('⏸️ Circuit Breaker activo — trades automáticos pausados hoy');
+      return true;
+    }
+    return false;
+  }
+};
+
+// ── ETH CONSECUTIVE LOSS TRACKER v4.4.38 ──
+const ethLossTracker = {
+  consecutive: 0,
+  pausedUntil: null,
+  MAX: 2,
+  PAUSE_MIN: 30,
+  recordLoss() {
+    this.consecutive++;
+    if (this.consecutive >= this.MAX) {
+      this.pausedUntil = Date.now() + this.PAUSE_MIN * 60 * 1000;
+      console.log(`⏸️ ETH Scalping pausado ${this.PAUSE_MIN}min — ${this.consecutive} pérdidas consecutivas`);
+    }
+  },
+  recordWin() { this.consecutive = 0; },
+  isPaused() {
+    if (this.pausedUntil && Date.now() < this.pausedUntil) {
+      const minLeft = Math.ceil((this.pausedUntil - Date.now()) / 60000);
+      console.log(`⏸️ ETH pausado — ${minLeft}min restantes`);
+      return true;
+    }
+    if (this.pausedUntil && Date.now() >= this.pausedUntil) {
+      this.pausedUntil = null;
+      this.consecutive = 0;
+      console.log('✅ ETH Scalping reanudado');
+    }
+    return false;
+  }
+};
+
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   if (scalpingInProgress[symbol]) return;
+  // ── Circuit Breaker diario ──
+  if (circuitBreaker.isActive()) return;
+  // ── ETH consecutive loss ──
+  if (symbol.includes('ETH') && ethLossTracker.isPaused()) return;
   // Filtro horario — horas con WR <35%
   if (isHoraBloqueada()) {
     const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -1530,7 +1601,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (cvd3m.trend==='bull'&&cvd3m.cvdPct>5) longScore += 25; if (cvd3m.trend==='bear'&&cvd3m.cvdPct<-5) shortScore += 25;
     if (rsi3m < 35) longScore += 15; if (rsi3m > 65) shortScore += 15;
     if (fib3m?.retImpact?.signal==='long_bounce') longScore += 15; if (fib3m?.retImpact?.signal==='short_bounce') shortScore += 15;
-    if (ob.bidWalls?.length>0) longScore += 10; if (ob.askWalls?.length>0) shortScore += 10;
+    // Wall scoring eliminado — sin edge estadístico (v4.4.38)
     if (wsM?.anomaly && Date.now() - wsM.anomaly.time < 3*60*1000) {
       if (wsM.anomaly.direction === 'LONG') longScore += 20;
       if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
@@ -1596,7 +1667,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
     const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT', scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
-    if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '88')) return;
+    if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '92')) return;
 
     // v4.4.16 C4b: 3 filtros duros — sólo pasan trades con ventaja estadística real
     // Filtro 1: RSI entre 35-65 (no entrar con momentum extremo)
@@ -2830,9 +2901,27 @@ app.get('/api/sesion', (req, res) => {
 
 
 
+// ── ENDPOINT: Estado trackers v4.4.38 ──
+app.get('/api/tracker/status', (req, res) => {
+  const cb = circuitBreaker.isActive();
+  const ethPaused = ethLossTracker.isPaused();
+  let ethMinLeft = 0;
+  if (ethLossTracker.pausedUntil && Date.now() < ethLossTracker.pausedUntil) {
+    ethMinLeft = Math.ceil((ethLossTracker.pausedUntil - Date.now()) / 60000);
+  }
+  const today = circuitBreaker.getToday();
+  res.json({
+    circuitBreaker: cb,
+    dailyPnl: circuitBreaker.dailyPnl[today] || 0,
+    ethPaused,
+    ethMinLeft,
+    ethConsecutive: ethLossTracker.consecutive
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.37 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.38 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
