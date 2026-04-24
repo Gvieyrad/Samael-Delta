@@ -528,7 +528,12 @@ async function refreshWsWidget() {
     const data = await fetch(`${API}/api/ws/status`).then(r=>r.json());
     for (const [sym, info] of Object.entries(data)) {
       const key = sym === 'BTCUSDT' ? 'btc' : sym === 'ETHUSDT' ? 'eth' : null;
-      if (!key || !info.metrics) continue;
+      if (!key) continue;
+      if (!info.metrics) {
+        const volEl2 = document.getElementById(`ws-${key}-vol`);
+        if (volEl2 && info.connected) volEl2.textContent = 'vol —x';
+        continue;
+      }
       const cvd = parseFloat(info.metrics.cvdLive);
       const vol = parseFloat(info.metrics.volumeMultiplier);
       const anomaly = info.metrics.anomaly;
@@ -573,7 +578,7 @@ async function refreshWsWidget() {
 
 async function fetchAll(){
   document.getElementById('upd').textContent='actualizando...';
-  try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());renderAll(); updateMacroDashboard();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
+  try{mkt=await fetch(`${API}/api/market/${pair}`).then(r=>r.json());mkt._fetchedAt=Date.now();renderAll(); updateMacroDashboard();document.getElementById('upd').textContent=new Date().toLocaleTimeString('es-PE');}
   catch(e){document.getElementById('upd').textContent='error — reintentando...';}
 }
 
@@ -639,7 +644,7 @@ function calcSL(entry,direction){const p=parseFloat(entry);return direction==='S
 function renderDivergences(){
   const divs=mkt.divergences,el=document.getElementById('div-section');
   if(!divs||!divs.length){el.innerHTML='<div class="no-div">Sin divergencias activas en este momento</div>';return;}
-  el.innerHTML=divs.slice(0,6).map(d=>{
+  el.innerHTML=divs.filter(d=>d.type!=='absorcion_compras').slice(0,6).map(d=>{
     const isShort=d.direction==='SHORT',col=isShort?'#ff4d6d':'#00d68f';
     const tp1=calcTP(d.entry,d.direction,d.liqTarget),sl=calcSL(d.entry,d.direction);
     const reward = Math.abs(tp1 - d.entry);
@@ -648,9 +653,11 @@ function renderDivergences(){
     const probClass=d.probability>=90?(isShort?'blink-red':'blink-green'):'';
     const confluenceHtml=d.confluence?.length?`<div class="div-confluence">${d.confluence.map(c=>`<span class="div-conf-tag">${c}</span>`).join('')}</div>`:'';
     const arrow = isShort ? '▼' : '▲';
+    const minsAgo = mkt._fetchedAt ? Math.round((Date.now() - mkt._fetchedAt) / 60000) : 0;
+    const timerTxt = minsAgo > 0 ? `<span style="font-size:8px;color:#4b5563;margin-left:6px">⏱ hace ${minsAgo}min</span>` : '';
     return `<div class="div-card ${isShort?'div-short':'div-long'}">
       <div class="div-header">
-        <span class="div-name" style="color:${col}">${arrow} ${d.name}</span>
+        <span class="div-name" style="color:${col}">${arrow} ${d.name}${timerTxt}</span>
         <span class="div-prob ${probClass}" style="color:${col};font-size:17px;font-weight:800">${d.probability}%</span>
       </div>
       <div class="div-desc">${d.description}</div>
@@ -714,6 +721,10 @@ function renderCombined(){
           ${aiNote}
         </div>
         <div style="font-size:11px;color:#4b5563;margin-top:2px">${cs.shortCount||0} SHORT · ${cs.longCount||0} LONG activas${cs.fibSummary?'<span style="color:#f59e0b;margin-left:6px">⬟ '+cs.fibSummary+'</span>':''}</div>
+        <div style="font-size:9px;margin-top:3px;display:flex;align-items:center;gap:6px">
+          ${window._sesionActual ? `<span style="color:${window._sesionActual.activa?'#00d68f':'#ff4d6d'};font-weight:700">${window._sesionActual.emoji} ${window._sesionActual.nombre}</span>` : ''}
+          ${window._sesionActual?.bloqueada ? '<span style="color:#ff4d6d;font-weight:700">⛔ Hora bloqueada</span>' : ''}
+        </div>
         ${overrideNote}
       </div>
       <span id="signal-confirmation-badge"></span>
@@ -1325,6 +1336,7 @@ async function updateSesion() {
     const label = document.getElementById('sesion-label');
     const badge = document.getElementById('sesion-badge');
     if (!badge) return;
+    window._sesionActual = d;
     if (d.activa) {
       badge.style.background = 'rgba(0,214,143,.1)';
       badge.style.borderColor = 'rgba(0,214,143,.3)';
@@ -1387,6 +1399,10 @@ function updateMacroDashboard() {
     const bg = score >= 3 ? 'rgba(0,214,143,.1)' : score <= -3 ? 'rgba(255,77,109,.1)' : 'rgba(75,85,99,.1)';
     elScore.style.color = c;
     elScore.style.background = bg;
+    elScore.style.border = `1px solid ${c}40`;
+    elScore.style.fontSize = '11px';
+    elScore.style.fontWeight = '800';
+    elScore.style.padding = '3px 12px';
     elScore.textContent = `Score ${score > 0 ? '+' : ''}${score} · ${lbl}`;
   }
 }
@@ -1397,7 +1413,7 @@ setInterval(updateSesion, 60000);
 setInterval(updateMacroDashboard, 15000);
 setTimeout(()=>{ updateMacroDashboard(); updateSesion(); }, 1500);
 setTimeout(refreshWsWidget, 3000);
-setInterval(refreshWsWidget, 5000);
+setInterval(refreshWsWidget, 3000);
 setTimeout(refreshNews,5000);
 setInterval(refreshNews,5*60*1000);
 setTimeout(refreshML,3000);
