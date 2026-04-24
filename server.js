@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.39' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.40' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1360,10 +1360,15 @@ async function monitorPaperTrades() {
           if (trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto') {
             circuitBreaker.addPnl(pnl_usd);
           }
-          // ── ETH tracker ──
-          if (trade.symbol.includes('ETH') && trade.source === 'scalping') {
-            if (tradeStatus === 'lost') ethLossTracker.recordLoss();
-            else ethLossTracker.recordWin();
+          // ── Consecutive loss tracker por símbolo ──
+          if (trade.source === 'scalping') {
+            const tracker = trade.symbol.includes('ETH') ? ethLossTracker
+                          : trade.symbol.includes('SOL') ? solLossTracker
+                          : null;
+            if (tracker) {
+              if (tradeStatus === 'lost') tracker.recordLoss();
+              else tracker.recordWin();
+            }
           }
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
@@ -1602,42 +1607,48 @@ const circuitBreaker = {
   }
 };
 
-// ── ETH CONSECUTIVE LOSS TRACKER v4.4.38 ──
-const ethLossTracker = {
-  consecutive: 0,
-  pausedUntil: null,
-  MAX: 2,
-  PAUSE_MIN: 30,
-  recordLoss() {
-    this.consecutive++;
-    if (this.consecutive >= this.MAX) {
-      this.pausedUntil = Date.now() + this.PAUSE_MIN * 60 * 1000;
-      console.log(`⏸️ ETH Scalping pausado ${this.PAUSE_MIN}min — ${this.consecutive} pérdidas consecutivas`);
+// ── CONSECUTIVE LOSS TRACKER por símbolo v4.4.40 ──
+function createLossTracker(sym) {
+  return {
+    symbol: sym,
+    consecutive: 0,
+    pausedUntil: null,
+    MAX: 2,
+    PAUSE_MIN: 30,
+    recordLoss() {
+      this.consecutive++;
+      if (this.consecutive >= this.MAX) {
+        this.pausedUntil = Date.now() + this.PAUSE_MIN * 60 * 1000;
+        console.log(`⏸️ ${this.symbol} Scalping pausado ${this.PAUSE_MIN}min — ${this.consecutive} pérdidas consecutivas`);
+      }
+    },
+    recordWin() { this.consecutive = 0; },
+    isPaused() {
+      if (this.pausedUntil && Date.now() < this.pausedUntil) {
+        const minLeft = Math.ceil((this.pausedUntil - Date.now()) / 60000);
+        console.log(`⏸️ ${this.symbol} pausado — ${minLeft}min restantes`);
+        return true;
+      }
+      if (this.pausedUntil && Date.now() >= this.pausedUntil) {
+        this.pausedUntil = null;
+        this.consecutive = 0;
+        console.log(`✅ ${this.symbol} Scalping reanudado`);
+      }
+      return false;
     }
-  },
-  recordWin() { this.consecutive = 0; },
-  isPaused() {
-    if (this.pausedUntil && Date.now() < this.pausedUntil) {
-      const minLeft = Math.ceil((this.pausedUntil - Date.now()) / 60000);
-      console.log(`⏸️ ETH pausado — ${minLeft}min restantes`);
-      return true;
-    }
-    if (this.pausedUntil && Date.now() >= this.pausedUntil) {
-      this.pausedUntil = null;
-      this.consecutive = 0;
-      console.log('✅ ETH Scalping reanudado');
-    }
-    return false;
-  }
-};
+  };
+}
+const ethLossTracker = createLossTracker('ETH');
+const solLossTracker = createLossTracker('SOL');
 
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   if (scalpingInProgress[symbol]) return;
   // ── Circuit Breaker diario ──
   if (circuitBreaker.isActive()) return;
-  // ── ETH consecutive loss ──
+  // ── Consecutive loss por símbolo ──
   if (symbol.includes('ETH') && ethLossTracker.isPaused()) return;
+  if (symbol.includes('SOL') && solLossTracker.isPaused()) return;
   // Filtro horario — horas con WR <35%
   if (isHoraBloqueada()) {
     const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -1655,6 +1666,9 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const price = parseFloat(tickerRes.data.lastPrice), fundingRate = parseFloat(fundingRes.data.lastFundingRate);
     const ob = analyzeOB(obRes.data.bids, obRes.data.asks), cvd3m = calcCVD(k3m.data), rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
     const fib3m = calcFibonacci(k3m.data, price), wsM = getWsMetrics(symbol);
+
+    // Ajuste SOL v4.4.40: más volátil, bonifica momentum fuerte
+    const isSol = symbol.includes('SOL');
 
     // v4.4.16 C4: filtros duros de scalping — basados en análisis de ganadores vs perdedores
     // Ganadores: RSI prom 49, |imb| 56%, OI falling 2/3
@@ -1702,7 +1716,6 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
         oi15m: oi15mForFilter,
         scalpDir: scalpDirPreview
       });
-      global._lastMacroCheck = macroCheck;
       if (macroCheck.bloqueado) {
         console.log(`⛔ Scalp ${scalpDirPreview} ${symbol} bloqueado — Macro Filter (${macroCheck.penalizaciones}/5)`);
         return;
@@ -3000,23 +3013,20 @@ app.get('/api/tracker/status', (req, res) => {
     ethMinLeft = Math.ceil((ethLossTracker.pausedUntil - Date.now()) / 60000);
   }
   const today = circuitBreaker.getToday();
-  // Exponer último estado del macro filter
-  const macro = global._lastMacroCheck || { penalizaciones: 0, condiciones: [] };
   res.json({
     circuitBreaker: cb,
     dailyPnl: circuitBreaker.dailyPnl[today] || 0,
     ethPaused,
     ethMinLeft,
     ethConsecutive: ethLossTracker.consecutive,
-    macroPenalizaciones: macro.penalizaciones,
-    macroCondiciones: macro.condiciones,
-    macroBloqueado: macro.bloqueado || false
+    solPaused: solLossTracker.isPaused(),
+    solConsecutive: solLossTracker.consecutive
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.39 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.40 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
