@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.41' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.42' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -280,6 +280,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
       console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
       return;
     }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
@@ -303,10 +304,12 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const priceMove5m = (prices5mWh[prices5mWh.length-1] - prices5mWh[0]) / prices5mWh[0] * 100;
       if (direction === 'SHORT' && priceMove5m > -0.1) {
         console.log(`⏭ Whale SHORT omitido — precio no confirma bajada en 5min (${priceMove5m.toFixed(2)}%) — absorción compradora (${symbol})`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5m.toFixed(2)}%) — posible absorción compradora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
       if (direction === 'LONG' && priceMove5m < 0.1) {
         console.log(`⏭ Whale LONG omitido — precio no confirma subida en 5min (${priceMove5m.toFixed(2)}%) — absorción vendedora (${symbol})`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5m.toFixed(2)}%) — posible absorción vendedora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
     }
@@ -323,10 +326,12 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
         const blockLongWh  = bias1dWh.bias === 'short' || bias1dWh.score < 42;
         if (direction === 'SHORT' && blockShortWh) {
           console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria alcista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
           return;
         }
         if (direction === 'LONG' && blockLongWh) {
           console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria bajista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
           return;
         }
       }
@@ -431,10 +436,12 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
       if (direction === 'SHORT' && priceMove5mSw > -0.1) {
         console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}%) — absorción compradora (${symbol})`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
       if (direction === 'LONG' && priceMove5mSw < 0.1) {
         console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}%) — absorción vendedora (${symbol})`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
     }
@@ -1177,6 +1184,7 @@ Responde SOLO JSON sin markdown:
     const _macroScore = combinedSignal?.macroScore || 0;
     if (_macroScore <= -3) {
       console.log(`🚫 Auto trade bloqueado — Score macro ${_macroScore} ≤ -3 (mercado adverso)`);
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 Auto trade ${signal.direction} ${symbol} — *BLOQUEADO*\nRazón: Score macro ${_macroScore} ≤ -3 — mercado adverso\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
       return;
     }
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
@@ -1187,6 +1195,7 @@ Responde SOLO JSON sin markdown:
       const _maxLoss = calcMaxLossUsd(signal.entry, signal.sl, signal.direction, _capital, _leverage);
       if (_maxLoss > MAX_TRADE_LOSS_USD) {
         console.log(`🛑 Auto trade rechazado — pérdida máxima $${_maxLoss.toFixed(2)} > $${MAX_TRADE_LOSS_USD} — SL muy amplio`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🛑 Auto trade ${signal.direction} ${symbol} — *RECHAZADO*\nRazón: Pérdida máxima $${_maxLoss.toFixed(2)} > límite $${MAX_TRADE_LOSS_USD} — SL muy amplio\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
       try {
@@ -3114,7 +3123,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.41 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.42 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
