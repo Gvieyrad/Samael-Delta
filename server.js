@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.43' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.44' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -430,14 +430,16 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const prices5mSw = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
     if (prices5mSw.length >= 5) {
       const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
-      if (direction === 'SHORT' && priceMove5mSw > -0.1) {
-        console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}%) — absorción compradora (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+      const sweepThreshShort = (metrics.cvdLive < -80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
+      if (direction === 'SHORT' && priceMove5mSw > -sweepThreshShort) {
+        console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}% vs -${sweepThreshShort}%) — ${symbol}`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
-      if (direction === 'LONG' && priceMove5mSw < 0.1) {
-        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}%) — absorción vendedora (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+      const sweepThreshLong = (metrics.cvdLive > 80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
+      if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
+        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs ${sweepThreshLong}%) — ${symbol}`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
         return;
       }
     }
@@ -1635,9 +1637,10 @@ function calcMacroScore({ bias1h, bias4h, bias1d, fundingRate, vrvp, price, oi15
 }
 
 
-// ── VOLATILITY GATE v4.4.41 ──
-function calcVolatilityGate(klines) {
+// ── VOLATILITY GATE v4.4.44 — usa klines 15M para contexto real del mercado ──
+function calcVolatilityGate(klines3m, klines15m) {
   try {
+    const klines = klines15m && klines15m.length >= 21 ? klines15m : klines3m;
     if (!klines || klines.length < 21) return { activo: true };
     const closes = klines.map(k => parseFloat(k[4]));
     const highs  = klines.map(k => parseFloat(k[2]));
@@ -1652,12 +1655,12 @@ function calcVolatilityGate(klines) {
     const volActual   = vols[vols.length-1];
     const volPromedio = vols.slice(-20).reduce((a,b)=>a+b,0)/20;
     const movPct      = Math.abs(closes[closes.length-1]-closes[closes.length-4])/closes[closes.length-4]*100;
-    const atrOk  = (atrActual/atrPromedio) >= 0.7;
-    const volOk  = (volActual/volPromedio) >= 1.0;
-    const movOk  = movPct >= 0.15;
+    const atrOk  = (atrActual/atrPromedio) >= 0.5;
+    const volOk  = (volActual/volPromedio) >= 0.7;
+    const movOk  = movPct >= 0.10;
     const cumplidas = [atrOk,volOk,movOk].filter(Boolean).length;
     const activo = cumplidas >= 2;
-    if (!activo) console.log(`💤 Volatility Gate: mercado muerto — ATR ${(atrActual/atrPromedio).toFixed(2)}x Vol ${(volActual/volPromedio).toFixed(2)}x Mov ${movPct.toFixed(3)}%`);
+    if (!activo) console.log(`💤 Volatility Gate (15M): mercado muerto — ATR ${(atrActual/atrPromedio).toFixed(2)}x Vol ${(volActual/volPromedio).toFixed(2)}x Mov ${movPct.toFixed(3)}%`);
     return { activo, cumplidas, atrRatio: atrActual/atrPromedio, volRatio: volActual/volPromedio, movPct };
   } catch(e) { return { activo: true }; }
 }
@@ -1747,15 +1750,16 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   }
   scalpingInProgress[symbol] = true;
   try {
-    const [tickerRes, k3m, obRes, fundingRes] = await Promise.all([
+    const [tickerRes, k3m, k15m, obRes, fundingRes] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=3m&limit=60`),
+      axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=25`),
       axios.get(`${BINANCE}/fapi/v1/depth?symbol=${symbol}&limit=50`),
       axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
     ]);
     const price = parseFloat(tickerRes.data.lastPrice), fundingRate = parseFloat(fundingRes.data.lastFundingRate);
     // ── Volatility Gate ──
-    const volGate = calcVolatilityGate(k3m.data);
+    const volGate = calcVolatilityGate(k3m.data, k15m?.data);
     if (!volGate.activo) { scalpingInProgress[symbol] = false; return; }
     const ob = analyzeOB(obRes.data.bids, obRes.data.asks), cvd3m = calcCVD(k3m.data), rsi3m = calcRSI(k3m.data.map(k => parseFloat(k[4])));
     const fib3m = calcFibonacci(k3m.data, price), wsM = getWsMetrics(symbol);
@@ -3001,13 +3005,14 @@ async function detectMeanReversion(symbol) {
     return;
   }
 
-  // ── CALCULAR SL y TP FIJOS ────────────────────────────────────────
-  // SL: 0.3% fijo | TP: 1.0% fijo | R:R 1:3.3
-  const slPct = 0.003; // 0.3%
-  const tpPct = 0.010; // 1.0%
+  // ── CALCULAR SL y TP FIJOS v4.4.44 ──────────────────────────────
+  // SL: 0.3% fijo | TP: 15% — dejar correr ganadores
+  // Basado en backtest: TP20% = 133% APR | TP15% = balance entre frecuencia y magnitud
+  const slPct = 0.003;  // 0.3% — cortar rápido
+  const tpPct = 0.15;   // 15% — dejar correr
   const sl = direction === 'LONG' ? price * (1 - slPct) : price * (1 + slPct);
   const tp = direction === 'LONG' ? price * (1 + tpPct) : price * (1 - tpPct);
-  const rr = tpPct / slPct; // 3.3
+  const rr = tpPct / slPct; // 50
 
   // ── ABRIR TRADE ───────────────────────────────────────────────────
   meanRevCooldown[symbol] = now;
@@ -3119,7 +3124,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.43 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.44 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
