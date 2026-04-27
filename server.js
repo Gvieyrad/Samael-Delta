@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.44' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.45' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -272,12 +272,18 @@ async function evaluateAnomaly(symbol) {
 
 async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
-    // Filtro horario
+    // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
-      console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
-      return;
+      const esBallenaFuerte = Math.abs(metrics.cvdLive) > 85 && metrics.volumeMultiplier > 8;
+      // Madrugada 1-4h — bloqueo absoluto incluso para ballenas fuertes
+      const esMadrugadaAbsoluta = horaLima >= 1 && horaLima <= 4;
+      if (!esBallenaFuerte || esMadrugadaAbsoluta) {
+        console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima${esBallenaFuerte ? ' (madrugada absoluta)' : ' fuera de ventana óptima'}`);
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        return;
+      }
+      console.log(`✅ Whale ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal fuerte (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
     }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
@@ -3124,7 +3130,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.44 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.45 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
