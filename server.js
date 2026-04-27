@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.45' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.46' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1178,6 +1178,14 @@ Responde SOLO JSON sin markdown:
     const whaleNote = whaleData?.whaleCount >= 3 ? `\n🐋 Ballenas: ${whaleData.dominance} (${whaleData.whaleCount} trades)` : '';
     const wsM = getWsMetrics(symbol);
     const wsNote2 = wsM?.anomaly && Date.now() - wsM.anomaly.time < 5*60*1000 ? `\n⚡ WS: ${wsM.anomaly.reason}` : '';
+    // ── Solo enviar alerta si el SL no genera pérdida > $20 ──
+    const _capAlrt = parseFloat(process.env.PAPER_SIZE_USD || '1000');
+    const _levAlrt = parseFloat(process.env.PAPER_LEVERAGE || '10');
+    const _maxLossAlrt = signal.direction !== 'ESPERAR' ? calcMaxLossUsd(signal.entry, signal.sl, signal.direction, _capAlrt, _levAlrt) : 0;
+    if (signal.direction !== 'ESPERAR' && _maxLossAlrt > MAX_TRADE_LOSS_USD) {
+      console.log(`🔕 Alerta ${dir} ${symbol} omitida — SL genera pérdida $${_maxLossAlrt.toFixed(2)} > $${MAX_TRADE_LOSS_USD}`);
+      return;
+    }
     const msg = `${emoji} *${dir}* — ${symbol}\n━━━━━━━━━━━━━━\n💰 Entry: *$${signal.entry?.toLocaleString()}*\n🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}\n🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}\n━━━━━━━━━━━━━━\n📊 Confianza: *${signal.confidence}%* — ${signal.action}\n📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas\n💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}${wsNote2}\n━━━━━━━━━━━━━━\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
@@ -1918,6 +1926,14 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
+    // ── Max loss $20 — igual para todos los trades v4.4.46 ──
+    const _capScalp = parseFloat(process.env.PAPER_SIZE_USD || '1000');
+    const _levScalp = parseFloat(process.env.PAPER_LEVERAGE || '10');
+    const _maxLossScalp = calcMaxLossUsd(price, sl, scalpDir, _capScalp, _levScalp);
+    if (_maxLossScalp > MAX_TRADE_LOSS_USD) {
+      console.log(`🛑 Scalp ${scalpDir} rechazado — pérdida máxima $${_maxLossScalp.toFixed(2)} > $${MAX_TRADE_LOSS_USD} — SL muy amplio (${symbol})`);
+      return;
+    }
     // v4.4.16 C5: bloquear scalping si hay sweep/anomalía activa en dirección contraria
     // Elimina colisiones scalping↔sweep que generaban kill_switch pérdidas (4/6 lost)
     const activeAnomaly = wsState[symbol]?.anomaly;
@@ -3130,7 +3146,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.45 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.46 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
