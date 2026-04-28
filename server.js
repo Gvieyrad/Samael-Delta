@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.46' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.47' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1178,14 +1178,8 @@ Responde SOLO JSON sin markdown:
     const whaleNote = whaleData?.whaleCount >= 3 ? `\n🐋 Ballenas: ${whaleData.dominance} (${whaleData.whaleCount} trades)` : '';
     const wsM = getWsMetrics(symbol);
     const wsNote2 = wsM?.anomaly && Date.now() - wsM.anomaly.time < 5*60*1000 ? `\n⚡ WS: ${wsM.anomaly.reason}` : '';
-    // ── Solo enviar alerta si el SL no genera pérdida > $20 ──
-    const _capAlrt = parseFloat(process.env.PAPER_SIZE_USD || '1000');
-    const _levAlrt = parseFloat(process.env.PAPER_LEVERAGE || '10');
-    const _maxLossAlrt = signal.direction !== 'ESPERAR' ? calcMaxLossUsd(signal.entry, signal.sl, signal.direction, _capAlrt, _levAlrt) : 0;
-    if (signal.direction !== 'ESPERAR' && _maxLossAlrt > MAX_TRADE_LOSS_USD) {
-      console.log(`🔕 Alerta ${dir} ${symbol} omitida — SL genera pérdida $${_maxLossAlrt.toFixed(2)} > $${MAX_TRADE_LOSS_USD}`);
-      return;
-    }
+    // ── Calcular size dinámico para mostrar en alerta v4.4.47 ──
+    const _posAlrt = signal.direction !== 'ESPERAR' ? calcPositionSize(signal.entry, signal.sl, signal.direction, 'auto') : null;
     const msg = `${emoji} *${dir}* — ${symbol}\n━━━━━━━━━━━━━━\n💰 Entry: *$${signal.entry?.toLocaleString()}*\n🎯 TP1: $${signal.tp1?.toLocaleString()} | TP2: $${signal.tp2?.toLocaleString()}\n🛑 SL: $${signal.sl?.toLocaleString()} | ${signal.rr}\n━━━━━━━━━━━━━━\n📊 Confianza: *${signal.confidence}%* — ${signal.action}\n📈 ${combinedSignal.shortCount}S · ${combinedSignal.longCount}L activas\n💬 ${signal.reasoning}${signal.warning ? '\n⚠️ ' + signal.warning : ''}${fibNote}${whaleNote}${wsNote2}\n━━━━━━━━━━━━━━\n🕐 ${new Date().toLocaleTimeString('es-PE')}`;
     await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
     console.log(`✅ Alerta enviada: ${dir} ${symbol} ${signal.confidence}%`);
@@ -1202,14 +1196,9 @@ Responde SOLO JSON sin markdown:
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
       // ── Max pérdida check ──
-      const _capital = parseFloat(process.env.PAPER_SIZE_USD || '1000');
-      const _leverage = parseFloat(process.env.PAPER_LEVERAGE || '5');
-      const _maxLoss = calcMaxLossUsd(signal.entry, signal.sl, signal.direction, _capital, _leverage);
-      if (_maxLoss > MAX_TRADE_LOSS_USD) {
-        console.log(`🛑 Auto trade rechazado — pérdida máxima $${_maxLoss.toFixed(2)} > $${MAX_TRADE_LOSS_USD} — SL muy amplio`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🛑 Auto trade ${signal.direction} ${symbol} — *RECHAZADO*\nRazón: Pérdida máxima $${_maxLoss.toFixed(2)} > límite $${MAX_TRADE_LOSS_USD} — SL muy amplio\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
-        return;
-      }
+      // ── Gestión de riesgo 2% para auto trade v4.4.47 ──
+      const { sizeUsd: autoSizeUsd, leverage: autoLeverage, maxLossUsd: autoMaxLoss } = calcPositionSize(signal.entry, signal.sl, signal.direction, 'auto');
+      console.log(`💰 Auto trade ${signal.direction} ${symbol} — size $${autoSizeUsd.toFixed(0)} lev ${autoLeverage}x riesgo $${autoMaxLoss?.toFixed(2)}`);
       try {
         const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
         const { data: oppTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
@@ -1228,7 +1217,7 @@ Responde SOLO JSON sin markdown:
         const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
         if (!existing || existing.length === 0) {
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
-          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
+          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: autoSizeUsd, leverage: autoLeverage, divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
           console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
           if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
         }
@@ -1680,12 +1669,39 @@ function calcVolatilityGate(klines3m, klines15m) {
 }
 
 
-// ── MAX PÉRDIDA POR TRADE v4.4.41 ──
+// ── GESTIÓN DE RIESGO POR PORCENTAJE v4.4.47 ──
+// Riesgo máximo: 2% del capital por trade — aplica a todos los modos
+// En lugar de rechazar, calcula el tamaño de posición correcto
+const RISK_PCT = 0.02;         // 2% del capital por trade
+const CAPITAL_USD = parseFloat(process.env.PAPER_SIZE_USD || '1000');
+
+// Leverage diferenciado por modo
+const LEVERAGE_BY_MODE = {
+  scalping: 10,   // SL ajustado, trades rápidos
+  auto:      5,   // SL amplio, timeframes mayores
+  sweep:     5,   // señales de barrida
+  whale:     3,   // señales de ballena — más volátiles
+  meanrev:   5,   // reversión a media
+  manual:   10,   // el usuario decide
+};
+
 function calcMaxLossUsd(entry, sl, direction, capitalUsd, leverage) {
   const risk = direction === 'LONG' ? (entry - sl) / entry : (sl - entry) / entry;
   return risk * capitalUsd * leverage;
 }
-const MAX_TRADE_LOSS_USD = 20; // máximo pérdida por trade en USD
+
+// Calcula el tamaño de posición para no superar el riesgo máximo
+function calcPositionSize(entry, sl, direction, mode) {
+  const slPct = direction === 'LONG' ? (entry - sl) / entry : (sl - entry) / entry;
+  if (slPct <= 0) return { sizeUsd: CAPITAL_USD, leverage: LEVERAGE_BY_MODE[mode] || 5 };
+  const leverage = LEVERAGE_BY_MODE[mode] || 5;
+  // Tamaño máximo para que pérdida = 2% del capital
+  const maxLossUsd = CAPITAL_USD * RISK_PCT; // $20 con $1000
+  const sizeUsd = Math.min(CAPITAL_USD, maxLossUsd / (slPct * leverage));
+  return { sizeUsd: Math.round(sizeUsd * 100) / 100, leverage, maxLossUsd };
+}
+
+const MAX_TRADE_LOSS_USD = CAPITAL_USD * RISK_PCT; // $20 con $1000 — referencia
 
 // ── CIRCUIT BREAKER DIARIO v4.4.38 ──
 const circuitBreaker = {
@@ -1926,14 +1942,9 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     if (!isLong && sl <= price) { console.log(`⚠️ Scalp descartado — SL inválido`); return; }
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
-    // ── Max loss $20 — igual para todos los trades v4.4.46 ──
-    const _capScalp = parseFloat(process.env.PAPER_SIZE_USD || '1000');
-    const _levScalp = parseFloat(process.env.PAPER_LEVERAGE || '10');
-    const _maxLossScalp = calcMaxLossUsd(price, sl, scalpDir, _capScalp, _levScalp);
-    if (_maxLossScalp > MAX_TRADE_LOSS_USD) {
-      console.log(`🛑 Scalp ${scalpDir} rechazado — pérdida máxima $${_maxLossScalp.toFixed(2)} > $${MAX_TRADE_LOSS_USD} — SL muy amplio (${symbol})`);
-      return;
-    }
+    // ── Gestión de riesgo 2% — calcular tamaño dinámico v4.4.47 ──
+    const { sizeUsd: scalpSizeUsd, leverage: scalpLeverage, maxLossUsd: scalpMaxLoss } = calcPositionSize(price, sl, scalpDir, 'scalping');
+    console.log(`💰 Scalp ${scalpDir} ${symbol} — size $${scalpSizeUsd.toFixed(0)} lev ${scalpLeverage}x riesgo $${scalpMaxLoss?.toFixed(2)}`);
     // v4.4.16 C5: bloquear scalping si hay sweep/anomalía activa en dirección contraria
     // Elimina colisiones scalping↔sweep que generaban kill_switch pérdidas (4/6 lost)
     const activeAnomaly = wsState[symbol]?.anomaly;
@@ -1963,7 +1974,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       }
     }
     const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
-    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:parseFloat(process.env.PAPER_SIZE_USD||'1000'), leverage:parseInt(process.env.PAPER_LEVERAGE||'10'), source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
+    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:scalpSizeUsd, leverage:scalpLeverage, source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
     if (process.env.TELEGRAM_CHAT_ID) {
       const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
@@ -3146,7 +3157,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.46 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.47 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
