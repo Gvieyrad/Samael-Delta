@@ -1248,11 +1248,15 @@ function renderPaper(){
       <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
       ${(s.recentTrades||[]).filter(t=>paperFilter==='ALL'||t.symbol.includes(paperFilter)).slice(0,10).map(t=>{
         if(t.status==='closed'&&(t.pnl_usd===0||t.pnl_usd===null))return'';
-        const won=t.status==='won',lost=t.status==='lost',cancelled=t.status==='cancelled';
+        // ── Display basado en PnL real v4.4.48 ──
+        const realWon = t.pnl_usd > 0, realLost = t.pnl_usd < 0;
+        const won=realWon, lost=realLost, cancelled=t.status==='cancelled';
         const pnlCol=won?'#00d68f':lost?'#ff4d6d':cancelled?'#4b5563':'#f59e0b';
         const icon=won?'✓':lost?'✗':cancelled?'○':'—';
+        const isTrailing = t.close_reason === 'trailing_tp';
         const date=new Date(t.closed_at||t.created_at).toLocaleDateString('es-PE',{month:'2-digit',day:'2-digit'});
         const srcIcon=t.source==='scalping'?'⚡':t.source==='auto'?'🤖':t.source==='manual'?'👤':t.source==='sweep'?'🌊':t.source==='wall'?'🧱':t.source==='meanrev'?'📈':'📊';
+        const trailingBadge = isTrailing ? '<span style="font-size:8px;background:rgba(16,185,129,.2);color:#10b981;padding:1px 4px;border-radius:3px;margin-left:3px">📈 trailing</span>' : '';
         const srcCol=t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='manual'?'#f59e0b':t.source==='sweep'?'#38bdf8':t.source==='wall'?'#f97316':t.source==='meanrev'?'#10b981':'#4b5563';
         const openTime = new Date(t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'});
         const closeTime = t.closed_at ? new Date(t.closed_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '–';
@@ -1263,7 +1267,7 @@ function renderPaper(){
             <span style="font-size:10px;color:${srcCol};width:16px">${srcIcon}</span>
             <span style="font-size:11px;color:${t.direction==='LONG'?'#00d68f':'#ff4d6d'};font-weight:700;width:42px">${t.direction}</span>
             <span style="font-size:10px;color:#4b5563;flex:1">${t.symbol}</span>
-            <span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:58px;text-align:right">${(t.pnl_usd>=0?'+':'')+'$'+(t.pnl_usd||0).toFixed(0)}</span>
+            <span class="mono" style="font-size:11px;font-weight:700;color:${pnlCol};min-width:58px;text-align:right">${(t.pnl_usd>=0?'+':'')+'$'+(t.pnl_usd||0).toFixed(0)}</span>${trailingBadge}
           </div>
           <div style="display:flex;gap:8px;margin-top:3px;padding-left:30px;font-size:9px;color:#2a3040">
             <span>📅 Apertura: ${date} ${openTime}</span>
@@ -1308,6 +1312,7 @@ function renderML(){
     <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#4b5563;margin-bottom:3px"><span>RSI 15m promedio</span><div style="display:flex;gap:8px"><span style="color:#00d68f">✓ ${d.avgRsiWon||'–'}</span><span style="color:#ff4d6d">✗ ${d.avgRsiLost||'–'}</span></div></div></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:10px;color:#4b5563">Con Fibonacci activo</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithFib||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithFib||0).toFixed(1)}% WR</span></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:10px;color:#4b5563">Con ballenas activas</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateWithWhales||0)>wr?'#00d68f':'#f59e0b'}">${parseFloat(d.winRateWithWhales||0).toFixed(1)}% WR</span></div>
+      <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="font-size:11px;color:#6b7280">📈 Con trailing activo</span><span style="font-size:11px;font-weight:700;color:${(d.winRateWithTrailing||0)>=50?'#00d68f':(d.winRateWithTrailing||0)>=35?'#f59e0b':'#ff4d6d'}">${d.countTrailing||0} trades · ${d.winRateWithTrailing||0}% WR</span></div>
     <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#4b5563">4H alineado con señal</span><span class="mono" style="font-size:11px;font-weight:700;color:${parseFloat(d.winRateAligned4h||0)>wr?'#00d68f':'#f59e0b'}">${d.winRateAligned4h||'–'}% WR</span></div>
   </div>
   ${topDivs.length?`<div style="padding:10px 14px;border-bottom:1px solid #1e2330"><div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Divergencias con más victorias</div>${topDivs.map(([type,count])=>{const barW=Math.round((count/maxDivCount)*100);return`<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#e2e4ea;margin-bottom:2px"><span>${divLabels[type]||type}</span><span style="color:#00d68f;font-weight:700">${count} victorias</span></div><div style="height:3px;background:#1e2330;border-radius:2px;overflow:hidden"><div style="height:100%;width:${barW}%;background:#00d68f;border-radius:2px"></div></div></div>`;}).join('')}</div>`:''}
