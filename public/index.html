@@ -502,6 +502,38 @@ async function openPaperTradeFromAI(directionOverride) {
   if (!aiSignal) return;
   const direction = directionOverride || aiSignal.direction;
   if (!direction || direction === 'ESPERAR') return;
+
+  // ── Filtro 1: Confidence mínima 75% v4.4.49 ──
+  const conf = aiSignal.confidence || 0;
+  if (conf < 75) {
+    showToast(`⛔ Confianza ${conf}% insuficiente — mínimo 75% para ejecutar`, '#ff4d6d');
+    return;
+  }
+
+  // ── Filtro 2: Advertencia en madrugada Lima 0-5h ──
+  const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+  if (horaLima >= 0 && horaLima <= 5) {
+    const ok = confirm(`⚠️ Son las ${horaLima}h Lima — madrugada.
+¿Confirmas abrir ${direction} ${mkt.symbol || 'BTC'} con confianza ${conf}%?
+
+Esta hora tiene menor liquidez.`);
+    if (!ok) return;
+  }
+
+  // ── Filtro 3: Confirmación siempre ──
+  const entry = aiSignal.entry ? `$${parseFloat(aiSignal.entry).toLocaleString()}` : 'precio actual';
+  const sl = aiSignal.sl ? `$${parseFloat(aiSignal.sl).toLocaleString()}` : 'calculado';
+  const tp = aiSignal.tp1 ? `$${parseFloat(aiSignal.tp1).toLocaleString()}` : 'calculado';
+  const ok = confirm(`¿Confirmas abrir ${direction}?
+
+📍 Entry: ${entry}
+🎯 TP: ${tp}
+🛑 SL: ${sl}
+📊 Confianza: ${conf}%
+
+Presiona OK para confirmar.`);
+  if (!ok) return;
+
   await openPaperTrade(direction);
 }
 
