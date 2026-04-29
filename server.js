@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.48' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.50' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1287,7 +1287,18 @@ app.post('/api/paper/open', async (req, res) => {
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
-    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || 1000, leverage: leverage || 10, divergences, fibonacci, source: source || 'manual', status: 'open', opened_at: new Date().toISOString() }).select().single();
+    // ── Filtro confidence mínima 75% para trades manuales v4.4.49 ──
+    const tradeSource = source || 'manual';
+    if (tradeSource === 'manual' && confidence && parseFloat(confidence) < 75) {
+      console.log(`⛔ Trade manual rechazado — confianza ${confidence}% < 75% mínimo`);
+      return res.status(400).json({ error: `Confianza ${confidence}% insuficiente — mínimo 75% para ejecutar trades manuales` });
+    }
+    // ── Gestión de riesgo 2% para trades manuales v4.4.49 ──
+    const mode = source || 'manual';
+    const { sizeUsd: manualSizeUsd, leverage: manualLeverage } = sl && entry
+      ? calcPositionSize(parseFloat(entry), parseFloat(sl), direction, mode)
+      : { sizeUsd: size_usd || CAPITAL_USD, leverage: LEVERAGE_BY_MODE[mode] || 10 };
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || manualSizeUsd, leverage: leverage || manualLeverage, divergences, fibonacci, source: mode, status: 'open', opened_at: new Date().toISOString() }).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1302,8 +1313,9 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
     const _lev3 = parseFloat(trade.leverage || 10);
     const pnl_usd = parseFloat((size * priceDiff * _lev3).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev3 * 100).toFixed(2));
-    const finalStatus = close_reason === 'tp1' || close_reason === 'tp2' ? 'won' : close_reason === 'sl' ? 'lost' : close_reason === 'manual' ? 'cancelled' : 'closed';
-    const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd: finalStatus === 'cancelled' ? 0 : pnl_usd, pnl_pct: finalStatus === 'cancelled' ? 0 : pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
+    // ── Cierre manual registra PnL real v4.4.49 ──
+    const finalStatus = pnl_usd > 0 ? 'won' : pnl_usd < 0 ? 'lost' : 'cancelled';
+    const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -3165,7 +3177,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.48 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.50 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
