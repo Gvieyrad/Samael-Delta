@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.58' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.59' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1411,8 +1411,8 @@ app.get('/api/paper/open', async (req, res) => {
 
 app.get('/api/paper/stats', async (req, res) => {
   try {
-    const since60d = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-    const { data, error } = await supabase.from('paper_trades').select('*').in('status', ['won', 'lost']).gte('created_at', since60d).order('created_at', { ascending: false }).limit(2000);
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase.from('paper_trades').select('*').in('status', ['won', 'lost']).gte('opened_at', since30d).order('opened_at', { ascending: false });
     if (error) throw error;
     const total = data.length, won = data.filter(t => t.status === 'won').length, lost = data.filter(t => t.status === 'lost').length;
     const winRate = total > 0 ? ((won / total) * 100).toFixed(1) : 0;
@@ -3269,7 +3269,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.58 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.59 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
