@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Futuros EL CHIMUELO v4.4.55</title>
+<title>Panel Futuros EL CHIMUELO v4.4.56</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size:13px;line-height:1.4}
@@ -1185,7 +1185,7 @@ async function closePaperTrade(id,reason,tradeSymbol){
       const pnl=parseFloat(trade?.pnl_usd||0);
       const won=trade?.status==='won';
       const isTrailingClose=trade?.close_reason==='trailing_tp';
-      const closeLabel=isTrailingClose?'📈 Trailing TP':won?'✅ TP':'❌ SL';
+      const closeLabel=isTrailingClose?'📈 Trailing TP':reason==='manual_tp'?'✅ TP manual':reason==='manual_sl'?'❌ SL manual':won?'✅ TP':'❌ SL';
       showToast(`${closeLabel} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
     }
   }catch(e){}
@@ -1256,8 +1256,8 @@ function renderPaper(){
           </div>
         </div>
         <div style="display:flex;gap:6px">
-          <button onclick="closePaperTrade('${t.id}','tp1','${t.symbol}')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
-          <button onclick="closePaperTrade('${t.id}','sl','${t.symbol}')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
+          <button onclick="closePaperTrade('${t.id}','manual_tp','${t.symbol}')" style="flex:1;padding:7px;background:rgba(0,214,143,.15);color:#00d68f;border:1px solid rgba(0,214,143,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">TP Alcanzado</button>
+          <button onclick="closePaperTrade('${t.id}','manual_sl','${t.symbol}')" style="flex:1;padding:7px;background:rgba(255,77,109,.15);color:#ff4d6d;border:1px solid rgba(255,77,109,.35);border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">SL Alcanzado</button>
           <button onclick="closePaperTrade('${t.id}','manual','${t.symbol}')" title="Cancelar — no cuenta en estadísticas" style="padding:7px 10px;background:rgba(245,158,11,.08);color:#f59e0b;border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">✕ Cancelar</button>
         </div>
         <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">

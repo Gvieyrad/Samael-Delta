@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.54' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.56' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1389,11 +1389,16 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const { data: trade, error: fetchErr } = await supabase.from('paper_trades').select('*').eq('id', id).single();
     if (fetchErr) throw fetchErr;
     const entry = parseFloat(trade.entry), closeP = parseFloat(close_price), size = parseFloat(trade.size_usd);
-    const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
     const _lev3 = parseFloat(trade.leverage || 10);
+    // Cancelar siempre registra pnl 0 y status cancelled
+    if (close_reason === 'manual') {
+      const { data, error } = await supabase.from('paper_trades').update({ status: 'cancelled', close_price: closeP, close_reason: 'manual', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', id).select().single();
+      if (error) throw error;
+      return res.json({ ok: true, trade: data });
+    }
+    const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
     const pnl_usd = parseFloat((size * priceDiff * _lev3).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev3 * 100).toFixed(2));
-    // ── Cierre manual registra PnL real v4.4.49 ──
-    const finalStatus = pnl_usd > 0 ? 'won' : pnl_usd < 0 ? 'lost' : 'cancelled';
+    const finalStatus = pnl_usd >= 0 ? 'won' : 'lost';
     const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
@@ -3263,7 +3268,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.54 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.56 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
