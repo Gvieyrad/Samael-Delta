@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Futuros EL CHIMUELO v4.4.16</title>
+<title>Panel Futuros EL CHIMUELO v4.4.55</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#080a0d;color:#e2e4ea;font-family:system-ui,sans-serif;font-size:13px;line-height:1.4}
@@ -1184,7 +1184,9 @@ async function closePaperTrade(id,reason,tradeSymbol){
       const trade=d.trade;
       const pnl=parseFloat(trade?.pnl_usd||0);
       const won=trade?.status==='won';
-      showToast(`${won?'✅ TP':'❌ SL'} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
+      const isTrailingClose=trade?.close_reason==='trailing_tp';
+      const closeLabel=isTrailingClose?'📈 Trailing TP':won?'✅ TP':'❌ SL';
+      showToast(`${closeLabel} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
     }
   }catch(e){}
 }
@@ -1215,9 +1217,10 @@ function renderPaper(){
       const entry=parseFloat(t.entry);const tp1=parseFloat(t.tp1);const sl=parseFloat(t.sl);
       const size=parseFloat(t.size_usd);const lev=parseFloat(t.leverage);
       const priceDiff=isLong?(currentP-entry)/entry:(entry-currentP)/entry;
-      const floatingPnl=parseFloat((size*priceDiff).toFixed(2));
-      const floatingPct=parseFloat((priceDiff*100).toFixed(2));
+      const floatingPnl=parseFloat((size*priceDiff*lev).toFixed(2));
+      const floatingPct=parseFloat((priceDiff*lev*100).toFixed(2));
       const floatingCol=floatingPnl>=0?'#00d68f':'#ff4d6d';
+      const slBeyondEntry=isLong?sl>=entry:sl<=entry;
       const towardTP=isLong?currentP>entry:currentP<entry;
       const progressCol=towardTP?'#00d68f':'#ff4d6d';
       html+=`<div style="background:#0d1017;border-top:2px solid ${col};border-bottom:1px solid #1e2330;padding:12px 14px">
@@ -1239,12 +1242,12 @@ function renderPaper(){
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
           <div style="background:rgba(0,214,143,.06);border:1px solid rgba(0,214,143,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">TP</div><div class="mono" style="font-size:12px;font-weight:700;color:#00d68f">$${parseInt(tp1).toLocaleString()}</div></div>
-          <div style="background:rgba(255,77,109,.06);border:1px solid rgba(255,77,109,.2);border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">SL</div><div class="mono" style="font-size:12px;font-weight:700;color:#ff4d6d">$${parseInt(sl).toLocaleString()}</div></div>
+          <div style="background:${slBeyondEntry?'rgba(245,158,11,.06)':'rgba(255,77,109,.06)'};border:1px solid ${slBeyondEntry?'rgba(245,158,11,.35)':'rgba(255,77,109,.2)'};border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">SL${slBeyondEntry?' <span style="font-size:8px;background:rgba(245,158,11,.2);color:#f59e0b;padding:0 3px;border-radius:2px">trailing</span>':''}</div><div class="mono" style="font-size:12px;font-weight:700;color:${slBeyondEntry?'#f59e0b':'#ff4d6d'}">$${parseFloat(sl).toFixed(sl>=100?0:2)}</div></div>
           <div style="background:#111520;border-radius:5px;padding:6px 8px"><div style="font-size:9px;color:#4b5563;margin-bottom:2px">R:R</div><div class="mono" style="font-size:12px;font-weight:700;color:#e2e4ea">${(()=>{const r=Math.abs(parseFloat(t.tp1)-parseFloat(t.entry));const k=Math.abs(parseFloat(t.entry)-parseFloat(t.sl));return k>0?'1:'+(r/k).toFixed(1):'–';})()}</div></div>
         </div>
         <div style="margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;font-size:9px;color:#4b5563;margin-bottom:3px">
-            <span>SL $${parseInt(sl).toLocaleString()}</span>
+            <span style="color:${slBeyondEntry?'#f59e0b':'#4b5563'}">${slBeyondEntry?'📈':'🛑'} $${parseFloat(sl).toFixed(sl>=100?0:2)}</span>
             <span style="color:${progressCol}">${towardTP?'▲ hacia TP':'▼ hacia SL'}</span>
             <span>TP $${parseInt(tp1).toLocaleString()}</span>
           </div>
@@ -1260,7 +1263,7 @@ function renderPaper(){
         <div style="font-size:9px;color:#2a3040;margin-top:6px;display:flex;gap:8px;align-items:center">
           <span>📅 ${new Date(t.opened_at||t.created_at).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'})} ${new Date(t.opened_at||t.created_at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}</span>
           <span style="background:${t.source==='scalping'?'rgba(139,92,246,.15)':t.source==='auto'?'rgba(0,214,143,.1)':t.source==='sweep'?'rgba(56,189,248,.1)':t.source==='wall'?'rgba(249,115,22,.1)':t.source==='meanrev'?'rgba(16,185,129,.1)':'rgba(245,158,11,.1)'};color:${t.source==='scalping'?'#8b5cf6':t.source==='auto'?'#00d68f':t.source==='sweep'?'#38bdf8':t.source==='wall'?'#f97316':t.source==='meanrev'?'#10b981':'#f59e0b'};padding:1px 6px;border-radius:3px;font-weight:700;font-size:9px">${t.source==='scalping'?'⚡ Scalping':t.source==='auto'?'🤖 Auto':t.source==='sweep'?'🌊 Sweep':t.source==='wall'?'🧱 Wall':t.source==='meanrev'?'📈 MeanRev':'👤 Manual'}</span>
-          <span>Conf: ${t.confidence||0}%</span>
+          <span style="color:${(t.confidence||0)>=93?'#00d68f':(t.confidence||0)>=90?'#f59e0b':'#ff4d6d'}">Conf: ${t.confidence||0}%</span>
         </div>
       </div>`;
     });
