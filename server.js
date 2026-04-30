@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.50' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.51' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -142,6 +142,78 @@ function initWsState(symbol) {
     trades: [], volumes: [], avgVolume1m: 0, lastOI: 0,
     oiHistory: [], lastPrice: 0, lastUpdate: 0, anomaly: null, liqZones: [],
   };
+}
+
+// ── CHECK SL/TP EN TIEMPO REAL v4.4.51 ──
+// Se ejecuta en cada tick del WebSocket — cierra trades exactamente al SL/TP
+const _slTpLocks = {}; // evitar doble cierre
+async function checkSlTpOnTick(symbol, price) {
+  if (_slTpLocks[symbol]) return;
+  try {
+    const { data: openTrades } = await supabase
+      .from('paper_trades').select('*')
+      .eq('symbol', symbol).eq('status', 'open');
+    if (!openTrades?.length) return;
+
+    for (const trade of openTrades) {
+      const entry = parseFloat(trade.entry);
+      const sl    = parseFloat(trade.sl);
+      const tp1   = parseFloat(trade.tp1);
+      const lev   = parseFloat(trade.leverage || 10);
+      const size  = parseFloat(trade.size_usd);
+      const isLong = trade.direction === 'LONG';
+
+      let closeReason = null;
+      let closePrice  = price;
+
+      if (isLong) {
+        if (price <= sl)  { closeReason = 'sl';  closePrice = sl; }
+        else if (price >= tp1) { closeReason = 'tp1'; closePrice = tp1; }
+      } else {
+        if (price >= sl)  { closeReason = 'sl';  closePrice = sl; }
+        else if (price <= tp1) { closeReason = 'tp1'; closePrice = tp1; }
+      }
+
+      if (!closeReason) continue;
+
+      // Lock para evitar doble cierre
+      _slTpLocks[symbol] = true;
+      setTimeout(() => { _slTpLocks[symbol] = false; }, 5000);
+
+      const priceDiff = isLong ? (closePrice - entry) / entry : (entry - closePrice) / entry;
+      const pnl_usd   = parseFloat((size * priceDiff * lev).toFixed(2));
+      const pnl_pct   = parseFloat((priceDiff * lev * 100).toFixed(2));
+      const status    = pnl_usd > 0 ? 'won' : 'lost';
+
+      // ── trailing_tp si SL movido a zona de ganancia ──
+      const finalReason = closeReason === 'sl' && pnl_usd > 0 ? 'trailing_tp' : closeReason;
+
+      await supabase.from('paper_trades').update({
+        status, close_price: closePrice, close_reason: finalReason,
+        pnl_usd, pnl_pct, closed_at: new Date().toISOString()
+      }).eq('id', trade.id);
+
+      // Circuit breaker
+      if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd);
+
+      // Loss trackers
+      if (trade.source === 'scalping') {
+        const tracker = trade.symbol.includes('ETH') ? ethLossTracker
+                      : trade.symbol.includes('SOL') ? solLossTracker : null;
+        if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
+      }
+
+      console.log(`⚡ WS ${finalReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
+
+      // Telegram
+      if (process.env.TELEGRAM_CHAT_ID) {
+        const emoji = status === 'won' ? '✅' : '❌';
+        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,
+          `${emoji} *Paper Trade Cerrado* (WS tiempo real)\n${trade.direction} ${symbol}\nEntry: $${entry.toLocaleString()} → $${closePrice.toLocaleString()}\nRazón: ${finalReason}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}`,
+          { parse_mode: 'Markdown' }); } catch(_) {}
+      }
+    }
+  } catch(e) { _slTpLocks[symbol] = false; }
 }
 
 function connectWebSocket(symbol) {
@@ -162,6 +234,13 @@ function connectWebSocket(symbol) {
       wsState[symbol].lastUpdate = now;
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
+      // ── Check SL/TP en tiempo real v4.4.51 ──
+      if (!wsState[symbol]._slTpTimer) {
+        wsState[symbol]._slTpTimer = setTimeout(() => {
+          wsState[symbol]._slTpTimer = null;
+          checkSlTpOnTick(symbol, price);
+        }, 200); // 200ms debounce — evita llamadas excesivas
+      }
       if (!wsState[symbol]._evalTimer) {
         wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol); }, 500);
       }
@@ -3177,7 +3256,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.50 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.51 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
