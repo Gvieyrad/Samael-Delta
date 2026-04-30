@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.51' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.52' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1372,12 +1372,13 @@ app.post('/api/paper/open', async (req, res) => {
       console.log(`⛔ Trade manual rechazado — confianza ${confidence}% < 75% mínimo`);
       return res.status(400).json({ error: `Confianza ${confidence}% insuficiente — mínimo 75% para ejecutar trades manuales` });
     }
-    // ── Gestión de riesgo 2% para trades manuales v4.4.49 ──
+    // ── Gestión de riesgo 2% — siempre calcular size, ignorar el del frontend v4.4.52 ──
     const mode = source || 'manual';
     const { sizeUsd: manualSizeUsd, leverage: manualLeverage } = sl && entry
       ? calcPositionSize(parseFloat(entry), parseFloat(sl), direction, mode)
-      : { sizeUsd: size_usd || CAPITAL_USD, leverage: LEVERAGE_BY_MODE[mode] || 10 };
-    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: size_usd || manualSizeUsd, leverage: leverage || manualLeverage, divergences, fibonacci, source: mode, status: 'open', opened_at: new Date().toISOString() }).select().single();
+      : { sizeUsd: CAPITAL_USD * RISK_PCT / 0.01, leverage: LEVERAGE_BY_MODE[mode] || 10 };
+    console.log(`💰 Trade ${mode} ${direction} ${symbol} — size $${manualSizeUsd.toFixed(0)} lev ${manualLeverage}x (riesgo 2%)`);
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: manualSizeUsd, leverage: manualLeverage, divergences, fibonacci, source: mode, status: 'open', opened_at: new Date().toISOString() }).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -3256,7 +3257,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.51 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.52 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
