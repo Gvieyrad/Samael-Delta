@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.53' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.54' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -162,15 +162,17 @@ async function checkSlTpOnTick(symbol, price) {
       const lev   = parseFloat(trade.leverage || 10);
       const size  = parseFloat(trade.size_usd);
       const isLong = trade.direction === 'LONG';
+      // SL moved past entry by trailing stop → treat as profit lock, not loss
+      const slBeyondEntry = isLong ? sl >= entry : sl <= entry;
 
       let closeReason = null;
       let closePrice  = price;
 
       if (isLong) {
-        if (price <= sl)  { closeReason = 'sl';  closePrice = sl; }
+        if (price <= sl)  { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
         else if (price >= tp1) { closeReason = 'tp1'; closePrice = tp1; }
       } else {
-        if (price >= sl)  { closeReason = 'sl';  closePrice = sl; }
+        if (price >= sl)  { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
         else if (price <= tp1) { closeReason = 'tp1'; closePrice = tp1; }
       }
 
@@ -185,11 +187,8 @@ async function checkSlTpOnTick(symbol, price) {
       const pnl_pct   = parseFloat((priceDiff * lev * 100).toFixed(2));
       const status    = pnl_usd > 0 ? 'won' : 'lost';
 
-      // ── trailing_tp si SL movido a zona de ganancia ──
-      const finalReason = closeReason === 'sl' && pnl_usd > 0 ? 'trailing_tp' : closeReason;
-
       await supabase.from('paper_trades').update({
-        status, close_price: closePrice, close_reason: finalReason,
+        status, close_price: closePrice, close_reason: closeReason,
         pnl_usd, pnl_pct, closed_at: new Date().toISOString()
       }).eq('id', trade.id);
 
@@ -203,7 +202,7 @@ async function checkSlTpOnTick(symbol, price) {
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      console.log(`⚡ WS ${finalReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
+      console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
       if (process.env.TELEGRAM_CHAT_ID) {
@@ -1276,7 +1275,7 @@ Responde SOLO JSON sin markdown:
     if (canAutoTrade) {
       // ── Max pérdida check ──
       // ── Gestión de riesgo 2% para auto trade v4.4.47 ──
-      const { sizeUsd: autoSizeUsd, leverage: autoLeverage, maxLossUsd: autoMaxLoss } = calcPositionSize(signal.entry, signal.sl, signal.direction, 'auto');
+      const { sizeUsd: autoSizeUsd, leverage: autoLeverage, maxLossUsd: autoMaxLoss, effectiveSl: autoEffSl } = calcPositionSize(signal.entry, signal.sl, signal.direction, 'auto');
       console.log(`💰 Auto trade ${signal.direction} ${symbol} — size $${autoSizeUsd.toFixed(0)} lev ${autoLeverage}x riesgo $${autoMaxLoss?.toFixed(2)}`);
       try {
         const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
@@ -1296,7 +1295,7 @@ Responde SOLO JSON sin markdown:
         const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
         if (!existing || existing.length === 0) {
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
-          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: signal.sl, rr: signal.rr, confidence: signal.confidence, size_usd: autoSizeUsd, leverage: autoLeverage, divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
+          await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: autoEffSl, rr: signal.rr, confidence: signal.confidence, size_usd: autoSizeUsd, leverage: autoLeverage, divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
           console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
           if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
         }
@@ -1374,11 +1373,11 @@ app.post('/api/paper/open', async (req, res) => {
     }
     // ── Gestión de riesgo 2% — siempre calcular size, ignorar el del frontend v4.4.52 ──
     const mode = source || 'manual';
-    const { sizeUsd: manualSizeUsd, leverage: manualLeverage } = sl && entry
+    const { sizeUsd: manualSizeUsd, leverage: manualLeverage, effectiveSl: manualEffSl } = sl && entry
       ? calcPositionSize(parseFloat(entry), parseFloat(sl), direction, mode)
-      : { sizeUsd: CAPITAL_USD * RISK_PCT / 0.01, leverage: LEVERAGE_BY_MODE[mode] || 10 };
+      : { sizeUsd: CAPITAL_USD * RISK_PCT / 0.01, leverage: LEVERAGE_BY_MODE[mode] || 10, effectiveSl: parseFloat(sl) };
     console.log(`💰 Trade ${mode} ${direction} ${symbol} — size $${manualSizeUsd.toFixed(0)} lev ${manualLeverage}x (riesgo 2%)`);
-    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd: manualSizeUsd, leverage: manualLeverage, divergences, fibonacci, source: mode, status: 'open', opened_at: new Date().toISOString() }).select().single();
+    const { data, error } = await supabase.from('paper_trades').insert({ symbol, direction, entry, tp1, tp2, sl: manualEffSl, rr, confidence, size_usd: manualSizeUsd, leverage: manualLeverage, divergences, fibonacci, source: mode, status: 'open', opened_at: new Date().toISOString() }).select().single();
     if (error) throw error;
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1792,13 +1791,16 @@ function calcMaxLossUsd(entry, sl, direction, capitalUsd, leverage) {
 
 // Calcula el tamaño de posición para no superar el riesgo máximo
 function calcPositionSize(entry, sl, direction, mode) {
-  const slPct = direction === 'LONG' ? (entry - sl) / entry : (sl - entry) / entry;
-  if (slPct <= 0) return { sizeUsd: CAPITAL_USD, leverage: LEVERAGE_BY_MODE[mode] || 5 };
+  const MIN_SL_PCT = 0.003; // mínimo 0.3% de distancia al entry
+  const rawSlPct = direction === 'LONG' ? (entry - sl) / entry : (sl - entry) / entry;
+  const slPct = Math.max(MIN_SL_PCT, rawSlPct > 0 ? rawSlPct : 0);
+  const effectiveSl = rawSlPct < MIN_SL_PCT
+    ? parseFloat((direction === 'LONG' ? entry * (1 - MIN_SL_PCT) : entry * (1 + MIN_SL_PCT)).toFixed(2))
+    : sl;
   const leverage = LEVERAGE_BY_MODE[mode] || 5;
-  // Tamaño máximo para que pérdida = 2% del capital
-  const maxLossUsd = CAPITAL_USD * RISK_PCT; // $20 con $1000
+  const maxLossUsd = CAPITAL_USD * RISK_PCT;
   const sizeUsd = Math.min(CAPITAL_USD, maxLossUsd / (slPct * leverage));
-  return { sizeUsd: Math.round(sizeUsd * 100) / 100, leverage, maxLossUsd };
+  return { sizeUsd: Math.round(sizeUsd * 100) / 100, leverage, maxLossUsd, effectiveSl };
 }
 
 const MAX_TRADE_LOSS_USD = CAPITAL_USD * RISK_PCT; // $20 con $1000 — referencia
@@ -1996,7 +1998,11 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
 
     const totalScore = longScore + shortScore;
     if (!totalScore) return;
-    const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT', scalpProb = Math.round((Math.max(longScore,shortScore)/Math.max(totalScore,1))*100);
+    const scalpDir = longScore > shortScore ? 'LONG' : 'SHORT';
+    const rawConf = Math.round((Math.max(longScore, shortScore) / Math.max(totalScore, 1)) * 100);
+    const b1hConflict = bias1hScalp && ((scalpDir === 'LONG' && bias1hScalp.score < 45) || (scalpDir === 'SHORT' && bias1hScalp.score > 55));
+    const b4hConflict = bias4hScalp2 && ((scalpDir === 'LONG' && bias4hScalp2.score < 45) || (scalpDir === 'SHORT' && bias4hScalp2.score > 55));
+    const scalpProb = Math.min(95, rawConf - (b1hConflict ? 5 : 0) - (b4hConflict ? 5 : 0));
     if (scalpProb < parseInt(process.env.SCALP_THRESHOLD || '92')) return;
 
     // v4.4.16 C4b: 3 filtros duros — sólo pasan trades con ventaja estadística real
@@ -2043,7 +2049,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const rrVal = Math.abs(tp1-price)/Math.abs(sl-price);
     if (rrVal < 1.5) return;
     // ── Gestión de riesgo 2% — calcular tamaño dinámico v4.4.47 ──
-    const { sizeUsd: scalpSizeUsd, leverage: scalpLeverage, maxLossUsd: scalpMaxLoss } = calcPositionSize(price, sl, scalpDir, 'scalping');
+    const { sizeUsd: scalpSizeUsd, leverage: scalpLeverage, maxLossUsd: scalpMaxLoss, effectiveSl: scalpEffSl } = calcPositionSize(price, sl, scalpDir, 'scalping');
     console.log(`💰 Scalp ${scalpDir} ${symbol} — size $${scalpSizeUsd.toFixed(0)} lev ${scalpLeverage}x riesgo $${scalpMaxLoss?.toFixed(2)}`);
     // v4.4.16 C5: bloquear scalping si hay sweep/anomalía activa en dirección contraria
     // Elimina colisiones scalping↔sweep que generaban kill_switch pérdidas (4/6 lost)
@@ -2074,7 +2080,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       }
     }
     const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
-    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:scalpSizeUsd, leverage:scalpLeverage, source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
+    await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl:scalpEffSl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:scalpSizeUsd, leverage:scalpLeverage, source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
     if (process.env.TELEGRAM_CHAT_ID) {
       const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
@@ -3257,7 +3263,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.53 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.54 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
