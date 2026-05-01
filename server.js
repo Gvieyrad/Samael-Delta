@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.63' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.64' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1305,6 +1305,7 @@ Responde SOLO JSON sin markdown:
   } catch(e) {
     console.error(`❌ Auto-analysis error ${symbol}:`, e.message, e.response?.status || '');
     if (e.response?.status === 429) { console.log(`⏳ Rate limit 429 — esperando 30s`); await new Promise(r => setTimeout(r, 30000)); }
+    if (e.response?.status === 418) { console.log(`🚫 IP ban 418 — esperando 60s`); await new Promise(r => setTimeout(r, 60000)); }
   }
   finally { analysisInProgress[symbol] = false; }
 }
@@ -1341,14 +1342,13 @@ function startAlertJob() {
   }, 5 * 60 * 1000);
 }
 
-app.get('/api/prices', async (req, res) => {
-  try {
-    const [btc, eth, sol, xau] = await Promise.all([
-      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=BTCUSDT`), axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=ETHUSDT`),
-      axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=SOLUSDT`), axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=XAUUSDT`).catch(() => ({ data: { price: '0' } })),
-    ]);
-    res.json({ BTCUSDT: parseFloat(btc.data.price), ETHUSDT: parseFloat(eth.data.price), SOLUSDT: parseFloat(sol.data.price), XAUUSDT: parseFloat(xau.data.price) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+app.get('/api/prices', (req, res) => {
+  res.json({
+    BTCUSDT: wsState['BTCUSDT']?.lastPrice || 0,
+    ETHUSDT: wsState['ETHUSDT']?.lastPrice || 0,
+    SOLUSDT: wsState['SOLUSDT']?.lastPrice || 0,
+    XAUUSDT: wsState['XAUUSDT']?.lastPrice || 0,
+  });
 });
 
 app.post('/api/alert/trigger', async (req, res) => {
@@ -1464,8 +1464,9 @@ async function monitorPaperTrades() {
     if (!openTrades?.length) return;
     for (const trade of openTrades) {
       try {
-        const priceRes = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${trade.symbol}`);
-        const currentPrice = parseFloat(priceRes.data.price), entryPrice = parseFloat(trade.entry);
+        const currentPrice = wsState[trade.symbol]?.lastPrice;
+        if (!currentPrice) continue;
+        const entryPrice = parseFloat(trade.entry);
         if (Math.abs(currentPrice - entryPrice) / entryPrice * 100 > 50) continue;
         const tp1 = parseFloat(trade.tp1), tp2 = parseFloat(trade.tp2) || tp1;
         let sl = parseFloat(trade.sl);
@@ -2095,7 +2096,10 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
     }
     console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
-  } catch(e) { console.error('Scalping error:', e.message); }
+  } catch(e) {
+    console.error('Scalping error:', e.message);
+    if (e.response?.status === 418) { console.log(`🚫 IP ban 418 scalping — esperando 60s`); await new Promise(r => setTimeout(r, 60000)); }
+  }
   finally { scalpingInProgress[symbol] = false; }
 }
 
@@ -3069,6 +3073,15 @@ app.post('/api/backtest', async (req, res) => {
 
 const meanRevCooldown = {};
 const MEANREV_COOLDOWN_MS = 15 * 60 * 1000; // 15 min entre trades por símbolo
+const _klineCache = {};
+async function getCachedKlines(symbol, interval, limit, ttlMs = 3 * 60 * 1000) {
+  const key = `${symbol}|${interval}|${limit}`;
+  const c = _klineCache[key];
+  if (c && Date.now() - c.ts < ttlMs) return c.data;
+  const res = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+  _klineCache[key] = { data: res.data, ts: Date.now() };
+  return res.data;
+}
 
 async function runMeanRevScanner() {
   for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
@@ -3076,6 +3089,7 @@ async function runMeanRevScanner() {
       await detectMeanReversion(symbol);
     } catch(e) {
       console.log(`MeanRev error ${symbol}: ${e.message}`);
+      if (e.response?.status === 418) { console.log(`🚫 IP ban 418 meanrev — esperando 60s`); await new Promise(r => setTimeout(r, 60000)); }
     }
   }
 }
@@ -3098,9 +3112,9 @@ async function detectMeanReversion(symbol) {
 
   // ── CONDICIÓN 1: Pre-trend 1H >1% ────────────────────────────────
   // ¿El precio de 1H se movió >1% en alguna dirección?
-  const k1h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=3`);
-  const h1Open  = parseFloat(k1h.data[0][1]); // apertura hace 1H
-  const h1Close = parseFloat(k1h.data[k1h.data.length - 2][4]); // cierre de la vela 1H cerrada
+  const k1hData = await getCachedKlines(symbol, '1h', 3);
+  const h1Open  = parseFloat(k1hData[0][1]);
+  const h1Close = parseFloat(k1hData[k1hData.length - 2][4]);
   const h1Move  = (h1Close - h1Open) / h1Open * 100;
   const absH1   = Math.abs(h1Move);
 
@@ -3108,9 +3122,9 @@ async function detectMeanReversion(symbol) {
 
   // ── CONDICIÓN 2: Filtro 4H — no pelear contra tendencia fuerte ────
   // Si 4H va en la misma dirección que 1H con >1% → NO tradear
-  const k4h = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=2`);
-  const h4Open  = parseFloat(k4h.data[0][1]);
-  const h4Close = parseFloat(k4h.data[0][4]);
+  const k4hData = await getCachedKlines(symbol, '4h', 2);
+  const h4Open  = parseFloat(k4hData[0][1]);
+  const h4Close = parseFloat(k4hData[0][4]);
   const h4Move  = (h4Close - h4Open) / h4Open * 100;
 
   const h1Dir = h1Move < 0 ? 'down' : 'up';
@@ -3123,8 +3137,8 @@ async function detectMeanReversion(symbol) {
   }
 
   // ── CONDICIÓN 3: Volume spike >3x mediana en velas 1m ─────────────
-  const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=21`);
-  const vols1m  = k1m.data.map(k => parseFloat(k[5]));
+  const k1mData = await getCachedKlines(symbol, '1m', 21, 60 * 1000);
+  const vols1m  = k1mData.map(k => parseFloat(k[5]));
   const lastVol = vols1m[vols1m.length - 1];
 
   // Mediana de las últimas 20 velas (excluyendo la última)
@@ -3140,8 +3154,8 @@ async function detectMeanReversion(symbol) {
   const direction = h1Move < -1.0 ? 'LONG' : 'SHORT';
 
   // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
-  const k1d = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`);
-  const bias1d = calcBias(k1d.data, null, 0);
+  const k1dData = await getCachedKlines(symbol, '1d', 30, 15 * 60 * 1000);
+  const bias1d = calcBias(k1dData, null, 0);
 
   // Solo bloquear si 1D es extremamente contrario (score <35 para LONG o >65 para SHORT)
   if (direction === 'LONG'  && bias1d.score < 35) {
