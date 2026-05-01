@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.60' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.61' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -478,7 +478,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
       const entry = parseFloat(trade.entry), sl = parseFloat(trade.sl);
       // Solo actuar si precio ya recorrió >60% del camino hacia el SL
-      // ETH: umbral 40% — se mueve más rápido, evita cierres con pérdida grande
+      // ETH: 40% por mayor volatilidad (beta 1.4x vs BTC), spec global es 60%
       const slThreshold = symbol.includes('ETH') ? 0.40 : 0.60;
       const totalDistance = Math.abs(sl - entry), currentDistance = Math.abs(currentPrice - entry);
       const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
@@ -537,6 +537,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.5) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
+    if (sweepConfidence < 82) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 82%`); return; }
     let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
     try {
       const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
@@ -3271,7 +3272,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.60 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.61 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
