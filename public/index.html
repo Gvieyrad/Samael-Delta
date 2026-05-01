@@ -1281,7 +1281,7 @@ function renderPaper(){
         <div style="background:#111520;border-radius:5px;padding:6px;text-align:center"><div style="font-size:9px;color:#4b5563">Max DD</div><div class="mono" style="font-size:13px;font-weight:700;color:#ff4d6d">-$${s.maxDrawdown}</div></div>
       </div>
       <div style="font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Historial reciente</div>
-      ${(s.recentTrades||[]).filter(t=>paperFilter==='ALL'||t.symbol.includes(paperFilter)).slice(0,20).map(t=>{
+      ${(s.recentTrades||[]).filter(t=>paperFilter==='ALL'||t.symbol.includes(paperFilter)).sort((a,b)=>{if(!a.closed_at&&!b.closed_at)return 0;if(!a.closed_at)return 1;if(!b.closed_at)return -1;return new Date(b.closed_at)-new Date(a.closed_at);}).slice(0,20).map(t=>{
         if(t.status==='closed'&&(t.pnl_usd===0||t.pnl_usd===null))return'';
         // ── Display basado en PnL real v4.4.48 ──
         const realWon = t.pnl_usd > 0, realLost = t.pnl_usd < 0;
