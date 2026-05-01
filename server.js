@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.59' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.60' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1558,7 +1558,8 @@ app.get('/api/news/latest', async (req, res) => {
 
 app.get('/api/ml/insights', async (req, res) => {
   try {
-    const { data: trades, error } = await supabase.from('paper_trades').select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci').in('status', ['won','lost']).order('created_at', { ascending: false }).limit(2000);
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: trades, error } = await supabase.from('paper_trades').select('id,symbol,direction,status,pnl_usd,pnl_pct,confidence,market_data,created_at,closed_at,divergences,fibonacci').in('status', ['won','lost']).gte('opened_at', since30d).order('created_at', { ascending: false });
     if (error) throw error;
     if (!trades || trades.length < 10) return res.json({ message: 'Necesitas al menos 10 trades cerrados para análisis ML', trades: trades?.length || 0 });
     const won = trades.filter(t => t.status === 'won'), lost = trades.filter(t => t.status === 'lost');
@@ -1572,7 +1573,7 @@ app.get('/api/ml/insights', async (req, res) => {
     const withTrailing = trades.filter(t=>t.close_reason==='trailing_tp');
     const trailingWR = withTrailing.length>0 ? (withTrailing.filter(t=>t.status==='won').length/withTrailing.length*100).toFixed(1) : '0';
     const aligned4h = trades.filter(t=>(t.direction==='LONG'&&t.market_data?.bias_4h==='long')||(t.direction==='SHORT'&&t.market_data?.bias_4h==='short'));
-    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']);
+    const { data: allTrades } = await supabase.from('paper_trades').select('source,status,pnl_usd').in('status',['won','lost']).gte('opened_at', since30d);
     const bySource = {};
     for (const src of ['scalping','auto','manual','sweep','wall','meanrev','backtest']) {
       const st = (allTrades||[]).filter(t=>t.source===src), sw = st.filter(t=>t.status==='won'), sp = st.reduce((s,t)=>s+(parseFloat(t.pnl_usd)||0),0);
@@ -1591,7 +1592,8 @@ app.get('/api/ml/insights', async (req, res) => {
 
 app.post('/api/ml/optimize', async (req, res) => {
   try {
-    const { data: trades } = await supabase.from('paper_trades').select('*').in('status',['won','lost']).not('market_data','is',null).limit(1000);
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: trades } = await supabase.from('paper_trades').select('*').in('status',['won','lost']).not('market_data','is',null).gte('opened_at', since30d);
     if (!trades || trades.length < 50) return res.json({ optimized:false, reason:'insufficient_data', trades:trades?.length||0 });
     const won = trades.filter(t=>t.status==='won'), winRate = won.length/trades.length;
     const adjustments = {}, recommendations = [];
@@ -3269,7 +3271,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.59 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.60 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
