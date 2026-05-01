@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.65' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.66' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -463,7 +463,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
-      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}`;
+      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}\nFuente: 🐋 Whale`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
     }
   } catch(e) { console.error('Whale trade error:', e.message); }
@@ -573,7 +573,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
-      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%\n⚡ ${reason}`;
+      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%\n⚡ ${reason}\nFuente: 🌊 Sweep`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
     }
   } catch(e) { console.error('Sweep trade error:', e.message); }
@@ -1298,7 +1298,7 @@ Responde SOLO JSON sin markdown:
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
           await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: autoEffSl, rr: signal.rr, confidence: signal.confidence, size_usd: autoSizeUsd, leverage: autoLeverage, divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
           console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
-          if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
+          if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R\nFuente: 🤖 Auto`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
         }
       } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
     }
@@ -1537,7 +1537,10 @@ async function monitorPaperTrades() {
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
             const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
-            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}`;
+            const _srcIcons = { auto: '🤖', scalping: '⚡', manual: '👤', sweep: '🌊', wall: '🧱', meanrev: '📈' };
+            const _srcIcon = _srcIcons[trade.source] || '📊';
+            const _trailingNote = closeReason === 'trailing_tp' ? ' | 🔒 Trailing SL activo' : '';
+            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nFuente: ${_srcIcon} ${trade.source}${_trailingNote}`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
           }
         }
@@ -1986,6 +1989,15 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       console.log(`⛔ Scalp LONG ${symbol} bloqueado — 1H bajista fuerte (score:${bias1hScore}) contradice LONG`);
       return;
     }
+    // ── FILTRO bias_4h v4.4.66 — bloquear si 4H contradice señal con score >= 65 ──
+    if (scalpDirPreview === 'SHORT' && bias4hScalp2?.bias === 'long' && (bias4hScalp2?.score || 50) >= 65) {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — bias_4h contrario (score:${bias4hScalp2.score})`);
+      return;
+    }
+    if (scalpDirPreview === 'LONG' && bias4hScalp2?.bias === 'short' && (bias4hScalp2?.score || 50) >= 65) {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — bias_4h contrario (score:${bias4hScalp2.score})`);
+      return;
+    }
 
     // BONUS ZONAS DE LIQUIDACIÓN DINÁMICAS
     try {
@@ -2092,7 +2104,7 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl:scalpEffSl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:scalpSizeUsd, leverage:scalpLeverage, source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
     if (process.env.TELEGRAM_CHAT_ID) {
-      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}`;
+      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}\nFuente: ⚡ Scalping`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
     }
     console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
@@ -2398,7 +2410,7 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
 
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'LONG' ? 'LONG' : 'SHORT';
-      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${new Date().toLocaleTimeString('es-PE')}`;
+      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${new Date().toLocaleTimeString('es-PE')}\nFuente: 🧱 Wall`;
       try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
     }
 
@@ -3208,7 +3220,7 @@ async function detectMeanReversion(symbol) {
   console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
 
   if (process.env.TELEGRAM_CHAT_ID) {
-    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${new Date().toLocaleTimeString('es-PE')}`;
+    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${new Date().toLocaleTimeString('es-PE')}\nFuente: 📈 MeanRev`;
     try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
   }
 }
