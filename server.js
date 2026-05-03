@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.68' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.69' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -210,7 +210,7 @@ async function checkSlTpOnTick(symbol, price) {
         const _srcLabelWs = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
         const _srcIconWs = _srcIconsWs[trade.source] || '📊', _srcNameWs = _srcLabelWs[trade.source] || trade.source || '–';
         const _isTrailingWs = closeReason?.includes('trailing');
-        const _razonMapWs = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+        const _razonMapWs = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout 2h', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
         const _razonWs = _razonMapWs[closeReason] || (closeReason || '–').toUpperCase();
         const _dCw = new Date(), _limaCw = `${_dCw.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCw.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
         const _closedEmojiWs = pnl_usd >= 0 ? '✅' : '❌';
@@ -1469,6 +1469,35 @@ async function monitorPaperTrades() {
             console.log(`⏱️ Timeout lateral: ${trade.direction} ${trade.symbol} cerrado a $${currentWsPrice} — ${minutosAbierto.toFixed(0)}min sin movimiento — PnL: $${pnl_usd.toFixed(2)}`);
           }
         }
+      } else if (trade.source === 'scalping') {
+        // ── Timeout 2h scalping v4.4.69 ──
+        const minutosAbierto = (Date.now() - new Date(trade.opened_at).getTime()) / 60000;
+        if (minutosAbierto >= 120) {
+          const currentWsPrice = wsState[trade.symbol]?.lastPrice;
+          if (!currentWsPrice) continue;
+          const entry = parseFloat(trade.entry);
+          const lev = parseFloat(trade.leverage || 10);
+          const pnl_usd = parseFloat((trade.direction === 'LONG'
+            ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * lev
+            : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * lev).toFixed(2));
+          const pnl_pct = parseFloat((trade.direction === 'LONG'
+            ? (currentWsPrice - entry) / entry * lev * 100
+            : (entry - currentWsPrice) / entry * lev * 100).toFixed(2));
+          await supabase.from('paper_trades').update({
+            status: pnl_usd >= 0 ? 'won' : 'lost',
+            close_price: currentWsPrice,
+            close_reason: 'timeout',
+            pnl_usd, pnl_pct,
+            closed_at: new Date().toISOString()
+          }).eq('id', trade.id);
+          circuitBreaker.addPnl(pnl_usd);
+          console.log(`⏱️ Timeout scalping 2h: ${trade.direction} ${trade.symbol} cerrado a $${currentWsPrice} — ${minutosAbierto.toFixed(0)}min — PnL: $${pnl_usd}`);
+          if (process.env.TELEGRAM_CHAT_ID) {
+            const _dCt = new Date(), _limaCt = `${_dCt.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCt.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+            const msgT = `${pnl_usd >= 0 ? '✅' : '❌'} ${trade.direction} ${trade.symbol} — ⚡ Scalping\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentWsPrice).toLocaleString()}\n🎯 Razón: Timeout 2h\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCt}`;
+            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msgT); } catch(e) { console.error('Telegram send error:', e.message); }
+          }
+        }
       }
     }
     if (!openTrades?.length) return;
@@ -1550,7 +1579,7 @@ async function monitorPaperTrades() {
             const _srcLabelM = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
             const _srcIconM = _srcIconsM[trade.source] || '📊', _srcNameM = _srcLabelM[trade.source] || trade.source || '–';
             const _isTrailingM = closeReason?.includes('trailing');
-            const _razonMapM = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+            const _razonMapM = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout 2h', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
             const _razonM = _razonMapM[closeReason] || (closeReason || '–').toUpperCase();
             const _dCm = new Date(), _limaCm = `${_dCm.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCm.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
             const _closedEmojiM = pnl_usd >= 0 ? '✅' : '❌';
@@ -1572,7 +1601,7 @@ app.get('/api/news/latest', async (req, res) => {
     async () => { const r = await axios.get('https://decrypt.co/feed', { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } }); const items = []; const rx = /<item>([\s\S]*?)<\/item>/g; let m; while ((m = rx.exec(r.data)) !== null && items.length < 8) { const it = m[1]; const title = (it.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || it.match(/<title>([^<]+)<\/title>/))?.[1]?.trim() || ''; const url = it.match(/<link>([^<]+)<\/link>/)?.[1]?.trim() || ''; const pub = it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1]?.trim() || ''; if (title) items.push({ title, source: 'Decrypt', published_on: pub ? Math.floor(new Date(pub).getTime()/1000) : Math.floor(Date.now()/1000), url }); } if (!items.length) throw new Error('empty'); return items; }
   ];
   for (const source of sources) {
-    try { const items = await source(); if (items?.length) { console.log(`✅ Noticias: ${items.length} items`); return res.json(items); } } catch(e) { console.log(`⚠️ Fuente noticias falló: ${e.message}`); }
+    try { const items = await source(); if (items?.length) { console.log(`✅ Noticias: ${items.length} items`); return res.json(items); } } catch(_) {}
   }
   res.json([]);
 });
@@ -3317,7 +3346,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.63 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.69 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
