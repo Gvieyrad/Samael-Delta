@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.66' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.67' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -358,7 +358,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const esMadrugadaAbsoluta = horaLima >= 1 && horaLima <= 4;
       if (!esBallenaFuerte || esMadrugadaAbsoluta) {
         console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima${esBallenaFuerte ? ' (madrugada absoluta)' : ' fuera de ventana óptima'}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       console.log(`✅ Whale ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal fuerte (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
@@ -384,12 +384,12 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const priceMove5m = (prices5mWh[prices5mWh.length-1] - prices5mWh[0]) / prices5mWh[0] * 100;
       if (direction === 'SHORT' && priceMove5m > -0.1) {
         console.log(`⏭ Whale SHORT omitido — precio no confirma bajada en 5min (${priceMove5m.toFixed(2)}%) — absorción compradora (${symbol})`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5m.toFixed(2)}%) — posible absorción compradora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5m.toFixed(2)}%) — posible absorción compradora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       if (direction === 'LONG' && priceMove5m < 0.1) {
         console.log(`⏭ Whale LONG omitido — precio no confirma subida en 5min (${priceMove5m.toFixed(2)}%) — absorción vendedora (${symbol})`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5m.toFixed(2)}%) — posible absorción vendedora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5m.toFixed(2)}%) — posible absorción vendedora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
     }
@@ -406,12 +406,12 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
         const blockLongWh  = bias1dWh.bias === 'short' || bias1dWh.score < 42;
         if (direction === 'SHORT' && blockShortWh) {
           console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria alcista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria alcista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
           return;
         }
         if (direction === 'LONG' && blockLongWh) {
           console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria bajista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria bajista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
           return;
         }
       }
@@ -463,8 +463,9 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
-      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}\nFuente: 🐋 Whale`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      const _dW=new Date(), _limaW=`🕐 Apertura: ${_dW.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dW.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+      const msg = `🐋 *Whale Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${whaleConfidence}%\n${reason}\n${_limaW}\nFuente: 🐋 Whale`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
     }
   } catch(e) { console.error('Whale trade error:', e.message); }
 }
@@ -486,7 +487,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
         console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL (umbral: ${(slThreshold*100).toFixed(0)}%)`);
         if (process.env.TELEGRAM_CHAT_ID) {
           const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nAl ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nPrecio: $${parseInt(currentPrice).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}`;
-          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         }
         continue;
       }
@@ -498,7 +499,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} (${(slProgress*100).toFixed(0)}% hacia SL)`);
       if (process.env.TELEGRAM_CHAT_ID) {
         const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
-        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
       }
     }
   } catch(e) { console.error('Kill switch error:', e.message); }
@@ -517,13 +518,13 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       const sweepThreshShort = (metrics.cvdLive < -80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
       if (direction === 'SHORT' && priceMove5mSw > -sweepThreshShort) {
         console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}% vs -${sweepThreshShort}%) — ${symbol}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       const sweepThreshLong = (metrics.cvdLive > 80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
       if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
         console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs ${sweepThreshLong}%) — ${symbol}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
     }
@@ -573,8 +574,9 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
-      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%\n⚡ ${reason}\nFuente: 🌊 Sweep`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {}
+      const _dSw=new Date(), _limaSw=`🕐 Apertura: ${_dSw.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dSw.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+      const msg = `⚡ *Sweep Trade Abierto — ${symbol}*\n${e} ${direction} @ $${parseInt(price).toLocaleString()}\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${sweepConfidence}%\n⚡ ${reason}\n${_limaSw}\nFuente: 🌊 Sweep`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
     }
   } catch(e) { console.error('Sweep trade error:', e.message); }
 }
@@ -1151,7 +1153,7 @@ Responde SOLO JSON sin markdown:
     if(signal.confidence>=parseInt(process.env.ALERT_MIN_CONFIDENCE||'90')&&process.env.TELEGRAM_CHAT_ID&&signal.rr&&parseFloat(signal.rr.replace('1:',''))>=1.5){
       const e=signal.direction==='LONG'?'▲':signal.direction==='SHORT'?'▼':'◆';
       const msg=`${e} ${signal.direction} — ${symbol}\n💰 Entry: $${signal.entry}\n🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}\n🛑 SL: $${signal.sl} | ${signal.rr}\n📊 ${signal.confidence}% — ${signal.action}\n💬 ${signal.reasoning}`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg); } catch(_){}
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg); } catch(e) { console.error("Telegram send error:", e.message); }
     }
     res.json(signal);
   } catch(e) { console.error('Analyze error:',e.message); res.status(500).json({ error:e.message, detail:e.message.includes('api')||e.message.includes('key')?'Verifica ANTHROPIC_API_KEY en Railway Variables':'Error procesando análisis' }); }
@@ -1269,7 +1271,7 @@ Responde SOLO JSON sin markdown:
     const _macroScore = combinedSignal?.macroScore || 0;
     if (_macroScore <= -3) {
       console.log(`🚫 Auto trade bloqueado — Score macro ${_macroScore} ≤ -3 (mercado adverso)`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 Auto trade ${signal.direction} ${symbol} — *BLOQUEADO*\nRazón: Score macro ${_macroScore} ≤ -3 — mercado adverso\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(_) {}
+      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 Auto trade ${signal.direction} ${symbol} — *BLOQUEADO*\nRazón: Score macro ${_macroScore} ≤ -3 — mercado adverso\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
       return;
     }
     const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
@@ -1290,7 +1292,7 @@ Responde SOLO JSON sin markdown:
             const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
             await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'signal_reversal', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', oppTrade.id);
             console.log(`🔄 Reversión de señal: cerrado ${oppTrade.direction} ${symbol} @ $${currentPrice}`);
-            if (process.env.TELEGRAM_CHAT_ID) { const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(_) {} }
+            if (process.env.TELEGRAM_CHAT_ID) { const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); } }
           }
         }
         const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
@@ -1298,7 +1300,7 @@ Responde SOLO JSON sin markdown:
           const mlSnapshot = { confidence: signal.confidence, direction: signal.direction, trend_aligned: trendOk, trend_1d: trend1d, rsi_15m: marketData.rsi15m, cvd_pct: cvd15m.cvdPct, cvd_trend: cvd15m.trend, funding_rate: fundingRate, oi_trend_15m: oiTrend15m.trend, oi_delta_15m: oiTrend15m.deltaPct, bias_15m: bias15m.bias, bias_15m_score: bias15m.score, bias_1h: bias1h.bias, bias_1h_score: bias1h.score, bias_4h: bias4h.bias, bias_4h_score: bias4h.score, bias_1d: bias1d.bias, bias_1d_score: bias1d.score, divergence_count: divergences.length, top_divergence: divergences[0]?.type, top_divergence_prob: divergences[0]?.probability, short_count: combinedSignal.shortCount, long_count: combinedSignal.longCount, fib_level: fib15m?.nearestRetrace?.label, fib_dist: fib15m?.nearestRetrace?.dist, fib_signal: fib15m?.retImpact?.signal, fib_bonus: fib15m?.retImpact?.bonus, whale_count: whaleData?.whaleCount, whale_bias: whaleData?.whaleBias, whale_dominance: whaleData?.dominance, whale_ratio: whaleData?.whaleRatio, deep_imbalance: deepOB?.deepImbalance, bid_clusters: deepOB?.bidClusters?.length, ask_clusters: deepOB?.askClusters?.length, price_vs_poc: ((marketData.price - vrvp.poc) / vrvp.poc * 100).toFixed(3), price: marketData.price, timestamp: new Date().toISOString() };
           await supabase.from('paper_trades').insert({ symbol, direction: signal.direction, entry: signal.entry, tp1: signal.tp1, tp2: signal.tp2, sl: autoEffSl, rr: signal.rr, confidence: signal.confidence, size_usd: autoSizeUsd, leverage: autoLeverage, divergences: divergences.slice(0,5), fibonacci: fib15m, source: 'auto', status: 'open', opened_at: new Date().toISOString(), market_data: mlSnapshot }).select().single();
           console.log(`🤖 Auto paper trade: ${signal.direction} ${symbol} @ $${signal.entry}`);
-          if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R\nFuente: 🤖 Auto`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(_) {} }
+          if (process.env.TELEGRAM_CHAT_ID) { const tradeEmoji = signal.direction === 'LONG' ? '▲' : '▼'; const _dA=new Date(), _limaA=`🕐 Apertura: ${_dA.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dA.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`; const autoMsg = `🤖 *Auto Paper Trade abierto*\n${tradeEmoji} ${signal.direction} ${symbol}\n💰 Entry: $${signal.entry?.toLocaleString()}\n🎯 TP: $${signal.tp1?.toLocaleString()} | 🛑 SL: $${signal.sl?.toLocaleString()}\n📊 ${signal.confidence}% confianza\n📐 ${signal.rr} R:R\n${_limaA}\nFuente: 🤖 Auto`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, autoMsg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); } }
         }
       } catch(paperErr) { console.error('Auto paper trade error:', paperErr.message); }
     }
@@ -1541,7 +1543,7 @@ async function monitorPaperTrades() {
             const _srcIcon = _srcIcons[trade.source] || '📊';
             const _trailingNote = closeReason === 'trailing_tp' ? ' | 🔒 Trailing SL activo' : '';
             const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nFuente: ${_srcIcon} ${trade.source}${_trailingNote}`;
-            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_){}
+            try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(e) { console.error("Telegram send error:", e.message); }
           }
         }
       } catch(_) {}
@@ -2104,8 +2106,9 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     const mlDataScalp = { confidence: scalpProb, direction: scalpDir, mode: 'scalping', price, rsi_3m: rsi3m, cvd_3m: cvd3m.cvdPct, cvd_trend: cvd3m.trend, ob_imbalance: imb, funding_rate: fundingScalp, oi_trend_15m: oiTrend15mScalp?.trend || 'flat', oi_delta_15m: oiTrend15mScalp?.deltaPct || '0', bias_1h: bias1hScalp?.bias || 'neutral', bias_1h_score: bias1hScalp?.score || 50, bias_4h: bias4hScalp?.bias || bias4hScalp2?.bias || 'neutral', bias_4h_score: bias4hScalp?.score || bias4hScalp2?.score || 50, fib_level: fib3m?.nearestRetrace?.label || null, fib_dist: fib3m?.nearestRetrace?.dist || null, fib_signal: fib3m?.retImpact?.signal || null, fib_bonus: fib3m?.retImpact?.bonus || 0, whale_count: whaleDataScalp?.whaleCount || 0, whale_bias: whaleDataScalp?.whaleBias || 'neutral', whale_dominance: whaleDataScalp?.dominance || 'balanced', ws_anomaly: wsM?.anomaly?.reason || null, ws_vol_multiplier: wsM?.volumeMultiplier || 1, ws_cvd_live: wsM?.cvdLive || 0, atr_3m: atr3m.toFixed(1), timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction:scalpDir, entry:price, tp1, tp2:tp1, sl:scalpEffSl, rr:`1:${rrVal.toFixed(1)}`, confidence:scalpProb, size_usd:scalpSizeUsd, leverage:scalpLeverage, source:'scalping', status:'open', opened_at: new Date().toISOString(), market_data: mlDataScalp });
     if (process.env.TELEGRAM_CHAT_ID) {
-      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}\nFuente: ⚡ Scalping`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(_) {}
+      const _dSc=new Date(), _limaSc=`🕐 Apertura: ${_dSc.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dSc.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+      const msg = `⚡ *SCALPING ${scalpDir}* — ${symbol}\n💰 Entry: *$${parseInt(price).toLocaleString()}*\n🎯 TP: $${parseInt(tp1).toLocaleString()} | 🛑 SL: $${parseInt(sl).toLocaleString()}\n📐 R:R 1:${rrVal.toFixed(1)} | ${scalpProb}%${wsM?.anomaly?'\n⚡ WS: '+wsM.anomaly.reason:''}\n${_limaSc}\nFuente: ⚡ Scalping`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode:'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
     }
     console.log(`⚡ Scalp: ${scalpDir} ${symbol} @ $${price} WS:${wsM?.anomaly?.direction||'none'}`);
   } catch(e) {
@@ -2410,8 +2413,9 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
 
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'LONG' ? 'LONG' : 'SHORT';
-      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${new Date().toLocaleTimeString('es-PE')}\nFuente: 🧱 Wall`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+      const _dWl=new Date(), _limaWl=`🕐 Apertura: ${_dWl.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dWl.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+      const msg = `Wall Absorption v2 - ${symbol}\n${e} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp1).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rrVal.toFixed(1)} | ${wallConf}%\nPared ${wallSide}: $${parseInt(wallLevel).toLocaleString()} (${wallUsdStr})\nStrength: ${strength.toFixed(1)}x | Absorcion: ${absorptionPct.toFixed(0)}%\n${_limaWl}\nFuente: 🧱 Wall`;
+      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(e) { console.error("Telegram send error:", e.message); }
     }
 
   } catch(_) { wallOpeningLock[symbol] = false; }
@@ -3220,8 +3224,9 @@ async function detectMeanReversion(symbol) {
   console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
 
   if (process.env.TELEGRAM_CHAT_ID) {
-    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${new Date().toLocaleTimeString('es-PE')}\nFuente: 📈 MeanRev`;
-    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(_) {}
+    const _dMr=new Date(), _limaMr=`🕐 Apertura: ${_dMr.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dMr.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+    const msg = `📈 Mean Reversion - ${symbol}\n${direction} @ $${parseInt(price).toLocaleString()}\nTP: $${parseInt(tp).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}\nRR 1:${rr.toFixed(1)} | ${conf}%\n1H move: ${h1Move.toFixed(2)}% | Vol: ${volMult.toFixed(1)}x median\nExit máx: ${exitMins}min\n${_limaMr}\nFuente: 📈 MeanRev`;
+    try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(e) { console.error("Telegram send error:", e.message); }
   }
 }
 
