@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.67' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.68' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -206,10 +206,18 @@ async function checkSlTpOnTick(symbol, price) {
 
       // Telegram
       if (process.env.TELEGRAM_CHAT_ID) {
-        const emoji = status === 'won' ? '✅' : '❌';
-        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,
-          `${emoji} *Paper Trade Cerrado* (WS tiempo real)\n${trade.direction} ${symbol}\nEntry: $${entry.toLocaleString()} → $${closePrice.toLocaleString()}\nRazón: ${finalReason}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}`,
-          { parse_mode: 'Markdown' }); } catch(_) {}
+        const _srcIconsWs = { auto: '🤖', scalping: '⚡', manual: '👤', sweep: '🌊', wall: '🧱', meanrev: '📊' };
+        const _srcLabelWs = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
+        const _srcIconWs = _srcIconsWs[trade.source] || '📊', _srcNameWs = _srcLabelWs[trade.source] || trade.source || '–';
+        const _isTrailingWs = closeReason?.includes('trailing');
+        const _razonMapWs = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+        const _razonWs = _razonMapWs[closeReason] || (closeReason || '–').toUpperCase();
+        const _dCw = new Date(), _limaCw = `${_dCw.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCw.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+        const _closedEmojiWs = pnl_usd >= 0 ? '✅' : '❌';
+        const msgWs = _isTrailingWs
+          ? `${_closedEmojiWs} ${trade.direction} ${symbol} — ${_srcIconWs} ${_srcNameWs}\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(closePrice).toLocaleString()}\n🔒 Trailing SL\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCw}`
+          : `${_closedEmojiWs} ${trade.direction} ${symbol} — ${_srcIconWs} ${_srcNameWs}\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(closePrice).toLocaleString()}\n🎯 Razón: ${_razonWs}\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCw}`;
+        try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msgWs); } catch(e) { console.error('Telegram send error:', e.message); }
       }
     }
   } catch(e) { _slTpLocks[symbol] = false; }
@@ -1538,11 +1546,17 @@ async function monitorPaperTrades() {
           }
           console.log(`📊 Paper trade cerrado: ${trade.direction} ${trade.symbol} → ${closeReason} PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID && process.env.TELEGRAM_TOKEN) {
-            const emoji = closeReason === 'tp2' ? '🎯' : closeReason === 'tp1' ? '✅' : '❌';
-            const _srcIcons = { auto: '🤖', scalping: '⚡', manual: '👤', sweep: '🌊', wall: '🧱', meanrev: '📈' };
-            const _srcIcon = _srcIcons[trade.source] || '📊';
-            const _trailingNote = closeReason === 'trailing_tp' ? ' | 🔒 Trailing SL activo' : '';
-            const msg = `${emoji} Paper Trade Cerrado\n${trade.direction} ${trade.symbol}\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nRazón: ${closeReason.toUpperCase()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nFuente: ${_srcIcon} ${trade.source}${_trailingNote}`;
+            const _srcIconsM = { auto: '🤖', scalping: '⚡', manual: '👤', sweep: '🌊', wall: '🧱', meanrev: '📊' };
+            const _srcLabelM = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
+            const _srcIconM = _srcIconsM[trade.source] || '📊', _srcNameM = _srcLabelM[trade.source] || trade.source || '–';
+            const _isTrailingM = closeReason?.includes('trailing');
+            const _razonMapM = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+            const _razonM = _razonMapM[closeReason] || (closeReason || '–').toUpperCase();
+            const _dCm = new Date(), _limaCm = `${_dCm.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCm.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
+            const _closedEmojiM = pnl_usd >= 0 ? '✅' : '❌';
+            const msg = _isTrailingM
+              ? `${_closedEmojiM} ${trade.direction} ${trade.symbol} — ${_srcIconM} ${_srcNameM}\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\n🔒 Trailing SL\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCm}`
+              : `${_closedEmojiM} ${trade.direction} ${trade.symbol} — ${_srcIconM} ${_srcNameM}\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\n🎯 Razón: ${_razonM}\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCm}`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(e) { console.error("Telegram send error:", e.message); }
           }
         }
