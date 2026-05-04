@@ -520,21 +520,7 @@ Esta hora tiene menor liquidez.`);
     if (!ok) return;
   }
 
-  // ── Filtro 3: Confirmación siempre ──
-  const entry = aiSignal.entry ? `$${parseFloat(aiSignal.entry).toLocaleString()}` : 'precio actual';
-  const sl = aiSignal.sl ? `$${parseFloat(aiSignal.sl).toLocaleString()}` : 'calculado';
-  const tp = aiSignal.tp1 ? `$${parseFloat(aiSignal.tp1).toLocaleString()}` : 'calculado';
-  const ok = confirm(`¿Confirmas abrir ${direction}?
-
-📍 Entry: ${entry}
-🎯 TP: ${tp}
-🛑 SL: ${sl}
-📊 Confianza: ${conf}%
-
-Presiona OK para confirmar.`);
-  if (!ok) return;
-
-  await openPaperTrade(direction);
+  await openPaperTrade(direction); // el dialog de confirmación está dentro de openPaperTrade
 }
 
 function checkAutoAI() {
@@ -972,7 +958,7 @@ async function runAI(autoMode=false){
         if (_autoRr >= 1.5) {
           fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
           showToast(`🚨 SEÑAL CRÍTICA ${d.confidence}% — abriendo paper trade automático`, d.direction==='LONG'?'#00d68f':'#ff4d6d');
-          setTimeout(() => openPaperTrade(d.direction), 1500);
+          setTimeout(() => openPaperTrade(d.direction, true), 1500); // autoMode — no requiere confirmación
         } else {
           fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
           showToast(`⚠️ Señal ${d.confidence}% — alerta enviada, R:R insuficiente (${_autoRr.toFixed(1)})`, '#f59e0b');
@@ -1117,8 +1103,17 @@ async function refreshPaper(){
   }catch(e){console.error('Paper trading error:',e);}
 }
 
-async function openPaperTrade(direction){
+async function openPaperTrade(direction, silent=false){
   if(!mkt.price)return;
+  if(!silent){
+    const _cEnt=parseFloat(document.getElementById('c-ent')?.value)||mkt.price;
+    const _cTp=parseFloat(document.getElementById('c-tp')?.value)||(direction==='LONG'?mkt.price*1.025:mkt.price*0.975);
+    const _cSl=parseFloat(document.getElementById('c-sl')?.value)||(direction==='LONG'?mkt.price*0.988:mkt.price*1.012);
+    const _dir=direction==='LONG'?'▲ LONG':'▼ SHORT';
+    const _col=direction==='LONG'?'#00d68f':'#ff4d6d';
+    const confirmed=await showTradeConfirm(`<span style="color:${_col};font-weight:700;font-size:17px">${_dir} ${pair}</span><br><br>📍 Entry: <strong>$${parseInt(_cEnt).toLocaleString()}</strong><br>🎯 TP: $${parseInt(_cTp).toLocaleString()} &nbsp; 🛑 SL: $${parseInt(_cSl).toLocaleString()}`);
+    if(!confirmed)return;
+  }
   const cs=mkt.combinedSignal;const entry=mkt.price;
   const capital=parseFloat(document.getElementById('c-cap').value)||1000;
   const leverage=parseFloat(document.getElementById('c-lev').value)||10;
@@ -1189,6 +1184,22 @@ async function closePaperTrade(id,reason,tradeSymbol){
       showToast(`${closeLabel} — PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`, won?'#00d68f':'#ff4d6d');
     }
   }catch(e){}
+}
+
+function showTradeConfirm(msg) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#1a1f2e;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)';
+    box.innerHTML = `<div style="font-size:15px;color:#e2e8f0;margin-bottom:22px;line-height:1.6">${msg}</div><div style="display:flex;gap:10px"><button id="tc-cancel" style="flex:1;padding:11px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#9ca3af;cursor:pointer;font-size:13px;font-weight:600">Cancelar</button><button id="tc-ok" style="flex:1;padding:11px;background:rgba(0,214,143,.15);border:1px solid rgba(0,214,143,.45);border-radius:8px;color:#00d68f;cursor:pointer;font-size:13px;font-weight:700">Confirmar</button></div>`;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const done = r => { overlay.remove(); resolve(r); };
+    box.querySelector('#tc-ok').onclick = () => done(true);
+    box.querySelector('#tc-cancel').onclick = () => done(false);
+    overlay.onclick = e => { if (e.target === overlay) done(false); };
+  });
 }
 
 function showToast(msg,col='#f59e0b'){
