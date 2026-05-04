@@ -1385,7 +1385,7 @@ async function checkScalpingStatus(){
 }
 
 async function fetchAllPrices(){
-  try{const p=await fetch(`${API}/api/prices`).then(r=>r.json());if(p&&!p.error)allPrices=p;}catch(_){}
+  try{const p=await fetch(`${API}/api/prices`).then(r=>r.json());if(p&&!p.error){allPrices=p;renderPaper();}}catch(_){}
 }
 
 async function refreshNews(){
