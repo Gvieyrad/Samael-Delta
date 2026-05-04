@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.71' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.72' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -141,6 +141,7 @@ function initWsState(symbol) {
   wsState[symbol] = {
     trades: [], volumes: [], avgVolume1m: 0, lastOI: 0,
     oiHistory: [], lastPrice: 0, lastUpdate: 0, anomaly: null, liqZones: [],
+    trailHigh: 0, trailLow: Infinity, // watermarks entre debounce windows
   };
 }
 
@@ -148,7 +149,7 @@ function initWsState(symbol) {
 // Se ejecuta en cada tick del WebSocket — cierra trades exactamente al SL/TP
 const _slTpLocks = {}; // evitar doble cierre
 const _trailingLastUpdate = {}; // throttle trailing SL writes — 30s por trade
-async function checkSlTpOnTick(symbol, price) {
+async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = price) {
   if (_slTpLocks[symbol]) return;
   try {
     const { data: openTrades } = await supabase
@@ -164,15 +165,16 @@ async function checkSlTpOnTick(symbol, price) {
       const size  = parseFloat(trade.size_usd);
       const isLong = trade.direction === 'LONG';
 
-      // ── Trailing stop en tiempo real (WS tick) — actualiza SL con throttle 30s ──
+      // ── Trailing stop — usa el high/low del ventana para capturar picos ──
       if (!_trailingLastUpdate[trade.id] || Date.now() - _trailingLastUpdate[trade.id] > 30000) {
+        const trailExtreme = isLong ? trailHigh : trailLow; // pico favorable del ventana
         const slDistTr = Math.abs(entry - sl);
-        const priceDiffPctTr = isLong ? (price - entry) / entry * 100 : (entry - price) / entry * 100;
+        const priceDiffPctTr = isLong ? (trailExtreme - entry) / entry * 100 : (entry - trailExtreme) / entry * 100;
         let newSlTr = sl;
         if (priceDiffPctTr >= 1.5) {
-          newSlTr = isLong ? Math.max(sl, price - slDistTr * 0.5) : Math.min(sl, price + slDistTr * 0.5);
+          newSlTr = isLong ? Math.max(sl, trailExtreme - slDistTr * 0.5) : Math.min(sl, trailExtreme + slDistTr * 0.5);
         } else if (priceDiffPctTr >= 1.0) {
-          newSlTr = isLong ? Math.max(sl, entry + (price - entry) * 0.5) : Math.min(sl, entry - (entry - price) * 0.5);
+          newSlTr = isLong ? Math.max(sl, entry + (trailExtreme - entry) * 0.5) : Math.min(sl, entry - (entry - trailExtreme) * 0.5);
         } else if (priceDiffPctTr >= 0.5) {
           newSlTr = isLong ? Math.max(sl, entry) : Math.min(sl, entry);
         }
@@ -181,7 +183,7 @@ async function checkSlTpOnTick(symbol, price) {
           await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
           sl = newSlRounded;
           _trailingLastUpdate[trade.id] = Date.now();
-          console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(1)} (precio ${price.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
+          console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(1)} (extreme ${trailExtreme.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
         }
       }
 
@@ -191,12 +193,13 @@ async function checkSlTpOnTick(symbol, price) {
       let closeReason = null;
       let closePrice  = price;
 
+      // Usar watermarks para detectar si SL/TP fue tocado dentro del ventana de debounce
       if (isLong) {
-        if (price <= sl)  { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
-        else if (price >= tp1) { closeReason = 'tp1'; closePrice = tp1; }
+        if (trailLow <= sl)   { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
+        else if (trailHigh >= tp1) { closeReason = 'tp1'; closePrice = tp1; }
       } else {
-        if (price >= sl)  { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
-        else if (price <= tp1) { closeReason = 'tp1'; closePrice = tp1; }
+        if (trailHigh >= sl)  { closeReason = slBeyondEntry ? 'trailing_tp' : 'sl'; closePrice = sl; }
+        else if (trailLow <= tp1) { closeReason = 'tp1'; closePrice = tp1; }
       }
 
       if (!closeReason) continue;
@@ -264,12 +267,20 @@ function connectWebSocket(symbol) {
       wsState[symbol].lastUpdate = now;
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
-      // ── Check SL/TP en tiempo real v4.4.51 ──
+      // ── Watermarks de high/low para trailing y SL preciso ──
+      if (price > wsState[symbol].trailHigh) wsState[symbol].trailHigh = price;
+      if (price < wsState[symbol].trailLow)  wsState[symbol].trailLow  = price;
+      // ── Check SL/TP en tiempo real — debounce 200ms usando lastPrice ──
       if (!wsState[symbol]._slTpTimer) {
         wsState[symbol]._slTpTimer = setTimeout(() => {
           wsState[symbol]._slTpTimer = null;
-          checkSlTpOnTick(symbol, price);
-        }, 200); // 200ms debounce — evita llamadas excesivas
+          const _p    = wsState[symbol].lastPrice;
+          const _high = wsState[symbol].trailHigh || _p;
+          const _low  = wsState[symbol].trailLow  || _p;
+          wsState[symbol].trailHigh = _p; // reset tras cada check
+          wsState[symbol].trailLow  = _p;
+          checkSlTpOnTick(symbol, _p, _high, _low);
+        }, 200);
       }
       if (!wsState[symbol]._evalTimer) {
         wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol); }, 500);
@@ -3390,7 +3401,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.71 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.72 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
