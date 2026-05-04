@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.69' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.70' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -147,6 +147,7 @@ function initWsState(symbol) {
 // ── CHECK SL/TP EN TIEMPO REAL v4.4.51 ──
 // Se ejecuta en cada tick del WebSocket — cierra trades exactamente al SL/TP
 const _slTpLocks = {}; // evitar doble cierre
+const _trailingLastUpdate = {}; // throttle trailing SL writes — 30s por trade
 async function checkSlTpOnTick(symbol, price) {
   if (_slTpLocks[symbol]) return;
   try {
@@ -157,11 +158,33 @@ async function checkSlTpOnTick(symbol, price) {
 
     for (const trade of openTrades) {
       const entry = parseFloat(trade.entry);
-      const sl    = parseFloat(trade.sl);
+      let sl      = parseFloat(trade.sl);
       const tp1   = parseFloat(trade.tp1);
       const lev   = parseFloat(trade.leverage || 10);
       const size  = parseFloat(trade.size_usd);
       const isLong = trade.direction === 'LONG';
+
+      // ── Trailing stop en tiempo real (WS tick) — actualiza SL con throttle 30s ──
+      if (!_trailingLastUpdate[trade.id] || Date.now() - _trailingLastUpdate[trade.id] > 30000) {
+        const slDistTr = Math.abs(entry - sl);
+        const priceDiffPctTr = isLong ? (price - entry) / entry * 100 : (entry - price) / entry * 100;
+        let newSlTr = sl;
+        if (priceDiffPctTr >= 1.5) {
+          newSlTr = isLong ? Math.max(sl, price - slDistTr * 0.5) : Math.min(sl, price + slDistTr * 0.5);
+        } else if (priceDiffPctTr >= 1.0) {
+          newSlTr = isLong ? Math.max(sl, entry + (price - entry) * 0.5) : Math.min(sl, entry - (entry - price) * 0.5);
+        } else if (priceDiffPctTr >= 0.5) {
+          newSlTr = isLong ? Math.max(sl, entry) : Math.min(sl, entry);
+        }
+        if ((isLong && newSlTr > sl) || (!isLong && newSlTr < sl)) {
+          const newSlRounded = parseFloat(newSlTr.toFixed(1));
+          await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
+          sl = newSlRounded;
+          _trailingLastUpdate[trade.id] = Date.now();
+          console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(1)} (precio ${price.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
+        }
+      }
+
       // SL moved past entry by trailing stop → treat as profit lock, not loss
       const slBeyondEntry = isLong ? sl >= entry : sl <= entry;
 
@@ -1373,7 +1396,9 @@ app.get('/api/alert/status', (req, res) => {
 
 app.post('/api/paper/open', async (req, res) => {
   try {
+    const _openIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip;
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
+    console.log(`📡 POST /api/paper/open — IP: ${_openIp} — ${direction || '?'} ${symbol || '?'} src=${source || 'manual'}`);
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
     // ── Filtro confidence mínima 75% para trades manuales v4.4.49 ──
@@ -1470,7 +1495,7 @@ async function monitorPaperTrades() {
           }
         }
       } else if (trade.source === 'scalping') {
-        // ── Timeout 2h scalping v4.4.69 ──
+        // ── Timeout 2h scalping ──
         const minutosAbierto = (Date.now() - new Date(trade.opened_at).getTime()) / 60000;
         if (minutosAbierto >= 120) {
           const currentWsPrice = wsState[trade.symbol]?.lastPrice;
@@ -1496,6 +1521,25 @@ async function monitorPaperTrades() {
             const _dCt = new Date(), _limaCt = `${_dCt.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCt.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
             const msgT = `${pnl_usd >= 0 ? '✅' : '❌'} ${trade.direction} ${trade.symbol} — ⚡ Scalping\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentWsPrice).toLocaleString()}\n🎯 Razón: Timeout 2h\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCt}`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msgT); } catch(e) { console.error('Telegram send error:', e.message); }
+          }
+        }
+      } else {
+        // ── Timeout 6h para whale/wall/sweep/meanrev ──
+        const minAbierto6h = (Date.now() - new Date(trade.opened_at).getTime()) / 60000;
+        if (minAbierto6h >= 360) {
+          const wsP6h = wsState[trade.symbol]?.lastPrice;
+          if (wsP6h) {
+            const e6h = parseFloat(trade.entry), lev6h = parseFloat(trade.leverage || 5);
+            const pDiff6h = trade.direction === 'LONG' ? (wsP6h - e6h) / e6h : (e6h - wsP6h) / e6h;
+            const pnl6h = parseFloat((pDiff6h * parseFloat(trade.size_usd) * lev6h).toFixed(2));
+            const pnlPct6h = parseFloat((pDiff6h * lev6h * 100).toFixed(2));
+            await supabase.from('paper_trades').update({
+              status: pnl6h >= 0 ? 'won' : 'lost', close_price: wsP6h,
+              close_reason: 'timeout', pnl_usd: pnl6h, pnl_pct: pnlPct6h,
+              closed_at: new Date().toISOString()
+            }).eq('id', trade.id);
+            circuitBreaker.addPnl(pnl6h);
+            console.log(`⏱️ Timeout 6h (${trade.source}): ${trade.direction} ${trade.symbol} a $${wsP6h} — ${minAbierto6h.toFixed(0)}min — PnL: $${pnl6h}`);
           }
         }
       }
@@ -3346,7 +3390,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.69 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.70 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
