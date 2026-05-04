@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.72' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.73' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -261,8 +261,14 @@ function connectWebSocket(symbol) {
   ws.on('message', (data) => {
     try {
       const t = JSON.parse(data);
+      if (!t.p) return; // ignorar pings/confirmaciones sin precio
       const price = parseFloat(t.p), qty = parseFloat(t.q), usdVal = price * qty;
+      if (!price || isNaN(price)) return; // ignorar precios inválidos
       const isBuy = !t.m, now = Date.now();
+      if (!wsState[symbol]._firstMsg) {
+        console.log(`📡 WS primer msg ${symbol}: price=${price} type=${t.e||'?'}`);
+        wsState[symbol]._firstMsg = true;
+      }
       wsState[symbol].lastPrice = price;
       wsState[symbol].lastUpdate = now;
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
@@ -285,7 +291,7 @@ function connectWebSocket(symbol) {
       if (!wsState[symbol]._evalTimer) {
         wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol); }, 500);
       }
-    } catch(e) {}
+    } catch(e) { console.error(`❌ WS msg error ${symbol}:`, e.message); }
   });
   ws.on('close', () => {
     console.log(`⚠️ WS desconectado: ${symbol} — reconectando en 5s`);
@@ -1386,13 +1392,51 @@ function startAlertJob() {
   }, 5 * 60 * 1000);
 }
 
-app.get('/api/prices', (req, res) => {
-  res.json({
-    BTCUSDT: wsState['BTCUSDT']?.lastPrice || 0,
-    ETHUSDT: wsState['ETHUSDT']?.lastPrice || 0,
-    SOLUSDT: wsState['SOLUSDT']?.lastPrice || 0,
-    XAUUSDT: wsState['XAUUSDT']?.lastPrice || 0,
-  });
+// ── Caché REST para fallback cuando WS no tiene precio ──
+const _priceCache = {};
+async function _fetchRestPrice(symbol) {
+  try {
+    const r = await axios.get(`${BINANCE}/fapi/v1/ticker/price?symbol=${symbol}`, { timeout: 3000 });
+    const p = parseFloat(r.data.price);
+    if (p && !isNaN(p)) {
+      _priceCache[symbol] = { price: p, ts: Date.now() };
+      if (wsState[symbol]) { wsState[symbol].lastPrice = p; wsState[symbol].lastUpdate = Date.now(); }
+      console.log(`📊 REST fallback precio ${symbol}: $${p}`);
+    }
+    return p;
+  } catch(_) { return _priceCache[symbol]?.price || 0; }
+}
+
+app.get('/api/prices', async (req, res) => {
+  const syms = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+  const now = Date.now();
+  const result = { XAUUSDT: wsState['XAUUSDT']?.lastPrice || 0 };
+  await Promise.all(syms.map(async sym => {
+    const st = wsState[sym];
+    const fresh = st?.lastPrice && !isNaN(st.lastPrice) && (now - (st?.lastUpdate || 0)) < 30000;
+    if (fresh) { result[sym] = st.lastPrice; return; }
+    // WS sin precio o stale — intentar REST
+    const cached = _priceCache[sym];
+    if (cached && now - cached.ts < 10000) { result[sym] = cached.price; return; }
+    result[sym] = await _fetchRestPrice(sym);
+  }));
+  res.json(result);
+});
+
+app.get('/api/ws-debug', (req, res) => {
+  const now = Date.now();
+  const debug = {};
+  for (const sym of ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']) {
+    const st = wsState[sym];
+    debug[sym] = {
+      lastPrice: st?.lastPrice || 0,
+      lastUpdate: st?.lastUpdate ? Math.round((now - st.lastUpdate) / 1000) + 's ago' : 'never',
+      firstMsg: st?._firstMsg || false,
+      tradeCount: st?.trades?.length || 0,
+      connected: !!wsConnections[sym],
+    };
+  }
+  res.json(debug);
 });
 
 app.post('/api/alert/trigger', async (req, res) => {
@@ -3401,7 +3445,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.72 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.73 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO temporalmente
