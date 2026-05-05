@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.75' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.76' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -3469,13 +3469,12 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.73 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.76 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
-  // ── Wall Absorption v2 — DESACTIVADO temporalmente
-  // Wall detector no predice dirección (N=245, WR 33%) — datos confirman sin edge
-  // connectDepthWebSocket('BTCUSDT');
-  // connectDepthWebSocket('ETHUSDT');
-  // console.log('🧱 Wall Absorption v2 iniciado — streaming depth20 100ms');
-  console.log('🧱 Wall Absorption v2 DESACTIVADO — sin edge estadístico confirmado');
+  // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
+  // N=89 trades, WR 33.7%, PnL -$108 — sin edge estadístico, peor source del sistema
+  // connectDepthWebSocket('BTCUSDT');  // no descomentar
+  // connectDepthWebSocket('ETHUSDT');  // no descomentar
+  console.log('🧱 Wall Absorption v2 DESACTIVADO permanentemente — WR 33.7% N=89');
 });
