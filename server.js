@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.73' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.74' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2077,15 +2077,17 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       if (wsM.anomaly.direction === 'LONG') longScore += 20;
       if (wsM.anomaly.direction === 'SHORT') shortScore += 20;
     }
-    let bias1hScalp = null, bias4hScalp2 = null;
+    let bias1hScalp = null, bias4hScalp2 = null, bias1dScalp = null;
     try {
-      const [k1hSc, k4hSc, oi1hSc, oi4hSc] = await Promise.all([
+      const [k1hSc, k4hSc, k1dSc, oi1hSc, oi4hSc] = await Promise.all([
         axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
         axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
         fetchOIHistory(symbol,'1h',5), fetchOIHistory(symbol,'4h',5),
       ]);
       bias1hScalp = calcBias(k1hSc.data, oi1hSc, fundingRate);
       bias4hScalp2 = calcBias(k4hSc.data, oi4hSc, fundingRate);
+      bias1dScalp = calcBias(k1dSc.data, null, fundingRate);
     } catch(_) {}
     const bias1hScore = bias1hScalp?.score || 50, bias4hScore = bias4hScalp2?.score || 50;
     const scalpDirPreview = longScore > shortScore ? 'LONG' : 'SHORT';
@@ -2140,6 +2142,21 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
     }
     if (scalpDirPreview === 'LONG' && bias4hScalp2?.bias === 'short' && (bias4hScalp2?.score || 50) >= 65) {
       console.log(`⛔ Scalp LONG ${symbol} bloqueado — bias_4h contrario (score:${bias4hScalp2.score})`);
+      return;
+    }
+    // ── FILTRO bias_4h punto ciego v4.4.74 — 4H neutral pero 1D contradice señal ──
+    if (bias4hScalp2?.bias === 'neutral' && scalpDirPreview === 'SHORT' && bias1dScalp?.bias === 'long') {
+      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 4H neutral en macro 1D contrario (1D:long)`);
+      return;
+    }
+    if (bias4hScalp2?.bias === 'neutral' && scalpDirPreview === 'LONG' && bias1dScalp?.bias === 'short') {
+      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 4H neutral en macro 1D contrario (1D:short)`);
+      return;
+    }
+    // ── FILTRO fib_level v4.4.74 — bloquear entrada sin soporte Fibonacci válido ──
+    const fibLabel = fib3m?.nearestRetrace?.label || null;
+    if (!fibLabel || fibLabel === '0%') {
+      console.log(`⛔ Scalp ${scalpDirPreview} ${symbol} bloqueado — sin nivel Fibonacci válido (${fibLabel})`);
       return;
     }
 
