@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.74' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.75' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1232,6 +1232,14 @@ function clearSignalHistory(symbol) { signalHistory[symbol] = []; }
 const analysisInProgress = {};
 async function runAutoAnalysis(symbol = 'BTCUSDT', force = false) {
   if (analysisInProgress[symbol] && !force) { console.log(`⏭ Análisis ${symbol} ya en curso — omitiendo`); return; }
+  // ── Filtro horario auto v4.4.75 — bloquear madrugada/noche Lima sin tapar NY ──
+  if (!force) {
+    const _horaLimaAuto = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+    if ([0, 1, 2, 22, 23].includes(_horaLimaAuto)) {
+      console.log(`💤 Auto análisis bloqueado — hora ${_horaLimaAuto}h Lima`);
+      return;
+    }
+  }
   analysisInProgress[symbol] = true;
   try {
     await new Promise(r => setTimeout(r, 1000));
@@ -2219,9 +2227,8 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
         return;
       }
       if (scalpDir === 'LONG' && parseFloat(oi15mForFilter.deltaPct) > 0.2) {
-        console.log(`⛔ Scalp LONG bloqueado — OI rising ${oi15mForFilter.deltaPct}% con precio bajando (nuevos shorts) (${symbol})`);
-        // Solo bloquear LONG si OI sube Y precio baja (short buildup)
-        // No bloquear si OI sube Y precio sube (long buildup = señal válida)
+        console.log(`⛔ Scalp LONG bloqueado — OI rising ${oi15mForFilter.deltaPct}% (nuevos shorts entrando) (${symbol})`);
+        return;
       }
     }
     const highs3m = k3m.data.slice(-20).map(k=>parseFloat(k[2])), lows3m = k3m.data.slice(-20).map(k=>parseFloat(k[3]));
