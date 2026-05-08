@@ -127,7 +127,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.76' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.77' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -2034,6 +2034,11 @@ const solLossTracker = createLossTracker('SOL');
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   if (scalpingInProgress[symbol]) return;
+  // ── v4.4.77: BTC sin edge estadístico — deshabilitado ──
+  if (symbol === 'BTCUSDT') {
+    console.log(`⛔ Scalping BTC deshabilitado — sin edge estadístico`);
+    return;
+  }
   // ── Circuit Breaker diario ──
   if (circuitBreaker.isActive()) return;
   // ── Consecutive loss por símbolo ──
@@ -2152,13 +2157,13 @@ async function runScalpingAnalysis(symbol = 'BTCUSDT') {
       console.log(`⛔ Scalp LONG ${symbol} bloqueado — bias_4h contrario (score:${bias4hScalp2.score})`);
       return;
     }
-    // ── FILTRO bias_4h punto ciego v4.4.74 — 4H neutral pero 1D contradice señal ──
-    if (bias4hScalp2?.bias === 'neutral' && scalpDirPreview === 'SHORT' && bias1dScalp?.bias === 'long') {
-      console.log(`⛔ Scalp SHORT ${symbol} bloqueado — 4H neutral en macro 1D contrario (1D:long)`);
+    // ── FILTRO bias_1d v4.4.77 — bloquear si tendencia diaria contradice la señal ──
+    if (scalpDirPreview === 'SHORT' && bias1dScalp?.bias === 'long') {
+      console.log(`⛔ Scalp bloqueado — contra tendencia diaria (1D:long, señal:SHORT, ${symbol})`);
       return;
     }
-    if (bias4hScalp2?.bias === 'neutral' && scalpDirPreview === 'LONG' && bias1dScalp?.bias === 'short') {
-      console.log(`⛔ Scalp LONG ${symbol} bloqueado — 4H neutral en macro 1D contrario (1D:short)`);
+    if (scalpDirPreview === 'LONG' && bias1dScalp?.bias === 'short') {
+      console.log(`⛔ Scalp bloqueado — contra tendencia diaria (1D:short, señal:LONG, ${symbol})`);
       return;
     }
     // ── FILTRO fib_level v4.4.74 — bloquear entrada sin soporte Fibonacci válido ──
