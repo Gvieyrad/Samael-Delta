@@ -169,16 +169,14 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
       // ── Trailing stop — usa el high/low del ventana para capturar picos ──
       if (!_trailingLastUpdate[trade.id] || Date.now() - _trailingLastUpdate[trade.id] > 5000) {
         const trailExtreme = isLong ? trailHigh : trailLow; // pico favorable del ventana
-        const slDistTr = Math.max(Math.abs(entry - sl), entry * 0.005);
         const priceDiffPctTr = isLong ? (trailExtreme - entry) / entry * 100 : (entry - trailExtreme) / entry * 100;
         let newSlTr = sl;
-        if (priceDiffPctTr >= 1.5) {
-          newSlTr = isLong ? Math.max(sl, trailExtreme - slDistTr * 0.5) : Math.min(sl, trailExtreme + slDistTr * 0.5);
-        } else if (priceDiffPctTr >= 1.0) {
-          newSlTr = isLong ? Math.max(sl, entry + (trailExtreme - entry) * 0.5) : Math.min(sl, entry - (entry - trailExtreme) * 0.5);
-        } else if (priceDiffPctTr >= 0.5) {
+        if (priceDiffPctTr >= 0.5) {
           const beTarget = isLong ? entry * 1.001 : entry * 0.999;
-          newSlTr = isLong ? Math.max(sl, beTarget) : Math.min(sl, beTarget);
+          const trailDistPct = Math.max(0.0025, 0.005 - priceDiffPctTr * 0.001);
+          const candidate = isLong ? trailExtreme * (1 - trailDistPct) : trailExtreme * (1 + trailDistPct);
+          const slFloor = isLong ? Math.max(beTarget, candidate) : Math.min(beTarget, candidate);
+          newSlTr = isLong ? Math.max(sl, slFloor) : Math.min(sl, slFloor);
         }
         if ((isLong && newSlTr > sl) || (!isLong && newSlTr < sl)) {
           const newSlRounded = parseFloat(newSlTr.toFixed(1));
@@ -1631,16 +1629,13 @@ async function monitorPaperTrades() {
         if (wsState[trade.symbol]) { wsState[trade.symbol].pollingHigh = currentPrice; wsState[trade.symbol].pollingLow = currentPrice; }
         const trailExtremePoll = isLong ? pollHigh : pollLow;
         const priceDiffPct = isLong ? (trailExtremePoll - entryPrice) / entryPrice * 100 : (entryPrice - trailExtremePoll) / entryPrice * 100;
-        const slDistance = Math.max(Math.abs(entryPrice - sl), entryPrice * 0.005);
         let newSl = sl;
-        if (priceDiffPct >= 1.5) {
-          const trailDistance = slDistance * 0.5;
-          newSl = isLong ? Math.max(sl, trailExtremePoll - trailDistance) : Math.min(sl, trailExtremePoll + trailDistance);
-        } else if (priceDiffPct >= 1.0) {
-          newSl = isLong ? Math.max(sl, entryPrice + (trailExtremePoll - entryPrice) * 0.5) : Math.min(sl, entryPrice - (entryPrice - trailExtremePoll) * 0.5);
-        } else if (priceDiffPct >= 0.5) {
+        if (priceDiffPct >= 0.5) {
           const beTarget = isLong ? entryPrice * 1.001 : entryPrice * 0.999;
-          newSl = isLong ? Math.max(sl, beTarget) : Math.min(sl, beTarget);
+          const trailDistPct = Math.max(0.0025, 0.005 - priceDiffPct * 0.001);
+          const candidate = isLong ? trailExtremePoll * (1 - trailDistPct) : trailExtremePoll * (1 + trailDistPct);
+          const slFloor = isLong ? Math.max(beTarget, candidate) : Math.min(beTarget, candidate);
+          newSl = isLong ? Math.max(sl, slFloor) : Math.min(sl, slFloor);
         }
         if ((isLong && newSl > sl) || (!isLong && newSl < sl)) {
           const newSlRounded = parseFloat(newSl.toFixed(1));
