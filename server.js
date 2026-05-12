@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.83' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.84' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1186,66 +1186,33 @@ app.get('/api/market/:symbol', async (req, res) => {
 });
 
 app.post('/api/analyze', async (req, res) => {
-  try {
-    const { marketData:d, symbol } = req.body;
-    const now=Date.now();
-    if(analyzeCache[symbol]&&now-analyzeCache[symbol].ts<60000) return res.json(analyzeCache[symbol].data);
-    const strongDivs2 = (d.divergences||[]).filter(dv => dv.probability >= 90);
-    const _shortCount = (d.divergences||[]).filter(dv => dv.direction === 'SHORT' && dv.probability >= 90).length;
-    const _longCount  = (d.divergences||[]).filter(dv => dv.direction === 'LONG'  && dv.probability >= 90).length;
-    const _domCount = Math.max(_shortCount, _longCount), _oppCount = Math.min(_shortCount, _longCount);
-    const _hasMajority = _domCount >= 2 && _domCount > _oppCount * 1.5, _hasAny = _domCount >= 1 && _oppCount === 0;
-    if (!_hasMajority && !_hasAny && d.combinedSignal?.direction === 'ESPERAR') {
-      return res.json({ direction:'ESPERAR', confidence:30, action:'NO ENTRAR', reasoning:'Señales divididas — sin ventaja clara en ninguna dirección.', entry:d.price, tp1:d.price, tp2:d.price, sl:d.price, rr:'1:0' });
-    }
-    const divSummary = strongDivs2.length ? strongDivs2.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') : (d.divergences||[]).slice(0,2).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') || 'Ninguna';
-    const b=d.bias;
-    const wsM = getWsMetrics(symbol);
-    const wsNote = wsM && Math.abs(wsM.cvdLive) > 20 ? `\nWS TIEMPO REAL: CVD=${wsM.cvdLive.toFixed(1)}% vol=${wsM.volumeMultiplier.toFixed(1)}x ballenas=${wsM.whaleCount}` : '';
-    const prompt=`Eres un trader experto en futuros perpetuos de criptomonedas. Analiza y da señal precisa.
-
-MERCADO: ${symbol} — $${d.price} (${d.change24h>0?'+':''}${d.change24h?.toFixed(2)}%)
-RSI 15m: ${d.rsi15m} ${d.rsiOverbought?'⚠ SOBRECOMPRA':d.rsiOversold?'⚠ SOBREVENTA':''}
-CVD 15m: delta5=${d.cvd15m?.delta5?.toFixed(0)}, tendencia=${d.cvd15m?.trend}, cvdPct=${d.cvd15m?.cvdPct}%
-OI: ${d.openInterest?.toFixed(0)} | Funding: ${(d.fundingRate*100)?.toFixed(4)}%
-VRVP: POC=$${d.vrvp?.poc} VAH=$${d.vrvp?.vah} VAL=$${d.vrvp?.val}
-
-SESGO MULTI-TF:
-15m: ${b?.tf15m?.bias}(${b?.tf15m?.score}) RSI=${b?.tf15m?.rsi} OI=${b?.tf15m?.oiTrend}(${b?.tf15m?.oiDeltaPct}%) FR=${(b?.tf15m?.fundingRate*100)?.toFixed(4)}%
-1H:  ${b?.tf1h?.bias}(${b?.tf1h?.score}) RSI=${b?.tf1h?.rsi} OI=${b?.tf1h?.oiTrend}(${b?.tf1h?.oiDeltaPct}%)
-4H:  ${b?.tf4h?.bias}(${b?.tf4h?.score}) RSI=${b?.tf4h?.rsi} OI=${b?.tf4h?.oiTrend}(${b?.tf4h?.oiDeltaPct}%)
-1D:  ${b?.tf1d?.bias}(${b?.tf1d?.score}) RSI=${b?.tf1d?.rsi}
-
-DIVERGENCIAS (${d.divergences?.length||0}):
-${divSummary}
-
-SEÑAL: ${d.combinedSignal?.direction} ${d.combinedSignal?.probability}% — ${d.combinedSignal?.action}
-LIBRO: ${d.orderBook?.pressure} imb=${d.orderBook?.imbalance}%
-IMÁN: ${d.liqMagnets?.[0]?.direction==='down'?'↓':'↑'} $${d.liqMagnets?.[0]?.price} (${d.liqMagnets?.[0]?.dist}% $${d.liqMagnets?.[0]?.size}M)${wsNote}
-
-REGLAS: RSI>72 no long; RSI<28 no short; OI+precio misma dirección=trend real; OI cae+precio sube=trampa; funding>0.002%=sobrecalentado.
-R:R OBLIGATORIO: usa los imanes de liquidación del mapa como TP objetivo. Para SHORT: TP1 = primera zona de liquidación ABAJO del precio (Stop longs). Para LONG: TP1 = primera zona de liquidación ARRIBA (Stop shorts). SL en zona de resistencia/soporte real. TP1 debe ser mínimo 1.5x la distancia del SL. Si no hay zona de liquidación accesible con R:R ≥1:1.5, da direction=ESPERAR.
-
-Responde SOLO JSON sin markdown:
-{"direction":"LONG|SHORT|ESPERAR","confidence":0-100,"entry":precio,"tp1":precio,"tp2":precio,"sl":precio,"rr":"1:X","reasoning":"2-3 oraciones en español","warning":"riesgo principal o vacío","action":"ENTRAR|ESPERAR|NO ENTRAR"}`;
-
-    const response=await anthropic.messages.create({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{role:'user',content:prompt}] });
-    const text=response.content[0].text;
-    const signal=JSON.parse(text.replace(/```json|```/g,'').trim());
-    const _rrReward = signal.direction === 'SHORT' ? (signal.entry - signal.tp1) : (signal.tp1 - signal.entry);
-    const _rrRisk   = signal.direction === 'SHORT' ? (signal.sl - signal.entry) : (signal.entry - signal.sl);
-    const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
-    signal.rr = `1:${_rrVal.toFixed(1)}`;
-    if (signal.confidence < 90) { signal.direction = 'ESPERAR'; signal.action = 'NO ENTRAR'; signal.reasoning = `Confianza ${signal.confidence}% insuficiente (mínimo 90%). ` + signal.reasoning; }
-    analyzeCache[symbol]={ ts:now, data:signal };
-    try { await supabase.from('signals').insert({ symbol, direction:signal.direction, confidence:signal.confidence, entry:signal.entry, tp1:signal.tp1, tp2:signal.tp2, sl:signal.sl, rr:signal.rr, reasoning:signal.reasoning, market_data:d }); } catch(_){}
-    if(signal.confidence>=parseInt(process.env.ALERT_MIN_CONFIDENCE||'90')&&process.env.TELEGRAM_CHAT_ID&&signal.rr&&parseFloat(signal.rr.replace('1:',''))>=1.5){
-      const e=signal.direction==='LONG'?'▲':signal.direction==='SHORT'?'▼':'◆';
-      const msg=`${e} ${signal.direction} — ${symbol}\n💰 Entry: $${signal.entry}\n🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}\n🛑 SL: $${signal.sl} | ${signal.rr}\n📊 ${signal.confidence}% — ${signal.action}\n💬 ${signal.reasoning}`;
-      try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg); } catch(e) { console.error("Telegram send error:", e.message); }
-    }
-    res.json(signal);
-  } catch(e) { console.error('Analyze error:',e.message); res.status(500).json({ error:e.message, detail:e.message.includes('api')||e.message.includes('key')?'Verifica ANTHROPIC_API_KEY en Railway Variables':'Error procesando análisis' }); }
+  // DESACTIVADO — Anthropic API no necesaria en sweep-only mode
+  return res.json({ direction: 'ESPERAR', confidence: 0, action: 'DESACTIVADO', reasoning: 'Análisis IA desactivado — modo sweep-only.' });
+  /* eslint-disable no-unreachable */
+  // try {
+  //   const { marketData:d, symbol } = req.body;
+  //   const now=Date.now();
+  //   if(analyzeCache[symbol]&&now-analyzeCache[symbol].ts<60000) return res.json(analyzeCache[symbol].data);
+  //   const strongDivs2 = (d.divergences||[]).filter(dv => dv.probability >= 90);
+  //   const _shortCount = (d.divergences||[]).filter(dv => dv.direction === 'SHORT' && dv.probability >= 90).length;
+  //   const _longCount  = (d.divergences||[]).filter(dv => dv.direction === 'LONG'  && dv.probability >= 90).length;
+  //   const _domCount = Math.max(_shortCount, _longCount), _oppCount = Math.min(_shortCount, _longCount);
+  //   const _hasMajority = _domCount >= 2 && _domCount > _oppCount * 1.5, _hasAny = _domCount >= 1 && _oppCount === 0;
+  //   if (!_hasMajority && !_hasAny && d.combinedSignal?.direction === 'ESPERAR') {
+  //     return res.json({ direction:'ESPERAR', confidence:30, action:'NO ENTRAR', reasoning:'Señales divididas — sin ventaja clara en ninguna dirección.', entry:d.price, tp1:d.price, tp2:d.price, sl:d.price, rr:'1:0' });
+  //   }
+  //   const divSummary = strongDivs2.length ? strongDivs2.slice(0,4).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') : (d.divergences||[]).slice(0,2).map(dv=>`${dv.name}: ${dv.direction} ${dv.probability}% — ${dv.description}`).join('\n') || 'Ninguna';
+  //   const b=d.bias;
+  //   const wsM = getWsMetrics(symbol);
+  //   const wsNote = wsM && Math.abs(wsM.cvdLive) > 20 ? `\nWS TIEMPO REAL: CVD=${wsM.cvdLive.toFixed(1)}% vol=${wsM.volumeMultiplier.toFixed(1)}x ballenas=${wsM.whaleCount}` : '';
+  //   const prompt=`...`;
+  //   const response=await anthropic.messages.create({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{role:'user',content:prompt}] });
+  //   const text=response.content[0].text;
+  //   const signal=JSON.parse(text.replace(/```json|```/g,'').trim());
+  //   analyzeCache[symbol]={ ts:now, data:signal };
+  //   res.json(signal);
+  // } catch(e) { console.error('Analyze error:',e.message); res.status(500).json({ error:e.message }); }
+  /* eslint-enable no-unreachable */
 });
 
 app.post('/api/trades', async (req, res) => { try { const {data,error}=await supabase.from('trades').insert(req.body); if(error) throw error; res.json({success:true,data}); } catch(e){ res.status(500).json({error:e.message}); } });
@@ -1421,12 +1388,13 @@ function startAlertJob() {
   setInterval(runMeanRevScanner, 60 * 1000);
   console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
 
-  const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
-  console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
   setInterval(monitorPaperTrades, 1 * 60 * 1000);
   setTimeout(monitorPaperTrades, 15000);
-  setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
-  setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
+  // DESACTIVADO — runAutoAnalysis usa Anthropic API, no necesario en sweep-only mode
+  // const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
+  // console.log(`✅ Alertas activas — cada ${intervalMin} min para: ${symbols.join(', ')}`);
+  // setInterval(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, intervalMin * 60 * 1000);
+  // setTimeout(async () => { for (const symbol of symbols) { await runAutoAnalysis(symbol.trim()); await new Promise(r => setTimeout(r, 8000)); } }, 15000);
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
   console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
@@ -1489,9 +1457,11 @@ app.get('/api/ws-debug', (req, res) => {
 });
 
 app.post('/api/alert/trigger', async (req, res) => {
-  const symbol = req.body.symbol || 'BTCUSDT', force = req.body.force === true;
-  await runAutoAnalysis(symbol, force);
-  res.json({ ok: true, message: `Análisis disparado para ${symbol}${force?' (forzado)':''}` });
+  // DESACTIVADO — Anthropic API no necesaria en sweep-only mode
+  res.json({ ok: false, message: 'runAutoAnalysis desactivado — modo sweep-only.' });
+  // const symbol = req.body.symbol || 'BTCUSDT', force = req.body.force === true;
+  // await runAutoAnalysis(symbol, force);
+  // res.json({ ok: true, message: `Análisis disparado para ${symbol}${force?' (forzado)':''}` });
 });
 
 app.get('/api/alert/status', (req, res) => {
