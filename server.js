@@ -21,6 +21,10 @@ const BINANCE_WS = 'wss://fstream.binance.com';
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
 const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 13, 15, 16, 17, 18, 19, 21, 23]);
 
+const WALL_ENABLED       = false; // solo sweep activo
+const SCALP_ENABLED      = false; // solo sweep activo
+const AUTO_TRADE_ENABLED = false; // solo sweep activo
+
 function isHoraBloqueada() {
   const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
   return !HORAS_ACTIVAS_LIMA.has(horaLima);
@@ -127,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.78' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.82' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -171,7 +175,19 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         const trailExtreme = isLong ? trailHigh : trailLow; // pico favorable del ventana
         const priceDiffPctTr = isLong ? (trailExtreme - entry) / entry * 100 : (entry - trailExtreme) / entry * 100;
         let newSlTr = sl;
-        if (priceDiffPctTr >= 0.5) {
+        if (trade.source === 'sweep') {
+          const sweepPnl = (isLong ? (trailExtreme - entry) / entry : (entry - trailExtreme) / entry) * size * lev;
+          if (sweepPnl >= 40) {
+            const candidate = isLong ? trailExtreme * (1 - 0.0018) : trailExtreme * (1 + 0.0018);
+            newSlTr = isLong ? Math.max(sl, candidate) : Math.min(sl, candidate);
+          } else if (sweepPnl >= 25) {
+            const candidate = isLong ? trailExtreme * (1 - 0.003) : trailExtreme * (1 + 0.003);
+            newSlTr = isLong ? Math.max(sl, candidate) : Math.min(sl, candidate);
+          } else if (sweepPnl >= 15) {
+            const lockSl = isLong ? entry * (1 + 8 / (size * lev)) : entry * (1 - 8 / (size * lev));
+            newSlTr = isLong ? Math.max(sl, lockSl) : Math.min(sl, lockSl);
+          }
+        } else if (priceDiffPctTr >= 0.5) {
           const beTarget = isLong ? entry * 1.001 : entry * 0.999;
           const trailDistPct = Math.max(0.0025, 0.005 - priceDiffPctTr * 0.001);
           const candidate = isLong ? trailExtreme * (1 - trailDistPct) : trailExtreme * (1 + trailDistPct);
@@ -528,6 +544,15 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
     for (const trade of openTrades) {
       const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
       const entry = parseFloat(trade.entry), sl = parseFloat(trade.sl);
+      // Trade sweep en profit >= $15 → el trailing ya lo protege, no interferir
+      if (trade.source === 'sweep') {
+        const _ks_lev = parseFloat(trade.leverage || 10);
+        const _ks_pnl = parseFloat(trade.size_usd) * (trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry) * _ks_lev;
+        if (_ks_pnl >= 15) {
+          console.log(`⏭ Kill switch omitido — trade sweep en profit $${_ks_pnl.toFixed(2)}, trailing activo`);
+          continue;
+        }
+      }
       // Solo actuar si precio ya recorrió >60% del camino hacia el SL
       // ETH: 40% por mayor volatilidad (beta 1.4x vs BTC), spec global es 60%
       const slThreshold = symbol.includes('ETH') ? 0.40 : 0.60;
@@ -1337,7 +1362,7 @@ Responde SOLO JSON sin markdown:
       if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 Auto trade ${signal.direction} ${symbol} — *BLOQUEADO*\nRazón: Score macro ${_macroScore} ≤ -3 — mercado adverso\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
       return;
     }
-    const canAutoTrade = signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
+    const canAutoTrade = AUTO_TRADE_ENABLED && signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
     if (canAutoTrade) {
       // ── Max pérdida check ──
       // ── Gestión de riesgo 2% para auto trade v4.4.47 ──
@@ -1630,7 +1655,20 @@ async function monitorPaperTrades() {
         const trailExtremePoll = isLong ? pollHigh : pollLow;
         const priceDiffPct = isLong ? (trailExtremePoll - entryPrice) / entryPrice * 100 : (entryPrice - trailExtremePoll) / entryPrice * 100;
         let newSl = sl;
-        if (priceDiffPct >= 0.5) {
+        if (trade.source === 'sweep') {
+          const _lev = parseFloat(trade.leverage || 10), _size = parseFloat(trade.size_usd);
+          const sweepPnl = (isLong ? (trailExtremePoll - entryPrice) / entryPrice : (entryPrice - trailExtremePoll) / entryPrice) * _size * _lev;
+          if (sweepPnl >= 40) {
+            const candidate = isLong ? trailExtremePoll * (1 - 0.0018) : trailExtremePoll * (1 + 0.0018);
+            newSl = isLong ? Math.max(sl, candidate) : Math.min(sl, candidate);
+          } else if (sweepPnl >= 25) {
+            const candidate = isLong ? trailExtremePoll * (1 - 0.003) : trailExtremePoll * (1 + 0.003);
+            newSl = isLong ? Math.max(sl, candidate) : Math.min(sl, candidate);
+          } else if (sweepPnl >= 15) {
+            const lockSl = isLong ? entryPrice * (1 + 8 / (_size * _lev)) : entryPrice * (1 - 8 / (_size * _lev));
+            newSl = isLong ? Math.max(sl, lockSl) : Math.min(sl, lockSl);
+          }
+        } else if (priceDiffPct >= 0.5) {
           const beTarget = isLong ? entryPrice * 1.001 : entryPrice * 0.999;
           const trailDistPct = Math.max(0.0025, 0.005 - priceDiffPct * 0.001);
           const candidate = isLong ? trailExtremePoll * (1 - trailDistPct) : trailExtremePoll * (1 + trailDistPct);
@@ -2042,6 +2080,7 @@ const solLossTracker = createLossTracker('SOL');
 
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
+  if (!SCALP_ENABLED) return;
   if (scalpingInProgress[symbol]) return;
   // ── v4.4.77: BTC sin edge estadístico — deshabilitado ──
   if (symbol === 'BTCUSDT') {
@@ -2387,6 +2426,7 @@ function findBigWalls(symbol) {
 // ── PASO 3 + 4: Evaluar paredes — anti-spoof + absorción ─────────
 const wallEvalThrottle = {};
 function evaluateWalls(symbol) {
+  if (!WALL_ENABLED) return;
   const now = Date.now();
   // Throttle — evaluar máximo cada 2 segundos por símbolo
   if (wallEvalThrottle[symbol] && now - wallEvalThrottle[symbol] < 2000) return;
