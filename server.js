@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.82' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.83' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -154,6 +154,7 @@ function initWsState(symbol) {
 // Se ejecuta en cada tick del WebSocket — cierra trades exactamente al SL/TP
 const _slTpLocks = {}; // evitar doble cierre
 const _trailingLastUpdate = {}; // throttle trailing SL writes — 30s por trade
+const _maxProfitCache = {}; // max unrealized profit por trade id
 async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = price) {
   if (_slTpLocks[symbol]) return;
   try {
@@ -218,6 +219,10 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         else if (trailLow <= tp1) { closeReason = 'tp1'; closePrice = tp1; }
       }
 
+      // Actualizar max profit intraday
+      const _curPnl = (isLong ? (price - entry) / entry : (entry - price) / entry) * size * lev;
+      if (!(_maxProfitCache[trade.id] >= _curPnl)) _maxProfitCache[trade.id] = _curPnl;
+
       if (!closeReason) continue;
 
       // Lock para evitar doble cierre
@@ -231,8 +236,10 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
 
       await supabase.from('paper_trades').update({
         status, close_price: closePrice, close_reason: closeReason,
-        pnl_usd, pnl_pct, closed_at: new Date().toISOString()
+        pnl_usd, pnl_pct, closed_at: new Date().toISOString(),
+        max_profit_usd: parseFloat((_maxProfitCache[trade.id] ?? pnl_usd).toFixed(2))
       }).eq('id', trade.id);
+      delete _maxProfitCache[trade.id];
 
       // Circuit breaker
       if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd);
@@ -606,6 +613,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atrPct = atr5m / price * 100;
+    if (atrPct > 0.5) { console.log(`⏭ Sweep descartado — ATR ${atrPct.toFixed(3)}% > 0.5% (riesgo alto)`); return; }
     const atr = Math.max(atr5m, price * 0.003);
     const isShort = direction === 'SHORT';
     const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
@@ -613,7 +622,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.5) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
-    if (sweepConfidence < 82) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 82%`); return; }
+    if (sweepConfidence < 85) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 85%`); return; }
     let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
     try {
       const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
