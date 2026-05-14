@@ -147,6 +147,7 @@ function initWsState(symbol) {
     oiHistory: [], lastPrice: 0, lastUpdate: 0, anomaly: null, liqZones: [],
     trailHigh: 0, trailLow: Infinity, // watermarks entre debounce windows
     pollingHigh: 0, pollingLow: Infinity, // watermarks acumulados entre ticks de polling
+    lastWsMsgTime: 0,
   };
 }
 
@@ -294,6 +295,7 @@ function connectWebSocket(symbol) {
       }
       wsState[symbol].lastPrice = price;
       wsState[symbol].lastUpdate = now;
+      wsState[symbol].lastWsMsgTime = now;
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
       // ── Watermarks de high/low para trailing y SL preciso ──
@@ -529,7 +531,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (isLong && sl >= price) return;
     if (!isLong && sl <= price) return;
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
-    if (rrVal < 1.5) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
+    if (rrVal < 1.2) { console.log(`⚠️ Whale trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
     // v4.4.16 C1: confianza mínima 82 — conf=77 tenía WR 40% y PnL negativo
     const whaleConfidence = Math.max(82, Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus)));
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
@@ -620,7 +622,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
     const sl = isShort ? price + atr * 0.8 : price - atr * 0.8;
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
-    if (rrVal < 1.5) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.5`); return; }
+    if (rrVal < 1.2) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
     if (sweepConfidence < 85) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 85%`); return; }
     let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
@@ -652,11 +654,6 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
         console.log(`⏭ Sweep LONG omitido — bias_1d bajista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
         return;
       }
-    }
-    // ── FILTRO vol_mult v4.4.78 — sweep BTC LONG sobreextendido ──
-    if (symbol === 'BTCUSDT' && direction === 'LONG' && metrics.volumeMultiplier > 8.5) {
-      console.log(`⛔ Sweep BTC LONG bloqueado — vol_mult sobreextendido (${metrics.volumeMultiplier.toFixed(1)}x)`);
-      return;
     }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
@@ -1316,7 +1313,7 @@ Responde SOLO JSON sin markdown:
     const _rrVal    = (_rrRisk > 0) ? (_rrReward / _rrRisk) : 0;
     signal.rr = `1:${_rrVal.toFixed(1)}`;
     if (signal.confidence < minConfidence) return;
-    if (_rrVal < 1.5 && signal.direction !== 'ESPERAR') { console.log(`⚠️ Alerta descartada — R:R ${_rrVal.toFixed(2)} < 1.5 para ${symbol}`); return; }
+    if (_rrVal < 1.2 && signal.direction !== 'ESPERAR') { console.log(`⚠️ Alerta descartada — R:R ${_rrVal.toFixed(2)} < 1.2 para ${symbol}`); return; }
     if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) return;
     const dir = signal.direction, emoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '🟡';
     const fibNote = fib15m?.nearestRetrace?.dist < 0.8 ? `\n⬟ Fib ${fib15m.nearestRetrace.label} — ${fib15m.retImpact.description}` : '';
@@ -1338,7 +1335,7 @@ Responde SOLO JSON sin markdown:
       if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 Auto trade ${signal.direction} ${symbol} — *BLOQUEADO*\nRazón: Score macro ${_macroScore} ≤ -3 — mercado adverso\nConfianza era: ${signal.confidence}%\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
       return;
     }
-    const canAutoTrade = AUTO_TRADE_ENABLED && signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.5;
+    const canAutoTrade = AUTO_TRADE_ENABLED && signal.confidence >= autoPaperThreshold && signal.direction !== 'ESPERAR' && trendOk && divergences.length >= 2 && _rrVal >= 1.2;
     if (canAutoTrade) {
       // ── Max pérdida check ──
       // ── Gestión de riesgo 2% para auto trade v4.4.47 ──
@@ -1398,6 +1395,20 @@ function startAlertJob() {
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
   console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
+  setInterval(() => {
+    for (const sym of wsSymbols) {
+      const s = sym.trim();
+      const state = wsState[s];
+      if (!state || !wsConnections[s]) continue;
+      const elapsed = Date.now() - (state.lastWsMsgTime || 0);
+      if (elapsed > 60000) {
+        console.log(`⚠️ WS watchdog: sin aggTrade ${(elapsed/1000)|0}s — reconectando ${s}`);
+        wsConnections[s].terminate();
+        delete wsConnections[s];
+        setTimeout(() => connectWebSocket(s), 1000);
+      }
+    }
+  }, 30000);
   setInterval(async () => {
     for (const sym of wsSymbols) {
       try {
