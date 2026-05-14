@@ -202,8 +202,6 @@ input[type=number]:focus{border-color:#f59e0b}
       <div style="display:flex;gap:6px;align-items:center">
         <button class="btn-ai" id="ai-btn" onclick="runAI()"><span id="ai-icon">✦</span> Analizar</button>
         <button class="btn-ai" id="alert-btn" onclick="triggerAlert()" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);color:#f59e0b" title="Disparar alerta Telegram ahora"><span id="alert-icon">🔔</span></button>
-        <button class="btn-ai" id="scalp-btn" onclick="toggleScalping()" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.35);color:#8b5cf6" title="Modo Scalping — análisis cada 3 min"><span id="scalp-icon">⚡</span> Scalp</button>
-        <span id="scalp-signal-badge" style="font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700;display:none;margin-left:4px"></span>
         <span id="macro-filter-badge" style="display:none;font-size:9px;padding:2px 7px;border-radius:3px;font-weight:700;background:rgba(139,92,246,.15);color:#8b5cf6;border:1px solid rgba(139,92,246,.3)" title="Macro Filter activo"></span>
         <button id="lock-btn" onclick="toggleLock()" title="Candado — desbloquear para modo prueba/clases" style="background:transparent;border:1px solid #1e2330;color:#4b5563;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:13px">🔒</button>
       </div>
@@ -213,13 +211,6 @@ input[type=number]:focus{border-color:#f59e0b}
       <div id="ai-result" class="ai-box ai-wait">
         <div class="ai-hdr"><span>◆</span><span style="font-size:13px;font-weight:700;color:#f59e0b">Esperando análisis</span></div>
         <div class="ai-reasoning">Presiona "Analizar" — Claude con divergencias, imanes y sesgo multi-TF.</div>
-      </div>
-      <div id="ai-exec-row" style="display:none;margin-top:10px;gap:8px;flex-direction:column">
-        <div style="display:flex;gap:8px">
-          <button id="exec-long-btn" class="btn-exec btn-exec-long" style="flex:1" onclick="openPaperTradeFromAI('LONG')">▲ Ejecutar LONG</button>
-          <button id="exec-short-btn" class="btn-exec btn-exec-short" style="flex:1" onclick="openPaperTradeFromAI('SHORT')">▼ Ejecutar SHORT</button>
-        </div>
-        <div id="exec-status" style="font-size:10px;color:#4b5563;text-align:center"></div>
       </div>
     </div>
   </div>
@@ -953,20 +944,6 @@ async function runAI(autoMode=false){
     document.getElementById('r-rr').textContent = _realRrStr;
     document.getElementById('r-rr').style.color = _realRr >= 1.5 ? '#00d68f' : _realRr >= 1 ? '#f59e0b' : '#ff4d6d';
       updateExecButtons();
-      if (autoMode && d.confidence >= 95 && d.direction !== 'ESPERAR') {
-        const _autoRr = d.entry && d.tp1 && d.sl ? Math.abs(d.tp1 - d.entry) / Math.abs(d.entry - d.sl) : 0;
-        if (_autoRr >= 1.5) {
-          fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
-          showToast(`🚨 SEÑAL CRÍTICA ${d.confidence}% — abriendo paper trade automático`, d.direction==='LONG'?'#00d68f':'#ff4d6d');
-          setTimeout(() => openPaperTrade(d.direction, true), 1500); // autoMode — no requiere confirmación
-        } else {
-          fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:true,confidence:d.confidence})}).catch(()=>{});
-          showToast(`⚠️ Señal ${d.confidence}% — alerta enviada, R:R insuficiente (${_autoRr.toFixed(1)})`, '#f59e0b');
-        }
-      } else if (autoMode && d.confidence >= 90) {
-        fetch(`${API}/api/alert/trigger`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:pair,urgent:false,confidence:d.confidence})}).catch(()=>{});
-        showToast(`🔔 Señal ${d.confidence}% detectada — alerta enviada`, '#f59e0b');
-      }
     }
   }catch(e){
     result.className='ai-box ai-error';

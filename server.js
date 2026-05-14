@@ -1484,6 +1484,10 @@ app.post('/api/paper/open', async (req, res) => {
     const _openIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip;
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
     console.log(`📡 POST /api/paper/open — IP: ${_openIp} — ${direction || '?'} ${symbol || '?'} src=${source || 'manual'}`);
+    if ((source || 'manual') !== 'sweep') {
+      console.log(`⛔ Bloqueo trade no-sweep — source=${source || 'manual'} IP=${_openIp}`);
+      return res.status(403).json({ error: 'Solo sweep puede abrir trades.' });
+    }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing && existing.length > 0) return res.status(400).json({ error: `Ya hay un trade abierto para ${symbol}. Ciérralo antes de abrir otro.` });
     // ── Filtro confidence mínima 75% para trades manuales v4.4.49 ──
