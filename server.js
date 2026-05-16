@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.84' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.87' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -375,7 +375,7 @@ async function evaluateAnomaly(symbol) {
   if (!state) return;
   const metrics = getWsMetrics(symbol);
   if (!metrics) return;
-  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '10');
+  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '6');
   const now = Date.now();
   const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
   const isBearishSweep = metrics.cvdLive < -40 && isVolumeAnomaly;
@@ -3530,7 +3530,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.78 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.87 corriendo en puerto ${PORT}`);
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
