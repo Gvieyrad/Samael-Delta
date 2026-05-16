@@ -147,7 +147,8 @@ function initWsState(symbol) {
     oiHistory: [], lastPrice: 0, lastUpdate: 0, anomaly: null, liqZones: [],
     trailHigh: 0, trailLow: Infinity, // watermarks entre debounce windows
     pollingHigh: 0, pollingLow: Infinity, // watermarks acumulados entre ticks de polling
-    lastWsMsgTime: 0,
+    lastWsMsgTime: Date.now(),
+    _reconnectDelay: 5000,
   };
 }
 
@@ -281,13 +282,23 @@ function connectWebSocket(symbol) {
   console.log(`🔌 WebSocket conectando: ${symbol}`);
   const ws = new (require('ws'))(url);
   wsConnections[symbol] = ws;
-  ws.on('open', () => console.log(`✅ WS conectado: ${symbol}`));
+  ws.on('open', () => {
+    wsState[symbol].lastWsMsgTime = Date.now();
+    wsState[symbol]._reconnectDelay = 5000;
+    console.log(`✅ WS conectado: ${symbol}`);
+  });
   ws.on('message', (data) => {
     try {
       const t = JSON.parse(data);
-      if (!t.p) return; // ignorar pings/confirmaciones sin precio
+      if (!t.p) {
+        wsState[symbol]._unknownMsgCount = (wsState[symbol]._unknownMsgCount || 0) + 1;
+        if (wsState[symbol]._unknownMsgCount <= 3)
+          console.log(`📨 WS msg sin precio ${symbol}: e=${t.e||'?'} keys=${Object.keys(t).join(',')}`);
+        return;
+      }
       const price = parseFloat(t.p), qty = parseFloat(t.q), usdVal = price * qty;
-      if (!price || isNaN(price)) return; // ignorar precios inválidos
+      if (!price || isNaN(price)) return;
+      wsState[symbol]._unknownMsgCount = 0;
       const isBuy = !t.m, now = Date.now();
       if (!wsState[symbol]._firstMsg) {
         console.log(`📡 WS primer msg ${symbol}: price=${price} type=${t.e||'?'}`);
@@ -320,10 +331,11 @@ function connectWebSocket(symbol) {
       }
     } catch(e) { console.error(`❌ WS msg error ${symbol}:`, e.message); }
   });
-  ws.on('close', () => {
-    console.log(`⚠️ WS desconectado: ${symbol} — reconectando en 5s`);
+  ws.on('close', (code, reason) => {
+    const delay = wsState[symbol]?._reconnectDelay || 5000;
+    console.log(`⚠️ WS desconectado: ${symbol} (code=${code}) — reconectando en ${delay/1000}s`);
     delete wsConnections[symbol];
-    setTimeout(() => connectWebSocket(symbol), 5000);
+    setTimeout(() => connectWebSocket(symbol), delay);
   });
   ws.on('error', (e) => { console.log(`❌ WS error ${symbol}: ${e.message}`); ws.terminate(); });
 }
@@ -1403,9 +1415,10 @@ function startAlertJob() {
       const elapsed = Date.now() - (state.lastWsMsgTime || 0);
       if (elapsed > 60000) {
         console.log(`⚠️ WS watchdog: sin aggTrade ${(elapsed/1000)|0}s — reconectando ${s}`);
+        state._reconnectDelay = Math.min(60000, (state._reconnectDelay || 5000) * 2);
         wsConnections[s].terminate();
         delete wsConnections[s];
-        setTimeout(() => connectWebSocket(s), 1000);
+        setTimeout(() => connectWebSocket(s), state._reconnectDelay);
       }
     }
   }, 30000);
