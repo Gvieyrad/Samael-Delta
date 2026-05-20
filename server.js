@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.87' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.88' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -412,7 +412,11 @@ async function evaluateAnomaly(symbol) {
                  isMassiveWhale ? `🐋 Ballena masiva $${(massiveWhaleVol/1e6).toFixed(1)}M ${massiveWhaleDirection === 'LONG' ? 'comprando' : 'vendiendo'}${massiveWhaleSingle ? ' (orden única)' : ' (acumulada 10s)'}` :
                  `Ballena $${(bigWhale.usdVal/1e6).toFixed(2)}M ${bigWhale.isBuy ? 'comprando' : 'vendiendo'}`;
   const cooldownKey = `${symbol}_${direction}`;
-  if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) return;
+  if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) {
+    const remaining = Math.ceil((3 * 60 * 1000 - (now - killSwitchCooldown[cooldownKey])) / 1000);
+    console.log(`⏳ Sweep/Whale descartado — cooldown activo ${symbol} ${direction} — faltan ${remaining}s`);
+    return;
+  }
   killSwitchCooldown[cooldownKey] = now;
   if (isSweep || isWhaleOnly) {
     state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus, isSweep: !!(isRealBearishSweep || isRealBullishSweep), isWhale: !!bigWhale && !isSweep };
@@ -1422,6 +1426,17 @@ function startAlertJob() {
       }
     }
   }, 30000);
+  setInterval(() => {
+    const threshold = parseInt(process.env.WS_VOLUME_MULTIPLIER || '6');
+    for (const sym of wsSymbols) {
+      const s = sym.trim();
+      const metrics = getWsMetrics(s);
+      if (!metrics) { console.log(`📊 Vol monitor ${s}: sin datos WS`); continue; }
+      const fmtVol = v => v >= 1e6 ? `${(v/1e6).toFixed(2)}M` : v >= 1e3 ? `${(v/1e3).toFixed(1)}K` : v.toFixed(0);
+      const pct = metrics.avgVolume1m > 0 ? (metrics.volumeMultiplier / threshold * 100).toFixed(0) : '?';
+      console.log(`📊 Vol monitor ${s}: mult=${metrics.volumeMultiplier.toFixed(2)}x baseline=${fmtVol(metrics.avgVolume1m)} vol60s=${fmtVol(metrics.totalVol60s)} cvd=${metrics.cvdLive.toFixed(1)}% → ${pct}% del umbral ${threshold}x`);
+    }
+  }, 60 * 1000);
   setInterval(async () => {
     for (const sym of wsSymbols) {
       try {
