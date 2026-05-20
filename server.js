@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.88' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.89' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -640,7 +640,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.2) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
-    if (sweepConfidence < 85) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 85%`); return; }
+    if (sweepConfidence < 80) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 80%`); return; }
     let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
     try {
       const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
