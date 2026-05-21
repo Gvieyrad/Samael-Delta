@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.89' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.90' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -344,7 +344,7 @@ function getWsMetrics(symbol) {
   const state = wsState[symbol];
   if (!state || !state.trades.length) return null;
   const now = Date.now();
-  const last60s = state.trades.filter(t => now - t.time < 60000);
+  const last60s = state.trades.filter(t => now - t.time < 30000);
   const last10s = state.trades.filter(t => now - t.time < 10000);
   if (!last60s.length) return null;
   const totalVol60s = last60s.reduce((s, t) => s + t.usdVal, 0);
@@ -359,11 +359,11 @@ function getWsMetrics(symbol) {
   const whaleBuyVol = whales60s.filter(t => t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const whaleSellVol = whales60s.filter(t => !t.isBuy).reduce((s, t) => s + t.usdVal, 0);
   const last600s = state.trades.filter(t => now - t.time < 600000);
-  const last120s = state.trades.filter(t => now - t.time < 120000 && now - t.time >= 60000);
-  let dynamicAvg = state.avgVolume1m;
-  if (last600s.length >= 10) dynamicAvg = last600s.reduce((s, t) => s + t.usdVal, 0) / 10;
-  else if (last120s.length >= 5) dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0);
-  const effectiveAvg = Math.max(dynamicAvg, state.avgVolume1m);
+  const last120s = state.trades.filter(t => now - t.time < 60000 && now - t.time >= 30000);
+  let dynamicAvg = state.avgVolume1m / 2;
+  if (last600s.length >= 10) dynamicAvg = last600s.reduce((s, t) => s + t.usdVal, 0) / 20;
+  else if (last120s.length >= 5) dynamicAvg = last120s.reduce((s, t) => s + t.usdVal, 0) / 2;
+  const effectiveAvg = Math.max(dynamicAvg, state.avgVolume1m / 2);
   const volumeMultiplier = effectiveAvg > 0 ? totalVol60s / effectiveAvg : 1;
   return { totalVol60s, buyVol60s, sellVol60s, cvdLive, totalVol10s, buyVol10s, sellVol10s,
     whaleCount: whales60s.length, whaleBuyVol, whaleSellVol, avgVolume1m: effectiveAvg,
@@ -375,14 +375,14 @@ async function evaluateAnomaly(symbol) {
   if (!state) return;
   const metrics = getWsMetrics(symbol);
   if (!metrics) return;
-  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '6');
+  const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '4');
   const now = Date.now();
   const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
   const isBearishSweep = metrics.cvdLive < -40 && isVolumeAnomaly;
   const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;
-  const prices60s = state.trades.filter(t => now - t.time < 60000).map(t => t.price);
+  const prices60s = state.trades.filter(t => now - t.time < 30000).map(t => t.price);
   const priceMove60s = prices60s.length >= 2 ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100 : 0;
-  const isPriceMoving = priceMove60s >= 0.5;
+  const isPriceMoving = priceMove60s >= 0.3;
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
   const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
