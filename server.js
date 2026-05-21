@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.90' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.91' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -373,6 +373,7 @@ function getWsMetrics(symbol) {
 async function evaluateAnomaly(symbol) {
   const state = wsState[symbol];
   if (!state) return;
+  if (!state.avgVolume1m) return; // baseline no inicializado — esperar primer poll REST
   const metrics = getWsMetrics(symbol);
   if (!metrics) return;
   const volMultiplier = parseInt(process.env.WS_VOLUME_MULTIPLIER || '4');
@@ -1437,15 +1438,18 @@ function startAlertJob() {
       console.log(`📊 Vol monitor ${s}: mult=${metrics.volumeMultiplier.toFixed(2)}x baseline=${fmtVol(metrics.avgVolume1m)} vol60s=${fmtVol(metrics.totalVol60s)} cvd=${metrics.cvdLive.toFixed(1)}% → ${pct}% del umbral ${threshold}x`);
     }
   }, 60 * 1000);
-  setInterval(async () => {
+  const pollBaseline = async () => {
     for (const sym of wsSymbols) {
       try {
         const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
         const vols = k1m.data.map(k => parseFloat(k[4]) * parseFloat(k[5]));
-        if (wsState[sym.trim()]) wsState[sym.trim()].avgVolume1m = vols.reduce((a,b)=>a+b,0)/vols.length;
+        const avg = vols.reduce((a,b)=>a+b,0)/vols.length;
+        if (wsState[sym.trim()]) { wsState[sym.trim()].avgVolume1m = avg; }
       } catch(_) {}
     }
-  }, 5 * 60 * 1000);
+  };
+  setTimeout(pollBaseline, 10000); // inicializar baseline 10s después de arrancar
+  setInterval(pollBaseline, 5 * 60 * 1000);
 }
 
 // ── Caché REST para fallback cuando WS no tiene precio ──
