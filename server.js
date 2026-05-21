@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.91' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.92' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1441,7 +1441,8 @@ function startAlertJob() {
   const pollBaseline = async () => {
     for (const sym of wsSymbols) {
       try {
-        const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
+        // SPOT klines — self-consistent con BINANCE_WS que usa stream.binance.com (spot)
+        const k1m = await axios.get(`https://api.binance.com/api/v3/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
         const vols = k1m.data.map(k => parseFloat(k[4]) * parseFloat(k[5]));
         const avg = vols.reduce((a,b)=>a+b,0)/vols.length;
         if (wsState[sym.trim()]) { wsState[sym.trim()].avgVolume1m = avg; }
