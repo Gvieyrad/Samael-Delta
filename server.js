@@ -134,7 +134,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.97' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.98' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -142,6 +142,7 @@ app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo'
 const wsState = {};
 const wsConnections = {};
 const killSwitchCooldown = {};
+const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
 
 function initWsState(symbol) {
   if (wsState[symbol]) return;
@@ -386,8 +387,8 @@ async function evaluateAnomaly(symbol) {
   const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;
   const prices60s = state.trades.filter(t => now - t.time < 30000).map(t => t.price);
   const priceMove60s = prices60s.length >= 2 ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100 : 0;
-  const cvdExtreme = Math.abs(metrics.cvdLive) >= 70;
-  const priceThreshold = cvdExtreme ? 0.05 : 0.15;
+  const cvdExtreme = Math.abs(metrics.cvdLive) >= 55; // v4.4.98: 70→55 — CVD -55/-63% son sweeps reales
+  const priceThreshold = cvdExtreme ? 0.05 : 0.10;   // v4.4.98: 0.15→0.10 — spot WS tiene moves 30-40% menores que futuros
   const isPriceMoving = priceMove60s >= priceThreshold;
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
@@ -423,10 +424,13 @@ async function evaluateAnomaly(symbol) {
   const cooldownKey = `${symbol}_${direction}`;
   if (killSwitchCooldown[cooldownKey] && now - killSwitchCooldown[cooldownKey] < 3 * 60 * 1000) {
     const remaining = Math.ceil((3 * 60 * 1000 - (now - killSwitchCooldown[cooldownKey])) / 1000);
-    console.log(`⏳ Sweep/Whale descartado — cooldown activo ${symbol} ${direction} — faltan ${remaining}s`);
+    if (!_cooldownLastLog[cooldownKey] || now - _cooldownLastLog[cooldownKey] > 60000) {
+      console.log(`⏳ Cooldown activo ${symbol} ${direction} — faltan ~${remaining}s`);
+      _cooldownLastLog[cooldownKey] = now;
+    }
     return;
   }
-  killSwitchCooldown[cooldownKey] = now;
+  // NO setear cooldown aquí — se setea en openSweepCounterTrade cuando trade realmente abre
   if (isSweep || isWhaleOnly) {
     state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus, isSweep: !!(isRealBearishSweep || isRealBullishSweep), isWhale: !!bigWhale && !isSweep };
     setTimeout(() => { if (wsState[symbol]?.anomaly?.time === now) wsState[symbol].anomaly = null; }, 5 * 60 * 1000);
@@ -619,7 +623,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const price = metrics.lastPrice;
-    if (!price) return;
+    if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
     // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
     const prices5mSw = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
     if (prices5mSw.length >= 5) {
@@ -682,6 +686,9 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
+    // Cooldown se setea aquí — solo cuando trade realmente abre, no en detección de anomalía
+    const _ck = `${symbol}_${direction}`;
+    killSwitchCooldown[_ck] = Date.now();
     console.log(`⚡ Sweep trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${sweepConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
