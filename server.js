@@ -134,7 +134,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.99' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.0' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -144,6 +144,7 @@ const wsConnections = {};
 const killSwitchCooldown = {};
 const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
 const _wsNoDataCount = {}; // contador fallos WS consecutivos por símbolo
+const _openLock = new Set(); // lock síncrono anti-race: previene doble apertura por aggTrade concurrente
 
 function initWsState(symbol) {
   if (wsState[symbol]) return;
@@ -431,18 +432,25 @@ async function evaluateAnomaly(symbol) {
     }
     return;
   }
-  // NO setear cooldown aquí — se setea en openSweepCounterTrade cuando trade realmente abre
+  // Lock síncrono antes del primer await — previene race condition TOCTOU entre aggTrades concurrentes
+  const lockKey = `${symbol}_${direction}`;
+  if (_openLock.has(lockKey)) return;
+  _openLock.add(lockKey);
   if (isSweep || isWhaleOnly) {
     state.anomaly = { direction, reason, time: now, volumeMultiplier: metrics.volumeMultiplier, cvdLive: metrics.cvdLive, liqZoneBonus, isSweep: !!(isRealBearishSweep || isRealBullishSweep), isWhale: !!bigWhale && !isSweep };
     setTimeout(() => { if (wsState[symbol]?.anomaly?.time === now) wsState[symbol].anomaly = null; }, 5 * 60 * 1000);
   }
   console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
-  if (isSweep) {
-    await killSwitchOpposite(symbol, direction, reason);
-    await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
-  } else if (isMassiveWhale) {
-    await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
-    await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
+  try {
+    if (isSweep) {
+      await killSwitchOpposite(symbol, direction, reason);
+      await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
+    } else if (isMassiveWhale) {
+      await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
+      await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
+    }
+  } finally {
+    _openLock.delete(lockKey); // siempre liberar — cooldown en openSweepCounterTrade protege reentrada post-open
   }
   if (process.env.TELEGRAM_CHAT_ID) {
     if (isSweep) {
