@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.92' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.93' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -383,9 +383,14 @@ async function evaluateAnomaly(symbol) {
   const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;
   const prices60s = state.trades.filter(t => now - t.time < 30000).map(t => t.price);
   const priceMove60s = prices60s.length >= 2 ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100 : 0;
-  const isPriceMoving = priceMove60s >= 0.3;
+  const cvdExtreme = Math.abs(metrics.cvdLive) >= 70;
+  const priceThreshold = cvdExtreme ? 0.05 : 0.15;
+  const isPriceMoving = priceMove60s >= priceThreshold;
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
+  if (isVolumeAnomaly && (isBearishSweep || isBullishSweep) && !isPriceMoving) {
+    console.log(`🔍 ${symbol} BLOQUEADO — vol=${metrics.volumeMultiplier.toFixed(1)}x CVD=${metrics.cvdLive.toFixed(1)}% priceMove=${priceMove60s.toFixed(3)}% < ${priceThreshold}%`);
+  }
   const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
   const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
   const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
@@ -1428,7 +1433,7 @@ function startAlertJob() {
     }
   }, 30000);
   setInterval(() => {
-    const threshold = parseInt(process.env.WS_VOLUME_MULTIPLIER || '6');
+    const threshold = parseInt(process.env.WS_VOLUME_MULTIPLIER || '4');
     for (const sym of wsSymbols) {
       const s = sym.trim();
       const metrics = getWsMetrics(s);
