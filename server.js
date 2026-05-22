@@ -44,6 +44,7 @@ function getSesionActual() {
 
 
 let analyzeCache = {};
+const _marketCache = {}; // cache /api/market — 60s TTL para no hammear Binance REST
 
 // ══════════════════════════════════════════════════════════════════
 // ─── BINANCE ACCOUNT — BALANCE REAL (READ-ONLY) ──────────────────
@@ -134,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.0' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.1' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1196,6 +1197,16 @@ async function detectWhales(symbol, price) {
 app.get('/api/market/:symbol', async (req, res) => {
   try {
     const symbol=req.params.symbol||'BTCUSDT';
+    // Cache 60s — evita hammear Binance REST y previene IP ban
+    const _mc = _marketCache[symbol];
+    if (_mc && Date.now() - _mc.ts < 60000) {
+      const cached = { ..._mc.data };
+      // Actualizar precio y métricas WS en tiempo real sobre datos cacheados
+      const wsLive = getWsMetrics(symbol);
+      if (wsLive?.lastPrice) cached.price = wsLive.lastPrice;
+      if (wsLive) cached.wsMetrics = wsLive;
+      return res.json(cached);
+    }
     const [ticker,oiRes,funding,k15m,k1h,k4h,k1d,obRes,oi15mHist,oi1hHist,oi4hHist] = await Promise.all([
       axios.get(`${BINANCE}/fapi/v1/ticker/24hr?symbol=${symbol}`), axios.get(`${BINANCE}/fapi/v1/openInterest?symbol=${symbol}`), axios.get(`${BINANCE}/fapi/v1/premiumIndex?symbol=${symbol}`),
       axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`), axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=60`),
@@ -1219,8 +1230,26 @@ app.get('/api/market/:symbol', async (req, res) => {
     const vols=k15m.data.slice(-5).map(k=>parseFloat(k[5])), avgVol5=vols.slice(0,-1).reduce((a,b)=>a+b,0)/4, lastVol=vols[vols.length-1];
     const volDeltaPct=avgVol5>0?((lastVol-avgVol5)/avgVol5*100).toFixed(1):'0.0';
     const wsMetrics = getWsMetrics(symbol);
-    res.json({ price, change24h:parseFloat(ticker.data.priceChangePercent), volume24h:parseFloat(ticker.data.quoteVolume), openInterest:parseFloat(oiRes.data.openInterest), fundingRate, markPrice:parseFloat(funding.data.markPrice), indexPrice:parseFloat(funding.data.indexPrice), rsi15m, rsiOverbought:rsi15m>70, rsiOversold:rsi15m<30, cvd15m, vrvp, bb15m, vwap15m:vwap15m.toFixed(1), oiTrends:{ tf15m:oiTrend15m, tf1h:oiTrend1h, tf4h:oiTrend4h }, volDeltaPct:parseFloat(volDeltaPct), orderBook:ob, liqMagnets, divergences:allDivs, combinedSignal, scalpSignal, doublePatterns, bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d }, klines:k15m.data.slice(-20), liqData, deepOB, whaleData, fibonacci:{ tf15m:fib15m, tf4h:fib4h }, wsMetrics });
-  } catch(e) { console.error('Market error:',e.message); res.status(500).json({ error:e.message }); }
+    const responseData = { price, change24h:parseFloat(ticker.data.priceChangePercent), volume24h:parseFloat(ticker.data.quoteVolume), openInterest:parseFloat(oiRes.data.openInterest), fundingRate, markPrice:parseFloat(funding.data.markPrice), indexPrice:parseFloat(funding.data.indexPrice), rsi15m, rsiOverbought:rsi15m>70, rsiOversold:rsi15m<30, cvd15m, vrvp, bb15m, vwap15m:vwap15m.toFixed(1), oiTrends:{ tf15m:oiTrend15m, tf1h:oiTrend1h, tf4h:oiTrend4h }, volDeltaPct:parseFloat(volDeltaPct), orderBook:ob, liqMagnets, divergences:allDivs, combinedSignal, scalpSignal, doublePatterns, bias:{ tf15m:bias15m, tf1h:bias1h, tf4h:bias4h, tf1d:bias1d }, klines:k15m.data.slice(-20), liqData, deepOB, whaleData, fibonacci:{ tf15m:fib15m, tf4h:fib4h }, wsMetrics };
+    _marketCache[symbol] = { ts: Date.now(), data: responseData };
+    res.json(responseData);
+  } catch(e) {
+    console.error('Market error:',e.message);
+    // Fallback: si hay cache aunque sea viejo, devuelvo con precio WS actualizado
+    const _mc = _marketCache[symbol];
+    if (_mc) {
+      console.log(`📦 Market fallback cache para ${symbol} (${Math.round((Date.now()-_mc.ts)/1000)}s old)`);
+      const cached = { ..._mc.data, _stale: true, _staleReason: e.message };
+      const wsLive = getWsMetrics(symbol);
+      if (wsLive?.lastPrice) cached.price = wsLive.lastPrice;
+      if (wsLive) cached.wsMetrics = wsLive;
+      return res.json(cached);
+    }
+    // Sin cache: devolver precio WS mínimo para que el panel no quede en blanco
+    const wsLive = getWsMetrics(symbol);
+    const wsPrice = wsLive?.lastPrice || wsState[symbol]?.lastPrice || 0;
+    res.status(503).json({ error: e.message, price: wsPrice, wsMetrics: wsLive, _noCache: true });
+  }
 });
 
 app.post('/api/analyze', async (req, res) => {
