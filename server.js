@@ -134,7 +134,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.98' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.99' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -143,6 +143,7 @@ const wsState = {};
 const wsConnections = {};
 const killSwitchCooldown = {};
 const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
+const _wsNoDataCount = {}; // contador fallos WS consecutivos por símbolo
 
 function initWsState(symbol) {
   if (wsState[symbol]) return;
@@ -1427,7 +1428,6 @@ function startAlertJob() {
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
   console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
-  const _wsNoDataCount = {}; // contador fallos consecutivos por símbolo
   setInterval(async () => {
     for (const sym of wsSymbols) {
       const s = sym.trim();
