@@ -14,7 +14,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || proce
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
-const BINANCE_WS = 'wss://fstream.binance.com';
+const BINANCE_WS = 'wss://stream.binance.com:9443';
 // ── Filtro de horario — análisis estadístico 256 trades ─────────────────────
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.95' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.96' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1446,8 +1446,8 @@ function startAlertJob() {
   const pollBaseline = async () => {
     for (const sym of wsSymbols) {
       try {
-        // FUTURES klines — self-consistent con BINANCE_WS que ahora usa fstream.binance.com (futures)
-        const k1m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
+        // SPOT klines — self-consistent con BINANCE_WS spot stream (stream.binance.com:9443)
+        const k1m = await axios.get(`https://api.binance.com/api/v3/klines?symbol=${sym.trim()}&interval=1m&limit=10`);
         const vols = k1m.data.map(k => parseFloat(k[4]) * parseFloat(k[5]));
         const avg = vols.reduce((a,b)=>a+b,0)/vols.length;
         if (wsState[sym.trim()]) { wsState[sym.trim()].avgVolume1m = avg; }
