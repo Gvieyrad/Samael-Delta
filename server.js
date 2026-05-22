@@ -131,7 +131,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.94' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.95' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -627,9 +627,9 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
-      const sweepThreshLong = (metrics.cvdLive > 80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
+      const sweepThreshLong = (metrics.cvdLive > 80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.05;
       if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
-        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs ${sweepThreshLong}%) — ${symbol}`);
+        console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs +${sweepThreshLong}%) — ${symbol}`);
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
@@ -638,7 +638,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
     const atrPct = atr5m / price * 100;
-    if (atrPct > 0.5) { console.log(`⏭ Sweep descartado — ATR ${atrPct.toFixed(3)}% > 0.5% (riesgo alto)`); return; }
+    // v4.4.95: ATR filter eliminado — sweeps reales ocurren exactamente en alta volatilidad; R:R y confidence ya filtran riesgo
     const atr = Math.max(atr5m, price * 0.003);
     const isShort = direction === 'SHORT';
     const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
