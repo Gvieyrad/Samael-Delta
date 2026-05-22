@@ -14,6 +14,9 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || proce
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
+// ⚠️ IMPORTANTE: usar stream.binance.com:9443 (SPOT), NO fstream.binance.com (futures)
+// fstream conecta pero NO entrega aggTrade desde Railway EU West — causa loop 1006 infinito
+// Baseline en pollBaseline también debe ser SPOT (api.binance.com/api/v3/klines) para consistencia
 const BINANCE_WS = 'wss://stream.binance.com:9443';
 // ── Filtro de horario — análisis estadístico 256 trades ─────────────────────
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
@@ -131,7 +134,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.96' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.4.97' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -1417,18 +1420,30 @@ function startAlertJob() {
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
   console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
-  setInterval(() => {
+  const _wsNoDataCount = {}; // contador fallos consecutivos por símbolo
+  setInterval(async () => {
     for (const sym of wsSymbols) {
       const s = sym.trim();
       const state = wsState[s];
       if (!state || !wsConnections[s]) continue;
       const elapsed = Date.now() - (state.lastWsMsgTime || 0);
       if (elapsed > 60000) {
-        console.log(`⚠️ WS watchdog: sin aggTrade ${(elapsed/1000)|0}s — reconectando ${s}`);
+        _wsNoDataCount[s] = (_wsNoDataCount[s] || 0) + 1;
+        console.log(`⚠️ WS watchdog: sin aggTrade ${(elapsed/1000)|0}s — reconectando ${s} (fallo #${_wsNoDataCount[s]})`);
+        // Alerta Telegram si 3+ fallos consecutivos — WS stream roto a nivel de red
+        if (_wsNoDataCount[s] === 3 && process.env.TELEGRAM_CHAT_ID) {
+          try {
+            await bot.sendMessage(process.env.TELEGRAM_CHAT_ID,
+              `🚨 *WS CRÍTICO: ${s} sin datos ${_wsNoDataCount[s]} reconexiones seguidas*\nStream aggTrade no entrega datos — posible bloqueo de red o URL incorrecta.\nServidor: v${require('./package.json').version || '?'}\n🕐 ${new Date().toLocaleTimeString('es-PE', { timeZone: 'America/Lima' })}`,
+              { parse_mode: 'Markdown' });
+          } catch(e) { console.error('Telegram WS alert error:', e.message); }
+        }
         state._reconnectDelay = Math.min(60000, (state._reconnectDelay || 5000) * 2);
         wsConnections[s].terminate();
         delete wsConnections[s];
         setTimeout(() => connectWebSocket(s), state._reconnectDelay);
+      } else {
+        _wsNoDataCount[s] = 0; // reset en cuanto llegan datos
       }
     }
   }, 30000);
@@ -1494,12 +1509,15 @@ app.get('/api/ws-debug', (req, res) => {
   const debug = {};
   for (const sym of ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']) {
     const st = wsState[sym];
+    const lastAggTradeSec = st?.lastWsMsgTime ? Math.round((now - st.lastWsMsgTime) / 1000) : null;
+    const tradesLast60s = st?.trades?.filter(t => now - t.time < 60000).length || 0;
     debug[sym] = {
-      lastPrice: st?.lastPrice || 0,
-      lastUpdate: st?.lastUpdate ? Math.round((now - st.lastUpdate) / 1000) + 's ago' : 'never',
-      firstMsg: st?._firstMsg || false,
-      tradeCount: st?.trades?.length || 0,
+      healthy: !!wsConnections[sym] && lastAggTradeSec !== null && lastAggTradeSec < 30,
       connected: !!wsConnections[sym],
+      lastAggTrade: lastAggTradeSec !== null ? `${lastAggTradeSec}s ago` : 'never',
+      tradesLast60s,
+      lastPrice: st?.lastPrice || 0,
+      noDataStreak: _wsNoDataCount?.[sym] || 0,
     };
   }
   res.json(debug);
