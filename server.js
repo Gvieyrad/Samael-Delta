@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.3' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.4' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -635,6 +635,9 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
   try {
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
+    // v4.5.4: límite global 2 trades simultáneos — previene triple exposición ($36 riesgo)
+    const { data: allOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
+    if ((allOpen?.length || 0) >= 2) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades abiertos (máx 2 simultáneos)`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
     // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
@@ -701,6 +704,15 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
         console.log(`⏭ Sweep LONG omitido — bias_1d bajista (score:${bias1dSweep.score}) — mercado diario en contra (${symbol})`);
         return;
       }
+    }
+    // v4.5.4: filtro bias_4h — sweep en contra de tendencia 4h bloqueado (alta tasa de pérdida)
+    if (bias4hSweep?.bias === 'long' && direction === 'SHORT') {
+      console.log(`⏭ Sweep SHORT omitido — bias_4h alcista (score:${bias4hSweep.score}) — tendencia 4h en contra (${symbol})`);
+      return;
+    }
+    if (bias4hSweep?.bias === 'short' && direction === 'LONG') {
+      console.log(`⏭ Sweep LONG omitido — bias_4h bajista (score:${bias4hSweep.score}) — tendencia 4h en contra (${symbol})`);
+      return;
     }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
@@ -1803,18 +1815,19 @@ async function monitorPaperTrades() {
           else if (currentPrice >= sl) closeReason = 'sl';
         }
         if (closeReason) {
-          const entry = parseFloat(trade.entry), priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
+          const entry = parseFloat(trade.entry);
           const _lev4 = parseFloat(trade.leverage || 10);
+          // v4.5.4: usar precio exacto SL/TP — simula stop-limit (no slippage en paper trading)
+          const closeAtPrice = closeReason === 'sl' ? sl : closeReason === 'tp2' ? tp2 : tp1;
+          const priceDiff = trade.direction === 'LONG' ? (closeAtPrice - entry) / entry : (entry - closeAtPrice) / entry;
           const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
-          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'closed', close_price: currentPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; }
-          // ── Status basado en PnL real — no en closeReason v4.4.48 ──
-          // Si el trailing movió el SL y cerró en ganancia → trailing_tp
-          const slFueMovido = parseFloat(trade.sl) !== parseFloat(trade.sl); // placeholder — ver abajo
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'closed', close_price: closeAtPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; }
+          // Si el trailing movió el SL al profit zone y cierra en ganancia → trailing_tp
           const trailingActuo = closeReason === 'sl' && pnl_usd > 0;
           const finalCloseReason = trailingActuo ? 'trailing_tp' : closeReason;
           const tradeStatus = pnl_usd > 0 ? 'won' : 'lost';
           if (trailingActuo) console.log(`🎯 Trailing TP: ${trade.direction} ${trade.symbol} cerró en ganancia $${pnl_usd} vía trailing stop`);
-          await supabase.from('paper_trades').update({ status: tradeStatus, close_price: currentPrice, close_reason: finalCloseReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          await supabase.from('paper_trades').update({ status: tradeStatus, close_price: closeAtPrice, close_reason: finalCloseReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
           // ── Circuit Breaker: acumular PnL diario ──
           if (trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto') {
             circuitBreaker.addPnl(pnl_usd);
