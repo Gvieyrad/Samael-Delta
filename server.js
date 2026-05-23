@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.1' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.2' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -390,8 +390,10 @@ async function evaluateAnomaly(symbol) {
   const isBullishSweep = metrics.cvdLive > 40 && isVolumeAnomaly;
   const prices60s = state.trades.filter(t => now - t.time < 30000).map(t => t.price);
   const priceMove60s = prices60s.length >= 2 ? Math.abs(prices60s[prices60s.length-1] - prices60s[0]) / prices60s[0] * 100 : 0;
-  const cvdExtreme = Math.abs(metrics.cvdLive) >= 55; // v4.4.98: 70→55 — CVD -55/-63% son sweeps reales
-  const priceThreshold = cvdExtreme ? 0.05 : 0.10;   // v4.4.98: 0.15→0.10 — spot WS tiene moves 30-40% menores que futuros
+  const cvdExtreme = Math.abs(metrics.cvdLive) >= 55;
+  // v4.5.2: BTC mueve menos % que ETH/SOL — threshold específico por símbolo
+  const isBtcSym = symbol === 'BTCUSDT';
+  const priceThreshold = cvdExtreme ? (isBtcSym ? 0.03 : 0.05) : (isBtcSym ? 0.07 : 0.10);
   const isPriceMoving = priceMove60s >= priceThreshold;
   const isRealBearishSweep = isBearishSweep && isPriceMoving;
   const isRealBullishSweep = isBullishSweep && isPriceMoving;
@@ -444,7 +446,8 @@ async function evaluateAnomaly(symbol) {
   console.log(`⚡ ANOMALÍA DETECTADA: ${direction} ${symbol} — ${reason} (liq bonus: +${liqZoneBonus})`);
   try {
     if (isSweep) {
-      await killSwitchOpposite(symbol, direction, reason);
+      // v4.5.2: kill_switch solo en sweeps vol≥7x — sweeps débiles no deben cerrar trades existentes sin abrir compensación
+      if (metrics.volumeMultiplier >= 7) await killSwitchOpposite(symbol, direction, reason);
       await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
     } else if (isMassiveWhale) {
       await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
@@ -663,7 +666,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.2) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
-    if (sweepConfidence < 80) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 80%`); return; }
+    // v4.5.2: 80→86 — vol<7x da conf=85, bloqueado. Solo vol≥7x (conf≥90) abre. Corta pérdidas de señales débiles.
+    if (sweepConfidence < 86) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 86% (requiere vol≥7x)`); return; }
     let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
     try {
       const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
