@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.4' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.5' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -716,6 +716,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
     await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
+    // v4.5.5: reset watermarks WS al abrir — previene stale trailHigh/Low de antes del trade
+    if (wsState[symbol]) { wsState[symbol].trailHigh = price; wsState[symbol].trailLow = price; wsState[symbol].pollingHigh = price; wsState[symbol].pollingLow = price; }
     // Cooldown se setea aquí — solo cuando trade realmente abre, no en detección de anomalía
     const _ck = `${symbol}_${direction}`;
     killSwitchCooldown[_ck] = Date.now();
@@ -3454,9 +3456,12 @@ async function detectMeanReversion(symbol) {
   // Cooldown
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
 
-  // No abrir si ya hay trade abierto
+  // No abrir si ya hay trade abierto para este símbolo
   const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
   if (existing?.length) return;
+  // v4.5.5: cap global 2 trades — igual que sweep
+  const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
+  if ((_mrAllOpen?.length || 0) >= 2) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades abiertos (máx 2)`); return; }
 
   const price = wsState[symbol]?.lastPrice;
   if (!price) return;
