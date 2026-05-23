@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.5' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.6' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -637,7 +637,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     // v4.5.4: límite global 2 trades simultáneos — previene triple exposición ($36 riesgo)
     const { data: allOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
-    if ((allOpen?.length || 0) >= 2) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades abiertos (máx 2 simultáneos)`); return; }
+    if ((allOpen?.length || 0) >= 3) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades abiertos (máx 3 simultáneos)`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
     // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
@@ -3461,7 +3461,7 @@ async function detectMeanReversion(symbol) {
   if (existing?.length) return;
   // v4.5.5: cap global 2 trades — igual que sweep
   const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
-  if ((_mrAllOpen?.length || 0) >= 2) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades abiertos (máx 2)`); return; }
+  if ((_mrAllOpen?.length || 0) >= 3) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades abiertos (máx 3)`); return; }
 
   const price = wsState[symbol]?.lastPrice;
   if (!price) return;
