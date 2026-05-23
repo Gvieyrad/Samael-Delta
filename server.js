@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.2' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.3' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -565,7 +565,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     } catch(_) {}
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
-    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[lows5m.length - 10 + i]), 0) / 10;
     const atr = Math.max(atr5m, price * 0.004);
     const isLong = direction === 'LONG';
     const tp1 = isLong ? price + atr * 1.2 : price - atr * 1.2;
@@ -641,13 +641,15 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const prices5mSw = wsState[symbol]?.trades?.filter(t => Date.now() - t.time < 5*60*1000).map(t => t.price) || [];
     if (prices5mSw.length >= 5) {
       const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
-      const sweepThreshShort = (metrics.cvdLive < -80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.1;
+      // v4.5.3: BTC mueve menos % — umbral 5min específico por símbolo
+      const _isBtc5m = symbol === 'BTCUSDT';
+      const sweepThreshShort = (metrics.cvdLive < (_isBtc5m ? -70 : -80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.07 : 0.1);
       if (direction === 'SHORT' && priceMove5mSw > -sweepThreshShort) {
         console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}% vs -${sweepThreshShort}%) — ${symbol}`);
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
-      const sweepThreshLong = (metrics.cvdLive > 80 && metrics.volumeMultiplier > 6) ? 0.03 : 0.05;
+      const sweepThreshLong = (metrics.cvdLive > (_isBtc5m ? 70 : 80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.03 : 0.05);
       if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
         console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs +${sweepThreshLong}%) — ${symbol}`);
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
@@ -656,13 +658,15 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     }
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
-    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[i]), 0) / 10;
+    const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[lows5m.length - 10 + i]), 0) / 10;
     const atrPct = atr5m / price * 100;
     // v4.4.95: ATR filter eliminado — sweeps reales ocurren exactamente en alta volatilidad; R:R y confidence ya filtran riesgo
     const atr = Math.max(atr5m, price * 0.003);
     const isShort = direction === 'SHORT';
     const tp1 = isShort ? price - atr * 2.5 : price + atr * 2.5;
     const sl = isShort ? price + atr * 0.8 : price - atr * 0.8;
+    if (isShort && sl <= price) { console.log(`⚠️ Sweep trade descartado — SL inválido SHORT: sl=${sl.toFixed(4)} <= entry=${price.toFixed(4)} (ATR=${atr5m.toFixed(4)})`); return; }
+    if (!isShort && sl >= price) { console.log(`⚠️ Sweep trade descartado — SL inválido LONG: sl=${sl.toFixed(4)} >= entry=${price.toFixed(4)} (ATR=${atr5m.toFixed(4)})`); return; }
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.2) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
     const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
