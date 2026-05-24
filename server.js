@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.8' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.9' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -643,6 +643,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.5.7: cap por dirección — máx 1 trade por dirección — previene BTC+ETH+SOL todos LONG/SHORT simultáneos
     const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
     if (sameDir >= 1) { console.log(`⏭ Sweep omitido — ya hay ${sameDir} trade(s) ${direction} abierto(s) (máx 1 por dirección)`); return; }
+    // v4.5.9: Circuit Breaker — sweep no lo consultaba, seguía abriendo trades aunque CB activo
+    if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
     // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
@@ -720,6 +722,16 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     }
     if (bias4hSweep?.bias === 'short' && direction === 'LONG') {
       console.log(`⏭ Sweep LONG omitido — bias_4h bajista (score:${bias4hSweep.score}) — tendencia 4h en contra (${symbol})`);
+      return;
+    }
+    // v4.5.9: sobreextensión — b4h score > 90 = mercado sobrecomprado, sweep LONG en techo (0W 9L en datos)
+    if (bias4hSweep && bias4hSweep.bias === 'long' && bias4hSweep.score > 90 && direction === 'LONG') {
+      console.log(`⏭ Sweep LONG omitido — bias_4h sobreextendido (score:${bias4hSweep.score} > 90) — sobrecompra 4h (${symbol})`);
+      return;
+    }
+    // v4.5.9: igual para SHORT sobrevendido
+    if (bias4hSweep && bias4hSweep.bias === 'short' && bias4hSweep.score < 10 && direction === 'SHORT') {
+      console.log(`⏭ Sweep SHORT omitido — bias_4h sobreextendido (score:${bias4hSweep.score} < 10) — sobreventa 4h (${symbol})`);
       return;
     }
     const mlDataSweep = { confidence: sweepConfidence, direction, mode: 'sweep', price, sweep_reason: reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, whale_count: metrics.whaleCount, whale_buy_vol: (metrics.whaleBuyVol/1e6).toFixed(2), whale_sell_vol: (metrics.whaleSellVol/1e6).toFixed(2), liq_bonus: liqBonus, atr_5m: atr.toFixed(1), funding_rate: fundingSweep, oi_trend_15m: oiTrend15mSweep?.trend || 'flat', oi_delta_15m: oiTrend15mSweep?.deltaPct || '0', bias_4h: bias4hSweep?.bias || 'neutral', bias_4h_score: bias4hSweep?.score || 50, bias_1d: bias1dSweep?.bias || 'neutral', bias_1d_score: bias1dSweep?.score || 50, fib_level: fib15mSweep?.nearestRetrace?.label || null, fib_dist: fib15mSweep?.nearestRetrace?.dist || null, fib_signal: fib15mSweep?.retImpact?.signal || null, rsi_15m: null, timestamp: new Date().toISOString() };
