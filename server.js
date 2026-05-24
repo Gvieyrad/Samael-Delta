@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.11' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.12' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -3717,6 +3717,16 @@ app.get('/api/sesion', (req, res) => {
 
 
 // ── ENDPOINT: Estado trackers v4.4.38 ──
+// ── Reset Circuit Breaker manual — usar tras deploy con nuevas reglas
+app.post('/api/reset-cb', (req, res) => {
+  const today = circuitBreaker.getToday();
+  const prevPnl = circuitBreaker.dailyPnl[today] || 0;
+  delete circuitBreaker.dailyPnl[today];
+  delete circuitBreaker.paused[today];
+  console.log(`🔄 Circuit Breaker reseteado manualmente — PnL anterior: $${prevPnl.toFixed(2)}`);
+  res.json({ ok: true, prevPnl, message: 'CB reseteado — trades habilitados' });
+});
+
 app.get('/api/tracker/status', (req, res) => {
   const cb = circuitBreaker.isActive();
   const ethPaused = ethLossTracker.isPaused();
@@ -3737,9 +3747,9 @@ app.get('/api/tracker/status', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.5.11 corriendo en puerto ${PORT}`);
-  await circuitBreaker.initFromSupabase(); // v4.5.10: CB persiste entre restarts
+app.listen(PORT, () => {
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.5.12 corriendo en puerto ${PORT}`);
+  // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
