@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.7' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.8' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -633,21 +633,8 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
 
 async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
-    // v4.5.7: filtro horario — sweep no tenía ninguno, abría trades en madrugada (00-05h Lima)
-    if (isHoraBloqueada()) {
-      const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
-      const esMadrugada = horaLima >= 0 && horaLima <= 5;
-      if (esMadrugada) {
-        console.log(`⏰ Sweep bloqueado — madrugada ${horaLima}h Lima (00-05h)`);
-        return;
-      }
-      const esSeñalExtrema = Math.abs(metrics.cvdLive) > 88 && metrics.volumeMultiplier > 10;
-      if (!esSeñalExtrema) {
-        console.log(`⏰ Sweep bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
-        return;
-      }
-      console.log(`✅ Sweep ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal extrema (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
-    }
+    // Sweep corre 24/7 — crypto no tiene sesión; vol≥7x+CVD extremo son señales reales en cualquier hora
+    // (bloqueo madrugada removido v4.5.8 — cap-por-dirección es la protección correcta)
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     // v4.5.4: límite global trades simultáneos
