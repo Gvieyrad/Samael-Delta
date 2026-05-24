@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.9' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.10' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -589,6 +589,11 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
 
 async function killSwitchOpposite(symbol, sweepDirection, reason) {
   try {
+    // v4.5.10: si CB activo no hay trade compensatorio que abrir — no cerrar sin reemplazo
+    if (circuitBreaker.isActive()) {
+      console.log(`⏭ Kill switch omitido — Circuit Breaker activo, sin trade compensatorio disponible (${symbol})`);
+      return;
+    }
     const oppositeDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
     const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
     if (!openTrades?.length) return;
@@ -2160,8 +2165,12 @@ const circuitBreaker = {
   paused: {},
   LIMIT: -50,
   getToday() {
-    const lima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
-    return lima.toISOString().slice(0, 10);
+    // Fecha Lima (UTC-5, sin DST) como YYYY-MM-DD
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  },
+  getLimaStartOfDayUTC() {
+    const today = this.getToday(); // YYYY-MM-DD en Lima
+    return new Date(`${today}T00:00:00-05:00`).toISOString(); // Lima medianoche → UTC
   },
   addPnl(pnl) {
     const day = this.getToday();
@@ -2178,6 +2187,28 @@ const circuitBreaker = {
       return true;
     }
     return false;
+  },
+  // v4.5.10: inicializar desde Supabase — sobrevive restarts de Railway
+  async initFromSupabase() {
+    try {
+      const startUTC = this.getLimaStartOfDayUTC();
+      const { data } = await supabase
+        .from('paper_trades')
+        .select('pnl_usd')
+        .gte('closed_at', startUTC)
+        .neq('source', 'manual')
+        .not('pnl_usd', 'is', null);
+      if (!data?.length) { console.log('✅ CB init — sin trades cerrados hoy, PnL=0'); return; }
+      const totalPnl = data.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
+      const day = this.getToday();
+      this.dailyPnl[day] = totalPnl;
+      if (totalPnl <= this.LIMIT) {
+        this.paused[day] = true;
+        console.log(`🔴 CB init desde Supabase — PnL hoy: $${totalPnl.toFixed(2)} → CIRCUIT BREAKER ACTIVO`);
+      } else {
+        console.log(`✅ CB init desde Supabase — PnL hoy: $${totalPnl.toFixed(2)} (límite: $${this.LIMIT})`);
+      }
+    } catch(e) { console.error('CB init error:', e.message); }
   }
 };
 
@@ -3662,8 +3693,9 @@ app.get('/api/tracker/status', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.4.87 corriendo en puerto ${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.5.10 corriendo en puerto ${PORT}`);
+  await circuitBreaker.initFromSupabase(); // v4.5.10: CB persiste entre restarts
   syncBinanceTime();
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
