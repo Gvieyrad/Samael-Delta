@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.10' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.11' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -475,7 +475,6 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const esMadrugadaAbsoluta = horaLima >= 1 && horaLima <= 4;
       if (!esBallenaFuerte || esMadrugadaAbsoluta) {
         console.log(`⏰ Whale bloqueado — hora ${horaLima}h Lima${esBallenaFuerte ? ' (madrugada absoluta)' : ' fuera de ventana óptima'}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏰ 🐋 Ballena ${direction} ${symbol} — *BLOQUEADA*\nRazón: Hora ${horaLima}h Lima fuera de ventana óptima\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       console.log(`✅ Whale ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal fuerte (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
@@ -501,12 +500,10 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       const priceMove5m = (prices5mWh[prices5mWh.length-1] - prices5mWh[0]) / prices5mWh[0] * 100;
       if (direction === 'SHORT' && priceMove5m > -0.1) {
         console.log(`⏭ Whale SHORT omitido — precio no confirma bajada en 5min (${priceMove5m.toFixed(2)}%) — absorción compradora (${symbol})`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5m.toFixed(2)}%) — posible absorción compradora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       if (direction === 'LONG' && priceMove5m < 0.1) {
         console.log(`⏭ Whale LONG omitido — precio no confirma subida en 5min (${priceMove5m.toFixed(2)}%) — absorción vendedora (${symbol})`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5m.toFixed(2)}%) — posible absorción vendedora\n💡 La señal fue detectada pero el filtro de seguridad la bloqueó\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
     }
@@ -523,12 +520,10 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
         const blockLongWh  = bias1dWh.bias === 'short' || bias1dWh.score < 42;
         if (direction === 'SHORT' && blockShortWh) {
           console.log(`⏭ Whale SHORT omitido — bias_1d alcista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena SHORT ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria alcista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
           return;
         }
         if (direction === 'LONG' && blockLongWh) {
           console.log(`⏭ Whale LONG omitido — bias_1d bajista (score:${bias1dWh.score}) — mercado diario en contra (${symbol})`);
-      if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🐋 Ballena LONG ${symbol} — *NO ABRIÓ*\nRazón: Tendencia diaria bajista (score:${bias1dWh.score}) — mercado en contra\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
           return;
         }
       }
@@ -616,10 +611,6 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const slProgress = totalDistance > 0 ? currentDistance / totalDistance : 0;
       if (slProgress < slThreshold) {
         console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL (umbral: ${(slThreshold*100).toFixed(0)}%)`);
-        if (process.env.TELEGRAM_CHAT_ID) {
-          const msg = `⏭ Kill Switch omitido — ${trade.direction} ${symbol}\nAl ${(slProgress*100).toFixed(0)}% del SL — margen suficiente\nPrecio: $${parseInt(currentPrice).toLocaleString()} | SL: $${parseInt(sl).toLocaleString()}`;
-          try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
-        }
         continue;
       }
       const priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
@@ -663,14 +654,12 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       const sweepThreshShort = _shortExtreme ? 0.001 : (metrics.cvdLive < (_isBtc5m ? -70 : -80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.07 : 0.1);
       if (direction === 'SHORT' && priceMove5mSw > -sweepThreshShort) {
         console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}% vs -${sweepThreshShort}%) — ${symbol}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
       const _longExtreme = _isBtc5m && metrics.cvdLive > 90 && metrics.volumeMultiplier > 10;
       const sweepThreshLong = _longExtreme ? 0.001 : (metrics.cvdLive > (_isBtc5m ? 70 : 80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.03 : 0.05);
       if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
         console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs +${sweepThreshLong}%) — ${symbol}`);
-        if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
     }
@@ -1490,6 +1479,51 @@ Responde SOLO JSON sin markdown:
   finally { analysisInProgress[symbol] = false; }
 }
 
+// ── RESUMEN DIARIO 23:00 Lima ──────────────────────────────────────
+let _dailySummarySentToday = '';
+
+async function sendDailySummary() {
+  if (!process.env.TELEGRAM_CHAT_ID) return;
+  try {
+    const startUTC = circuitBreaker.getLimaStartOfDayUTC();
+    const { data: trades } = await supabase
+      .from('paper_trades')
+      .select('symbol,direction,entry,close_price,pnl_usd,status,source,close_reason,opened_at,closed_at')
+      .gte('opened_at', startUTC)
+      .neq('source', 'manual')
+      .order('opened_at', { ascending: true });
+
+    const closed = (trades || []).filter(t => t.status !== 'open');
+    const open = (trades || []).filter(t => t.status === 'open');
+    const wins = closed.filter(t => t.status === 'won');
+    const losses = closed.filter(t => t.status === 'lost');
+    const totalPnl = closed.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
+    const wr = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
+
+    // PnL por fuente
+    const bySource = {};
+    closed.forEach(t => {
+      const src = t.source || 'unknown';
+      if (!bySource[src]) bySource[src] = { w: 0, l: 0, pnl: 0 };
+      if (t.status === 'won') bySource[src].w++;
+      else bySource[src].l++;
+      bySource[src].pnl += parseFloat(t.pnl_usd || 0);
+    });
+    const srcLines = Object.entries(bySource)
+      .map(([src, d]) => `  ${src}: ${d.w}W ${d.l}L $${d.pnl >= 0 ? '+' : ''}${d.pnl.toFixed(2)}`)
+      .join('\n');
+
+    const pnlStr = totalPnl >= 0 ? `+$${totalPnl.toFixed(2)}` : `-$${Math.abs(totalPnl).toFixed(2)}`;
+    const resultEmoji = totalPnl >= 0 ? '🟢' : '🔴';
+    const fecha = new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    const msg = `📊 *Resumen del día — ${fecha}*\n━━━━━━━━━━━━━━\n${resultEmoji} PnL total: *${pnlStr}*\n📈 ${wins.length}W / ${losses.length}L — WR ${wr}%\n🔄 ${closed.length} trades cerrados${open.length ? ` | ${open.length} abierto(s)` : ''}\n━━━━━━━━━━━━━━\n${srcLines || '  Sin trades'}\n━━━━━━━━━━━━━━\n⏸️ Circuit Breaker: ${circuitBreaker.isActive() ? 'ACTIVO' : 'OK'} (PnL acum: $${(circuitBreaker.dailyPnl[circuitBreaker.getToday()] || 0).toFixed(2)})`;
+
+    await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' });
+    console.log(`📊 Resumen diario enviado — ${closed.length} trades, PnL ${pnlStr}`);
+  } catch(e) { console.error('Daily summary error:', e.message); }
+}
+
 function startAlertJob() {
   if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_TOKEN) {
     console.log('⚠️ Alertas Telegram desactivadas');
@@ -1497,6 +1531,16 @@ function startAlertJob() {
     setTimeout(monitorPaperTrades, 15000);
     return;
   }
+
+  // ── Resumen diario 23:00 Lima — check cada minuto
+  setInterval(() => {
+    const horaLima = new Date().toLocaleString('en-US', { timeZone: 'America/Lima', hour: 'numeric', minute: 'numeric', hour12: false });
+    const today = circuitBreaker.getToday();
+    if (horaLima === '23:00' && _dailySummarySentToday !== today) {
+      _dailySummarySentToday = today;
+      sendDailySummary();
+    }
+  }, 60 * 1000);
 
     // ── Mean Reversion scanner — cada 1 minuto
   setInterval(runMeanRevScanner, 60 * 1000);
@@ -3694,7 +3738,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Panel Futuros EL CHIMUELO v4.5.10 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Panel Futuros EL CHIMUELO v4.5.11 corriendo en puerto ${PORT}`);
   await circuitBreaker.initFromSupabase(); // v4.5.10: CB persiste entre restarts
   syncBinanceTime();
   startAlertJob();
