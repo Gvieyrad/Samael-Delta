@@ -135,7 +135,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.6' }));
+app.get('/', (req, res) => res.json({ status: 'Panel Futuros EL CHIMUELO activo', version: '4.5.7' }));
 
 // ══════════════════════════════════════════════════════════════════
 // ─── MÓDULO WEBSOCKET — DETECCIÓN EN TIEMPO REAL ─────────────────
@@ -633,11 +633,29 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
 
 async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   try {
+    // v4.5.7: filtro horario — sweep no tenía ninguno, abría trades en madrugada (00-05h Lima)
+    if (isHoraBloqueada()) {
+      const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
+      const esMadrugada = horaLima >= 0 && horaLima <= 5;
+      if (esMadrugada) {
+        console.log(`⏰ Sweep bloqueado — madrugada ${horaLima}h Lima (00-05h)`);
+        return;
+      }
+      const esSeñalExtrema = Math.abs(metrics.cvdLive) > 88 && metrics.volumeMultiplier > 10;
+      if (!esSeñalExtrema) {
+        console.log(`⏰ Sweep bloqueado — hora ${horaLima}h Lima fuera de ventana óptima`);
+        return;
+      }
+      console.log(`✅ Sweep ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal extrema (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
+    }
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
-    // v4.5.4: límite global 2 trades simultáneos — previene triple exposición ($36 riesgo)
-    const { data: allOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
+    // v4.5.4: límite global trades simultáneos
+    const { data: allOpen } = await supabase.from('paper_trades').select('id,direction').eq('status', 'open');
     if ((allOpen?.length || 0) >= 3) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades abiertos (máx 3 simultáneos)`); return; }
+    // v4.5.7: cap por dirección — máx 1 trade por dirección — previene BTC+ETH+SOL todos LONG/SHORT simultáneos
+    const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
+    if (sameDir >= 1) { console.log(`⏭ Sweep omitido — ya hay ${sameDir} trade(s) ${direction} abierto(s) (máx 1 por dirección)`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
     // v4.4.16 C2b: confirmación precio 5min en sweep — misma lógica que whale trade
@@ -646,13 +664,16 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       const priceMove5mSw = (prices5mSw[prices5mSw.length-1] - prices5mSw[0]) / prices5mSw[0] * 100;
       // v4.5.3: BTC mueve menos % — umbral 5min específico por símbolo
       const _isBtc5m = symbol === 'BTCUSDT';
-      const sweepThreshShort = (metrics.cvdLive < (_isBtc5m ? -70 : -80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.07 : 0.1);
+      // v4.5.7: señal extrema (CVD>90% + vol>10x) → threshold mínimo — BTC no mueve % aunque la señal sea real
+      const _shortExtreme = _isBtc5m && metrics.cvdLive < -90 && metrics.volumeMultiplier > 10;
+      const sweepThreshShort = _shortExtreme ? 0.001 : (metrics.cvdLive < (_isBtc5m ? -70 : -80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.07 : 0.1);
       if (direction === 'SHORT' && priceMove5mSw > -sweepThreshShort) {
         console.log(`⏭ Sweep SHORT omitido — precio no confirma bajada en 5min (${priceMove5mSw.toFixed(2)}% vs -${sweepThreshShort}%) — ${symbol}`);
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep SHORT ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó bajada en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
         return;
       }
-      const sweepThreshLong = (metrics.cvdLive > (_isBtc5m ? 70 : 80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.03 : 0.05);
+      const _longExtreme = _isBtc5m && metrics.cvdLive > 90 && metrics.volumeMultiplier > 10;
+      const sweepThreshLong = _longExtreme ? 0.001 : (metrics.cvdLive > (_isBtc5m ? 70 : 80) && metrics.volumeMultiplier > 6) ? (_isBtc5m ? 0.02 : 0.03) : (_isBtc5m ? 0.03 : 0.05);
       if (direction === 'LONG' && priceMove5mSw < sweepThreshLong) {
         console.log(`⏭ Sweep LONG omitido — precio no confirma subida en 5min (${priceMove5mSw.toFixed(2)}% vs +${sweepThreshLong}%) — ${symbol}`);
         if (process.env.TELEGRAM_CHAT_ID) try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⚠️ 🌊 Sweep LONG ${symbol} — *NO ABRIÓ*\nRazón: Precio no confirmó subida en 5min (${priceMove5mSw.toFixed(2)}%)\n🕐 ${new Date().toLocaleTimeString('es-PE')}`, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); }
