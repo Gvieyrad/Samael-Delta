@@ -148,6 +148,7 @@ app.get('/samael', async (req, res) => {
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
     const pnlReal  = real.reduce((a,t) => a + (t.pnl_usd||0), 0);
+    const totalFees = real.reduce((a,t) => a + (t.size_usd||0) * (t.leverage||10) * 0.00028, 0);
     const shorts   = done.filter(t => t.direction === 'SHORT');
     const longs    = done.filter(t => t.direction === 'LONG');
     const shortWins= shorts.filter(t => t.status === 'won');
@@ -254,6 +255,11 @@ tr:hover td{background:#1c2128}
     <div class="label">Abiertos</div>
     <div class="val">${open.length}</div>
     <div class="sub2">${open.map(t=>t.symbol.replace('USDT','')).join(', ')||'&mdash;'}</div>
+  </div>
+  <div class="card">
+    <div class="label">Fees Pagados</div>
+    <div class="val neg">-$${totalFees.toFixed(2)}</div>
+    <div class="sub2">${real.length} trades reales</div>
   </div>
 
   ${fundingCount > 0 ? `<div class="card">
