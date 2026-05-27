@@ -138,6 +138,134 @@ app.get('/api/binance/account', async (req, res) => {
 });
 app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.12' }));
 
+app.get('/samael', async (req, res) => {
+  try {
+    const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
+    const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
+    const open  = trades.filter(t => t.status === 'open');
+    const real  = done.filter(t => t.source !== 'meanrev');
+    const wins  = done.filter(t => t.status === 'won');
+    const realWins = real.filter(t => t.status === 'won');
+    const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
+    const pnlReal  = real.reduce((a,t) => a + (t.pnl_usd||0), 0);
+    const shorts   = done.filter(t => t.direction === 'SHORT');
+    const longs    = done.filter(t => t.direction === 'LONG');
+    const shortWins= shorts.filter(t => t.status === 'won');
+    const longWins = longs.filter(t => t.status === 'won');
+    const wrD = (w,n) => n.length > 0 ? (w.length/n.length*100).toFixed(1)+'%' : '-';
+
+    const tradeRows = trades.slice(0,25).map(t => {
+      const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
+      const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
+      const dir  = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
+      const src  = t.source === 'meanrev' ? '<span class="muted">meanrev</span>' : (t.source||'');
+      const ts   = t.opened_at ? t.opened_at.slice(5,16).replace('T',' ') : '';
+      const reason = t.close_reason || (t.status === 'open' ? '<span class="muted">open</span>' : '&#x2014;');
+      return '<tr><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td>'+src+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
+    }).join('');
+
+    const openRows = open.length > 0 ? open.map(t => {
+      const dir = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
+      const since = t.opened_at ? t.opened_at.slice(11,16)+' UTC' : '';
+      return '<tr><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>$'+t.entry+'</td><td>$'+(t.tp1?t.tp1.toFixed(4):'-')+'</td><td>$'+(t.sl?t.sl.toFixed(4):'-')+'</td><td class="muted">'+since+'</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="muted center">Sin trades abiertos</td></tr>';
+
+    const pnlRealSign = pnlReal >= 0 ? '+' : '';
+    const pnlTotalSign = pnlTotal >= 0 ? '+' : '';
+    const pnlRealClass = pnlReal >= 0 ? 'pos' : 'neg';
+    const pnlTotalClass = pnlTotal >= 0 ? 'pos' : 'neg';
+    const longWRnum = longs.length > 0 ? longWins.length/longs.length : 0;
+    const longClass = longWRnum > 0.35 ? 'pos' : 'neg';
+    const realWRstr = real.length > 0 ? (realWins.length/real.length*100).toFixed(1) : '0';
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Samael Delta</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;padding:20px}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.sub{color:#8b949e;font-size:12px;margin-bottom:24px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:20px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+.card .label{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.card .val{font-size:26px;font-weight:700}
+.card .sub2{font-size:11px;color:#8b949e;margin-top:4px}
+.pos{color:#3fb950}.neg{color:#f85149}.muted{color:#8b949e;font-size:12px}.long{color:#3fb950}.short{color:#f85149}.center{text-align:center}
+.section{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:14px;overflow:hidden}
+.section h2{font-size:11px;font-weight:600;padding:10px 14px;border-bottom:1px solid #30363d;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:7px 12px;font-size:11px;color:#8b949e;border-bottom:1px solid #21262d;text-transform:uppercase}
+td{padding:7px 12px;border-bottom:1px solid #1c2128;font-size:13px}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#1c2128}
+.refresh{position:fixed;bottom:14px;right:14px;font-size:11px;color:#484f58}
+</style>
+</head>
+<body>
+<h1>&#9889; Samael Delta</h1>
+<div class="sub">v4.5.14 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">PnL Real</div>
+    <div class="val ${pnlRealClass}">${pnlRealSign}$\${pnlReal.toFixed(2)}</div>
+    <div class="sub2">\${real.length} trades (sin meanrev)</div>
+  </div>
+  <div class="card">
+    <div class="label">WR Real</div>
+    <div class="val">${realWRstr}%</div>
+    <div class="sub2">\${realWins.length}W / \${real.length - realWins.length}L</div>
+  </div>
+  <div class="card">
+    <div class="label">SHORT WR</div>
+    <div class="val pos">\${wrD(shortWins, shorts)}</div>
+    <div class="sub2">\${shorts.length} trades</div>
+  </div>
+  <div class="card">
+    <div class="label">LONG WR</div>
+    <div class="val ${longClass}">\${wrD(longWins, longs)}</div>
+    <div class="sub2">\${longs.length} trades</div>
+  </div>
+  <div class="card">
+    <div class="label">Abiertos</div>
+    <div class="val">\${open.length}</div>
+    <div class="sub2">\${open.map(t=>t.symbol.replace('USDT','')).join(', ')||'&mdash;'}</div>
+  </div>
+  <div class="card">
+    <div class="label">PnL Total</div>
+    <div class="val ${pnlTotalClass}">${pnlTotalSign}$\${pnlTotal.toFixed(2)}</div>
+    <div class="sub2">incl. meanrev paper</div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>&#9203; Trades Abiertos</h2>
+  <table><thead><tr><th>Par</th><th>Dir</th><th>Entry</th><th>TP1</th><th>SL</th><th>Desde</th></tr></thead>
+  <tbody>${openRows}</tbody></table>
+</div>
+
+<div class="section">
+  <h2>&#128203; Últimos 25 Trades</h2>
+  <table><thead><tr><th>#</th><th>Par</th><th>Dir</th><th>PnL</th><th>Razón</th><th>Fuente</th><th>Apertura</th><th></th></tr></thead>
+  <tbody>${tradeRows}</tbody></table>
+</div>
+
+<div class="refresh">&#x21BA; cada 30s</div>
+</body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch(e) {
+    res.status(500).send('Error: ' + e.message);
+  }
+});
+
+
 // ══════════════════════════════════════════════════════════════════
 // ─── BINANCE FUTURES EXECUTION LAYER (Patch 11) ──────────────────
 // Activo solo si BINANCE_API_KEY + BINANCE_SECRET_KEY + LIVE_TRADING=true
