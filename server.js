@@ -159,14 +159,14 @@ app.get('/samael', async (req, res) => {
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
       const dir  = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
       const src  = t.source === 'meanrev' ? '<span class="muted">meanrev</span>' : (t.source||'');
-      const ts   = t.opened_at ? t.opened_at.slice(5,16).replace('T',' ') : '';
+      const ts   = t.opened_at ? new Date(new Date(t.opened_at)-18000000).toISOString().slice(5,16).replace('T',' ') : '';
       const reason = t.close_reason || (t.status === 'open' ? '<span class="muted">open</span>' : '&#x2014;');
       return '<tr><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td>'+src+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
     }).join('');
 
     const openRows = open.length > 0 ? open.map(t => {
       const dir = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
-      const since = t.opened_at ? t.opened_at.slice(11,16)+' UTC' : '';
+      const since = t.opened_at ? new Date(new Date(t.opened_at)-18000000).toISOString().slice(11,16)+' Lima' : '';
       return '<tr><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>$'+t.entry+'</td><td>$'+(t.tp1?t.tp1.toFixed(4):'-')+'</td><td>$'+(t.sl?t.sl.toFixed(4):'-')+'</td><td class="muted">'+since+'</td></tr>';
     }).join('') : '<tr><td colspan="6" class="muted center">Sin trades abiertos</td></tr>';
 
