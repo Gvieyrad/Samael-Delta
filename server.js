@@ -142,27 +142,28 @@ app.get('/samael', async (req, res) => {
   try {
     const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
     const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
-    const open  = trades.filter(t => t.status === 'open');
+    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev');
     const real  = done.filter(t => t.source !== 'meanrev');
     const wins  = done.filter(t => t.status === 'won');
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
     const pnlReal  = real.reduce((a,t) => a + (t.pnl_usd||0), 0);
     const totalFees = real.reduce((a,t) => a + (t.size_usd||0) * (t.leverage||10) * 0.00028, 0);
-    const shorts   = done.filter(t => t.direction === 'SHORT');
-    const longs    = done.filter(t => t.direction === 'LONG');
+    const shorts   = real.filter(t => t.direction === 'SHORT');
+    const longs    = real.filter(t => t.direction === 'LONG');
     const shortWins= shorts.filter(t => t.status === 'won');
     const longWins = longs.filter(t => t.status === 'won');
     const wrD = (w,n) => n.length > 0 ? (w.length/n.length*100).toFixed(1)+'%' : '-';
 
-    const tradeRows = trades.slice(0,25).map(t => {
+    const realTrades = trades.filter(t => t.source !== 'meanrev');
+    const tradeRows = realTrades.slice(0,25).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
       const dir  = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
-      const src  = t.source === 'meanrev' ? '<span class="muted">meanrev</span>' : (t.source||'');
+      const sig  = t.source === 'sweep' ? 'sweep' : t.source === 'whale' ? '<span style="color:#e3b341">whale</span>' : (t.source||'');
       const ts   = t.opened_at ? new Date(new Date(t.opened_at)-18000000).toISOString().slice(5,16).replace('T',' ') : '';
       const reason = t.close_reason || (t.status === 'open' ? '<span class="muted">open</span>' : '&#x2014;');
-      return '<tr><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td>'+src+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
+      return '<tr><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td class="muted">'+sig+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
     }).join('');
 
     const openRows = open.length > 0 ? open.map(t => {
