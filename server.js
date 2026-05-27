@@ -213,32 +213,32 @@ tr:hover td{background:#1c2128}
 <div class="cards">
   <div class="card">
     <div class="label">PnL Real</div>
-    <div class="val ${pnlRealClass}">${pnlRealSign}$\${pnlReal.toFixed(2)}</div>
-    <div class="sub2">\${real.length} trades (sin meanrev)</div>
+    <div class="val ${pnlRealClass}">${pnlRealSign}$${pnlReal.toFixed(2)}</div>
+    <div class="sub2">${real.length} trades (sin meanrev)</div>
   </div>
   <div class="card">
     <div class="label">WR Real</div>
     <div class="val">${realWRstr}%</div>
-    <div class="sub2">\${realWins.length}W / \${real.length - realWins.length}L</div>
+    <div class="sub2">${realWins.length}W / ${real.length - realWins.length}L</div>
   </div>
   <div class="card">
     <div class="label">SHORT WR</div>
-    <div class="val pos">\${wrD(shortWins, shorts)}</div>
-    <div class="sub2">\${shorts.length} trades</div>
+    <div class="val pos">${wrD(shortWins, shorts)}</div>
+    <div class="sub2">${shorts.length} trades</div>
   </div>
   <div class="card">
     <div class="label">LONG WR</div>
-    <div class="val ${longClass}">\${wrD(longWins, longs)}</div>
-    <div class="sub2">\${longs.length} trades</div>
+    <div class="val ${longClass}">${wrD(longWins, longs)}</div>
+    <div class="sub2">${longs.length} trades</div>
   </div>
   <div class="card">
     <div class="label">Abiertos</div>
-    <div class="val">\${open.length}</div>
-    <div class="sub2">\${open.map(t=>t.symbol.replace('USDT','')).join(', ')||'&mdash;'}</div>
+    <div class="val">${open.length}</div>
+    <div class="sub2">${open.map(t=>t.symbol.replace('USDT','')).join(', ')||'&mdash;'}</div>
   </div>
   <div class="card">
     <div class="label">PnL Total</div>
-    <div class="val ${pnlTotalClass}">${pnlTotalSign}$\${pnlTotal.toFixed(2)}</div>
+    <div class="val ${pnlTotalClass}">${pnlTotalSign}$${pnlTotal.toFixed(2)}</div>
     <div class="sub2">incl. meanrev paper</div>
   </div>
 </div>
