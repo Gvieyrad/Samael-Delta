@@ -170,6 +170,25 @@ app.get('/samael', async (req, res) => {
       return '<tr><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>$'+t.entry+'</td><td>$'+(t.tp1?t.tp1.toFixed(4):'-')+'</td><td>$'+(t.sl?t.sl.toFixed(4):'-')+'</td><td class="muted">'+since+'</td></tr>';
     }).join('') : '<tr><td colspan="6" class="muted center">Sin trades abiertos</td></tr>';
 
+    // Funding fees de Binance (últimos 30 días)
+    let fundingTotal = 0;
+    let fundingCount = 0;
+    let walletBalance = null;
+    try {
+      const ts = Date.now() + binanceTimeOffset;
+      const startTime30d = ts - 30 * 24 * 60 * 60 * 1000;
+      const qFunding = `timestamp=${ts}&recvWindow=10000&incomeType=FUNDING_FEE&limit=1000&startTime=${Math.round(startTime30d)}`;
+      const sigFunding = crypto.createHmac('sha256', BINANCE_SECRET || '').update(qFunding).digest('hex');
+      const rFunding = await axios.get(`${BINANCE}/fapi/v1/income?${qFunding}&signature=${sigFunding}`,
+        { headers: { 'X-MBX-APIKEY': BINANCE_API_KEY }, timeout: 10000 });
+      if (Array.isArray(rFunding.data)) {
+        fundingTotal = rFunding.data.reduce((a, x) => a + parseFloat(x.income || 0), 0);
+        fundingCount = rFunding.data.length;
+      }
+      const acc = await fetchBinanceAccount();
+      if (acc) walletBalance = acc.totalWalletBalance;
+    } catch(eFund) { /* sin keys o error — omitir */ }
+
     const pnlRealSign = pnlReal >= 0 ? '+' : '';
     const pnlTotalSign = pnlTotal >= 0 ? '+' : '';
     const pnlRealClass = pnlReal >= 0 ? 'pos' : 'neg';
@@ -241,6 +260,16 @@ tr:hover td{background:#1c2128}
     <div class="val ${pnlTotalClass}">${pnlTotalSign}$${pnlTotal.toFixed(2)}</div>
     <div class="sub2">incl. meanrev paper</div>
   </div>
+  ${fundingCount > 0 ? `<div class="card">
+    <div class="label">Funding 30d</div>
+    <div class="val ${fundingTotal >= 0 ? 'pos' : 'neg'}">${fundingTotal >= 0 ? '+' : ''}$${fundingTotal.toFixed(4)}</div>
+    <div class="sub2">${fundingCount} cobros/pagos</div>
+  </div>` : ''}
+  ${walletBalance !== null ? `<div class="card">
+    <div class="label">Wallet Real</div>
+    <div class="val">${'$'+walletBalance.toFixed(2)}</div>
+    <div class="sub2">Binance Futures USDT</div>
+  </div>` : ''}
 </div>
 
 <div class="section">
