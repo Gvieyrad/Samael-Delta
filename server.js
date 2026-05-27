@@ -255,11 +255,7 @@ tr:hover td{background:#1c2128}
     <div class="val">${open.length}</div>
     <div class="sub2">${open.map(t=>t.symbol.replace('USDT','')).join(', ')||'&mdash;'}</div>
   </div>
-  <div class="card">
-    <div class="label">PnL Total</div>
-    <div class="val ${pnlTotalClass}">${pnlTotalSign}$${pnlTotal.toFixed(2)}</div>
-    <div class="sub2">incl. meanrev paper</div>
-  </div>
+
   ${fundingCount > 0 ? `<div class="card">
     <div class="label">Funding 30d</div>
     <div class="val ${fundingTotal >= 0 ? 'pos' : 'neg'}">${fundingTotal >= 0 ? '+' : ''}$${fundingTotal.toFixed(4)}</div>
