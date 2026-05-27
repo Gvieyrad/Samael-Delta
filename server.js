@@ -3023,7 +3023,7 @@ async function processWallSignal(symbol, wall, direction, strength, absorptionPc
     await supabase.from('paper_trades').insert({
       symbol, direction, entry: price, tp1, tp2: tp1, sl,
       rr: `1:${rrVal.toFixed(1)}`, confidence: wallConf,
-      size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+      size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
       leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
       source: 'wall', status: 'open',
       opened_at: new Date().toISOString(),
@@ -3847,7 +3847,7 @@ async function detectMeanReversion(symbol) {
     symbol, direction, entry: price, tp1: tp, tp2: tp, sl,
     rr: `1:${rr.toFixed(1)}`,
     confidence: conf,
-    size_usd: parseFloat(process.env.PAPER_SIZE_USD || '1000'),
+    size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
     leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
     source: 'meanrev',
     status: 'open',
