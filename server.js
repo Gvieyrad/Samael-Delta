@@ -136,14 +136,14 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.16' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.17' }));
 
 app.get('/samael', async (req, res) => {
   try {
     const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
     const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
-    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev');
-    const real  = done.filter(t => t.source !== 'meanrev');
+    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow');
+    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow');
     const wins  = done.filter(t => t.status === 'won');
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
@@ -154,8 +154,11 @@ app.get('/samael', async (req, res) => {
     const shortWins= shorts.filter(t => t.status === 'won');
     const longWins = longs.filter(t => t.status === 'won');
     const wrD = (w,n) => n.length > 0 ? (w.length/n.length*100).toFixed(1)+'%' : '-';
+    const shadow     = done.filter(t => t.source === 'shadow');
+    const shadowWins = shadow.filter(t => t.status === 'won');
+    const shadowPnl  = shadow.reduce((a,t) => a + (t.pnl_usd||0), 0);
 
-    const realTrades = trades.filter(t => t.source !== 'meanrev');
+    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow');
     const tradeRows = realTrades.slice(0,25).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
@@ -229,7 +232,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.16 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.17 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -272,6 +275,11 @@ tr:hover td{background:#1c2128}
     <div class="label">Wallet Real</div>
     <div class="val">${'$'+walletBalance.toFixed(2)}</div>
     <div class="sub2">Binance Futures USDT</div>
+  </div>` : ''}
+  ${shadow.length > 0 ? `<div class="card" style="border-color:#8b949e4d">
+    <div class="label" style="color:#6e7681">&#x1F52E; Shadow CT</div>
+    <div class="val ${shadowPnl >= 0 ? 'pos' : 'neg'}">${(shadowPnl >= 0 ? '+$' : '-$') + Math.abs(shadowPnl).toFixed(2)}</div>
+    <div class="sub2">${shadow.length} trades &middot; WR ${(shadowWins.length/Math.max(shadow.length,1)*100).toFixed(0)}%</div>
   </div>` : ''}
 </div>
 
@@ -554,7 +562,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
 
       // Circuit breaker global diario
-      if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd);
+      if (trade.source !== 'manual' && trade.source !== 'shadow') circuitBreaker.addPnl(pnl_usd);
       // Circuit breaker por símbolo (sweep/whale)
       if ((trade.source === 'sweep' || trade.source === 'whale') && _symTrackers[symbol]) {
         if (status === 'lost') _symTrackers[symbol].recordLoss();
@@ -568,7 +576,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      await closeFuturesPosition(symbol, trade.direction);
+      if (trade.source !== 'shadow') await closeFuturesPosition(symbol, trade.direction);
       console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
@@ -760,6 +768,7 @@ async function evaluateAnomaly(symbol) {
       // v4.5.2: kill_switch solo en sweeps vol≥7x — sweeps débiles no deben cerrar trades existentes sin abrir compensación
       if (metrics.volumeMultiplier >= 7) await killSwitchOpposite(symbol, direction, reason);
       await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
+      openShadowTrade(symbol, direction, metrics.lastPrice).catch(e => console.error('Shadow error:', e.message));
     } else if (isMassiveWhale) {
       await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
       await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
@@ -784,6 +793,8 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (direction === 'LONG') { console.log(`⏭ Whale LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Whale pausado — 3 SL consecutivos`); return; }
+    // v4.5.17: bloquear ETH
+    if (symbol === 'ETHUSDT') { console.log(`⏭ Whale ETH bloqueado — no confiable en bull run (${direction})`); return; }
     // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -962,6 +973,27 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
   } catch(e) { console.error('Kill switch error:', e.message); }
 }
 
+async function openShadowTrade(symbol, sweepDirection, price) {
+  // Counter-trend tracker: bearish sweep (SHORT) -> shadow LONG; bullish -> shadow SHORT
+  // Sin Binance call real — solo paper track para evaluar si contrarian es mejor
+  const shadowDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
+  try {
+    const { data: existing } = await supabase.from('paper_trades').select('id')
+      .eq('symbol', symbol).eq('status', 'open').eq('source', 'shadow');
+    if (existing?.length) return; // ya hay shadow abierto para este símbolo
+    const atr = price * 0.003;
+    const isShadowShort = shadowDir === 'SHORT';
+    const tp1 = isShadowShort ? price - atr * 2.5 : price + atr * 2.5;
+    const sl  = isShadowShort ? price + atr * 0.8  : price - atr * 0.8;
+    await supabase.from('paper_trades').insert({
+      symbol, direction: shadowDir, entry: price, tp1, sl,
+      size_usd: 62, leverage: 10, source: 'shadow', status: 'open',
+      opened_at: new Date().toISOString()
+    });
+    console.log(`🔮 Shadow CT: ${shadowDir} ${symbol} @ ${price.toFixed(2)} (sweep fue ${sweepDirection})`);
+  } catch(e) { console.error('Shadow trade error:', e.message); }
+}
+
 async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   if (_openingTrades.has(symbol)) { console.log('Sweep omitido -- apertura en curso para ' + symbol); return; }
   _openingTrades.add(symbol);
@@ -981,6 +1013,10 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (direction === 'LONG') { console.log(`⏭ Sweep LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Sweep pausado — 3 SL consecutivos`); return; }
+    // v4.5.17: bloquear ETH (bull run — sweeps bajistas revertidos de inmediato)
+    if (symbol === 'ETHUSDT') { console.log(`⏭ Sweep ETH bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.17: restaurar filtro horario (WR madrugada Lima era 0-20%, removido en v4.5.8)
+    if (isHoraBloqueada()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — hora Lima fuera de ventana`); return; }
     if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
@@ -4139,7 +4175,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.16 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.17 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
