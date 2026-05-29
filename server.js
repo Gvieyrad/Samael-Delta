@@ -136,7 +136,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.12' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.16' }));
 
 app.get('/samael', async (req, res) => {
   try {
@@ -4139,7 +4139,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.12 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.16 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
