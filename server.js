@@ -136,7 +136,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.18' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.19' }));
 
 app.get('/samael', async (req, res) => {
   try {
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.18 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.19 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -805,6 +805,8 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Whale pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH
     if (symbol === 'ETHUSDT') { console.log(`⏭ Whale ETH bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.19: bloquear WLD (bull run — WR SHORT 14%, mismo perfil que ETH)
+    if (symbol === 'WLDUSDT') { console.log(`⏭ Whale WLD bloqueado — no confiable en bull run (${direction})`); return; }
     // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -1026,6 +1028,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Sweep pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH (bull run — sweeps bajistas revertidos de inmediato)
     if (symbol === 'ETHUSDT') { console.log(`⏭ Sweep ETH bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.19: bloquear WLD (bull run — WR SHORT 14%, mismo perfil que ETH)
+    if (symbol === 'WLDUSDT') { console.log(`⏭ Sweep WLD bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.17: restaurar filtro horario (WR madrugada Lima era 0-20%, removido en v4.5.8)
     if (isHoraBloqueada()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — hora Lima fuera de ventana`); return; }
     if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
@@ -4187,7 +4191,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.18 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.19 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
