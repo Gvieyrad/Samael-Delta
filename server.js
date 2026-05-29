@@ -23,7 +23,7 @@ const BINANCE_WS = 'wss://stream.binance.com:9443';
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
-const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 13, 15, 16, 17, 18, 19, 21, 23]);
+const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 10, 13, 15, 16, 17, 18, 19, 21, 23]);
 
 const WALL_ENABLED       = false; // solo sweep activo
 const SCALP_ENABLED      = false; // solo sweep activo
