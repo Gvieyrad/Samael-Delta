@@ -229,7 +229,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.14 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.16 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -553,8 +553,13 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
       }).eq('id', trade.id);
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
 
-      // Circuit breaker
+      // Circuit breaker global diario
       if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd);
+      // Circuit breaker por símbolo (sweep/whale)
+      if ((trade.source === 'sweep' || trade.source === 'whale') && _symTrackers[symbol]) {
+        if (status === 'lost') _symTrackers[symbol].recordLoss();
+        else _symTrackers[symbol].recordWin();
+      }
 
       // Loss trackers
       if (trade.source === 'scalping') {
@@ -775,6 +780,10 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
   if (_openingTrades.has(symbol)) { console.log('Whale omitido -- apertura en curso para ' + symbol); return; }
   _openingTrades.add(symbol);
   try {
+    // v4.5.16: bloquear ALL LONGs — WR LONG real 14%, sistemáticamente negativo
+    if (direction === 'LONG') { console.log(`⏭ Whale LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
+    // Circuit breaker por símbolo
+    if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Whale pausado — 3 SL consecutivos`); return; }
     // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -968,6 +977,10 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
     if (sameDir >= 1) { console.log(`⏭ Sweep omitido — ya hay ${sameDir} trade(s) ${direction} abierto(s) (máx 1 por dirección)`); return; }
     // v4.5.9: Circuit Breaker — sweep no lo consultaba, seguía abriendo trades aunque CB activo
+    // v4.5.16: bloquear ALL LONGs
+    if (direction === 'LONG') { console.log(`⏭ Sweep LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
+    // Circuit breaker por símbolo
+    if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Sweep pausado — 3 SL consecutivos`); return; }
     if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
     const price = metrics.lastPrice;
     if (!price) { console.log(`⏭ Sweep omitido — sin precio WS para ${symbol}`); return; }
@@ -2616,13 +2629,13 @@ const circuitBreaker = {
 };
 
 // ── CONSECUTIVE LOSS TRACKER por símbolo v4.4.40 ──
-function createLossTracker(sym) {
+function createLossTracker(sym, maxLosses = 2, pauseMin = 30) {
   return {
     symbol: sym,
     consecutive: 0,
     pausedUntil: null,
-    MAX: 2,
-    PAUSE_MIN: 30,
+    MAX: maxLosses,
+    PAUSE_MIN: pauseMin,
     recordLoss() {
       this.consecutive++;
       if (this.consecutive >= this.MAX) {
@@ -2648,6 +2661,12 @@ function createLossTracker(sym) {
 }
 const ethLossTracker = createLossTracker('ETH');
 const solLossTracker = createLossTracker('SOL');
+
+// Circuit breaker por símbolo — sweep/whale — 3 SL consecutivos → 24h pausa
+const _symTrackers = {};
+['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT'].forEach(s => {
+  _symTrackers[s] = createLossTracker(s.replace('1000PEPE','PEPE').replace('USDT','') + '-sweep', 3, 1440);
+});
 
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
