@@ -23,7 +23,7 @@ const BINANCE_WS = 'wss://stream.binance.com:9443';
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
-const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 10, 13, 15, 16, 17, 18, 19, 21, 23]);
+const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 21, 23]);
 
 const WALL_ENABLED       = false; // solo sweep activo
 const SCALP_ENABLED      = false; // solo sweep activo
@@ -136,14 +136,14 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.17' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.18' }));
 
 app.get('/samael', async (req, res) => {
   try {
     const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
     const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
-    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow');
-    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow');
+    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
+    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
     const wins  = done.filter(t => t.status === 'won');
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
@@ -157,8 +157,11 @@ app.get('/samael', async (req, res) => {
     const shadow     = done.filter(t => t.source === 'shadow');
     const shadowWins = shadow.filter(t => t.status === 'won');
     const shadowPnl  = shadow.reduce((a,t) => a + (t.pnl_usd||0), 0);
+    const solPaper     = done.filter(t => t.source === 'sol_paper');
+    const solPaperWins = solPaper.filter(t => t.status === 'won');
+    const solPaperPnl  = solPaper.reduce((a,t) => a + (t.pnl_usd||0), 0);
 
-    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow');
+    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
     const tradeRows = realTrades.slice(0,25).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
@@ -232,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.17 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.18 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -281,6 +284,11 @@ tr:hover td{background:#1c2128}
     <div class="val ${shadowPnl >= 0 ? 'pos' : 'neg'}">${(shadowPnl >= 0 ? '+$' : '-$') + Math.abs(shadowPnl).toFixed(2)}</div>
     <div class="sub2">${shadow.length} trades &middot; WR ${(shadowWins.length/Math.max(shadow.length,1)*100).toFixed(0)}%</div>
   </div>` : ''}
+  ${solPaper.length > 0 ? `<div class="card" style="border-color:#8b949e4d">
+    <div class="label" style="color:#6e7681">&#x1F4C4; SOL Paper</div>
+    <div class="val ${solPaperPnl >= 0 ? 'pos' : 'neg'}">${(solPaperPnl >= 0 ? '+$' : '-$') + Math.abs(solPaperPnl).toFixed(2)}</div>
+    <div class="sub2">${solPaper.length} trades &middot; WR ${(solPaperWins.length/Math.max(solPaper.length,1)*100).toFixed(0)}%</div>
+  </div>` : ''}
 </div>
 
 <div class="section">
@@ -312,6 +320,8 @@ tr:hover td{background:#1c2128}
 // Sin esas 3 variables el bot sigue en paper mode (comportamiento anterior)
 // ══════════════════════════════════════════════════════════════════
 const _LIVE_TRADING = process.env.LIVE_TRADING === 'true' && !!BINANCE_API_KEY && !!BINANCE_SECRET;
+// Símbolos en paper-only: WS conectado + paper_trades, sin orden real en Binance
+const PAPER_ONLY_SYMBOLS = new Set(['SOLUSDT']);
 const _futuresInfoCache = {};   // symbol → { stepSize, quantityPrecision }
 const _leverageSet     = new Set(); // `${symbol}_${lev}` ya configurado
 
@@ -576,7 +586,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      if (trade.source !== 'shadow') await closeFuturesPosition(symbol, trade.direction);
+      if (trade.source !== 'shadow' && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
       console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
@@ -901,11 +911,12 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     const whaleConfidence = Math.max(82, Math.min(92, Math.round(72 + (metrics.volumeMultiplier >= 5 ? 10 : 5) + liqBonus)));
     const tradeCtx = await captureTradeContext(symbol);
     // Bug2 fix: abrir en Binance primero — si falla no queda phantom trade en Supabase
-    const _whaleFillResult = await openFuturesPosition(symbol, direction,
+    const _isPaperOnlyW = PAPER_ONLY_SYMBOLS.has(symbol);
+    const _whaleFillResult = _isPaperOnlyW ? null : await openFuturesPosition(symbol, direction,
       parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
       parseInt(process.env.PAPER_LEVERAGE || '5'), price);
-    if (!_whaleFillResult && _LIVE_TRADING) { console.error(`Whale trade abortado — Binance rechazó orden ${symbol}`); return; }
-    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
+    if (!_whaleFillResult && _LIVE_TRADING && !_isPaperOnlyW) { console.error(`Whale trade abortado — Binance rechazó orden ${symbol}`); return; }
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: _isPaperOnlyW ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
@@ -1121,11 +1132,12 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.5.5: reset watermarks WS al abrir — previene stale trailHigh/Low de antes del trade
     if (wsState[symbol]) { wsState[symbol].trailHigh = price; wsState[symbol].trailLow = price; wsState[symbol].pollingHigh = price; wsState[symbol].pollingLow = price; }
     // Bug2 fix: abrir en Binance primero — si falla no queda phantom trade en Supabase
-    const _sweepFillResult = await openFuturesPosition(symbol, direction,
+    const _isPaperOnlyS = PAPER_ONLY_SYMBOLS.has(symbol);
+    const _sweepFillResult = _isPaperOnlyS ? null : await openFuturesPosition(symbol, direction,
       parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
       parseInt(process.env.PAPER_LEVERAGE || '10'), price);
-    if (!_sweepFillResult && _LIVE_TRADING) { console.error(`Sweep trade abortado — Binance rechazó orden ${symbol}`); return; }
-    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
+    if (!_sweepFillResult && _LIVE_TRADING && !_isPaperOnlyS) { console.error(`Sweep trade abortado — Binance rechazó orden ${symbol}`); return; }
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: _isPaperOnlyS ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
     // Cooldown se setea aquí — solo cuando trade realmente abre, no en detección de anomalía
     const _ck = `${symbol}_${direction}`;
     killSwitchCooldown[_ck] = Date.now();
@@ -2700,7 +2712,7 @@ const solLossTracker = createLossTracker('SOL');
 
 // Circuit breaker por símbolo — sweep/whale — 3 SL consecutivos → 24h pausa
 const _symTrackers = {};
-['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT'].forEach(s => {
+['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT','SOLUSDT'].forEach(s => {
   _symTrackers[s] = createLossTracker(s.replace('1000PEPE','PEPE').replace('USDT','') + '-sweep', 3, 1440);
 });
 
@@ -4175,7 +4187,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.17 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.18 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
