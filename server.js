@@ -136,7 +136,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.19' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.20' }));
 
 app.get('/samael', async (req, res) => {
   try {
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.19 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.20 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -819,7 +819,8 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       }
       console.log(`✅ Whale ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal fuerte (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
     }
-    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    // v4.5.20: excluir shadow/sol_paper/meanrev de caps
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const { data: recentWhale } = await supabase.from('paper_trades').select('opened_at').eq('symbol', symbol).eq('source', 'sweep').order('opened_at', { ascending: false }).limit(1);
     if (recentWhale?.length) {
@@ -1013,11 +1014,12 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
   try {
     // Sweep corre 24/7 — crypto no tiene sesión; vol≥7x+CVD extremo son señales reales en cualquier hora
     // (bloqueo madrugada removido v4.5.8 — cap-por-dirección es la protección correcta)
-    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+    // v4.5.20: excluir shadow/sol_paper/meanrev de caps — no deben bloquear trades reales
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     // v4.5.4: límite global trades simultáneos
-    const { data: allOpen } = await supabase.from('paper_trades').select('id,direction').eq('status', 'open');
-    if ((allOpen?.length || 0) >= 3) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades abiertos (máx 3 simultáneos)`); return; }
+    const { data: allOpen } = await supabase.from('paper_trades').select('id,direction').eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
+    if ((allOpen?.length || 0) >= 3) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades reales abiertos (máx 3 simultáneos)`); return; }
     // v4.5.7: cap por dirección — máx 1 trade por dirección — previene BTC+ETH+SOL todos LONG/SHORT simultáneos
     const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
     if (sameDir >= 1) { console.log(`⏭ Sweep omitido — ya hay ${sameDir} trade(s) ${direction} abierto(s) (máx 1 por dirección)`); return; }
@@ -4191,7 +4193,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.19 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.20 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
