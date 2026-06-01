@@ -136,7 +136,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.21' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.22' }));
 
 app.get('/samael', async (req, res) => {
   try {
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.21 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.22 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -450,6 +450,7 @@ const wsState = {};
 const wsConnections = {};
 const killSwitchCooldown = {};
 const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
+const _nearWhaleLastLog = {}; // v4.5.22: throttle near-whale monitor logs — 1x por 5min por símbolo
 const _wsNoDataCount = {}; // contador fallos WS consecutivos por símbolo
 const _openLock = new Set(); // lock síncrono anti-race: previene doble apertura por aggTrade concurrente
 
@@ -731,6 +732,16 @@ async function evaluateAnomaly(symbol) {
   }
   const realWhaleThreshold = symbol.includes('BTC') ? 10000000 : symbol.includes('ETH') ? 5000000 : 1000000;
   const bigWhale = state.trades.find(t => t.usdVal >= realWhaleThreshold && now - t.time < 30000);
+  // v4.5.22: near-whale monitor — loggear cuando la mayor orden llega al 20%+ del umbral
+  if (!bigWhale) {
+    const _maxTrade60s = state.trades.filter(t => now - t.time < 60000).reduce((mx, t) => Math.max(mx, t.usdVal), 0);
+    if (_maxTrade60s >= realWhaleThreshold * 0.20) {
+      if (!_nearWhaleLastLog[symbol] || now - _nearWhaleLastLog[symbol] > 300000) {
+        _nearWhaleLastLog[symbol] = now;
+        console.log(`🔭 Near-whale ${symbol}: max orden $${(_maxTrade60s/1000).toFixed(0)}K = ${(_maxTrade60s/realWhaleThreshold*100).toFixed(0)}% del umbral whale ($${(realWhaleThreshold/1e6).toFixed(2)}M)`);
+      }
+    }
+  }
   const massiveWhaleThreshold = symbol.includes('BTC') ? 20000000 : symbol.includes('ETH') ? 8000000 : 3000000;
   const massiveAccumThreshold = symbol.includes('BTC') ? 30000000 : symbol.includes('ETH') ? 20000000 : 5000000;
   const last10sTrades = state.trades.filter(t => now - t.time < 10000);
@@ -782,6 +793,9 @@ async function evaluateAnomaly(symbol) {
     } else if (isMassiveWhale) {
       await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
       await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
+    } else if (isWhaleOnly) {
+      // v4.5.22: fix bug — bigWhale detectado pero sin rama de ejecución desde siempre (n=0 whale trades)
+      await openWhaleCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
     }
   } finally {
     _openLock.delete(lockKey); // siempre liberar — cooldown en openSweepCounterTrade protege reentrada post-open
@@ -4232,7 +4246,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.21 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.22 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
