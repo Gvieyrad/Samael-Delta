@@ -136,7 +136,7 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.22' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.23' }));
 
 app.get('/samael', async (req, res) => {
   try {
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.22 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.23 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -451,6 +451,7 @@ const wsConnections = {};
 const killSwitchCooldown = {};
 const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
 const _nearWhaleLastLog = {}; // v4.5.22: throttle near-whale monitor logs — 1x por 5min por símbolo
+const _bullRunBlocked = new Set(); // v4.5.23: símbolos auto-bloqueados por bull run detector
 const _wsNoDataCount = {}; // contador fallos WS consecutivos por símbolo
 const _openLock = new Set(); // lock síncrono anti-race: previene doble apertura por aggTrade concurrente
 
@@ -823,6 +824,8 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (symbol === 'WLDUSDT') { console.log(`⏭ Whale WLD bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Whale SUI bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.23: auto-bloqueo dinámico por bull run detector
+    if (_bullRunBlocked.has(symbol)) { console.log(`⏭ Whale ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`); return; }
     // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -1050,6 +1053,8 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (symbol === 'WLDUSDT') { console.log(`⏭ Sweep WLD bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Sweep SUI bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.23: auto-bloqueo dinámico por bull run detector
+    if (_bullRunBlocked.has(symbol)) { console.log(`⏭ Sweep ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`); return; }
     // v4.5.17: restaurar filtro horario (WR madrugada Lima era 0-20%, removido en v4.5.8)
     if (isHoraBloqueada()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — hora Lima fuera de ventana`); return; }
     if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
@@ -2775,6 +2780,33 @@ async function initSymTrackers() {
   }
 }
 
+// v4.5.23: bull run auto-detector — chequea ratio LONG/SHORT en shadow trades 24h
+async function updateBullRunState() {
+  const symbols = ['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT','SOLUSDT'];
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  for (const symbol of symbols) {
+    try {
+      const { data } = await supabase
+        .from('paper_trades')
+        .select('direction')
+        .eq('symbol', symbol)
+        .eq('source', 'shadow')
+        .gte('opened_at', since);
+      if (!data || data.length < 5) continue; // necesita mín 5 señales
+      const longs = data.filter(t => t.direction === 'LONG').length;
+      const ratio = longs / data.length;
+      const wasBlocked = _bullRunBlocked.has(symbol);
+      if (ratio >= 0.65 && !wasBlocked) {
+        _bullRunBlocked.add(symbol);
+        console.log(`🔴 Bull run auto-block ${symbol}: ${(ratio*100).toFixed(0)}% LONG en 24h (n=${data.length}) — SHORTs sistémicamente perdedores`);
+      } else if (ratio < 0.50 && wasBlocked) {
+        _bullRunBlocked.delete(symbol);
+        console.log(`🟢 Bull run unblock ${symbol}: ${(ratio*100).toFixed(0)}% LONG en 24h (n=${data.length}) — mercado normalizado`);
+      }
+    } catch(e) { console.error(`Bull run check error ${symbol}:`, e.message); }
+  }
+}
+
 const scalpingInProgress = {};
 async function runScalpingAnalysis(symbol = 'BTCUSDT') {
   if (!SCALP_ENABLED) return;
@@ -4246,11 +4278,13 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.22 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.23 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
+  updateBullRunState().catch(e => console.error('Bull run init error:', e.message));
+  setInterval(() => updateBullRunState().catch(e => console.error('Bull run check error:', e.message)), 30 * 60 * 1000); // v4.5.23: re-evaluar cada 30min
   startAlertJob();
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
   // N=89 trades, WR 33.7%, PnL -$108 — sin edge estadístico, peor source del sistema
