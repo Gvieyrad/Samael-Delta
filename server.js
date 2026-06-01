@@ -136,14 +136,14 @@ app.get('/api/binance/account', async (req, res) => {
     res.json({ ...account, available: true });
   } catch(e) { res.status(500).json({ error: e.message, available: false }); }
 });
-app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.23' }));
+app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4.5.24' }));
 
 app.get('/samael', async (req, res) => {
   try {
     const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
     const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
-    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
-    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
+    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
+    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
     const wins  = done.filter(t => t.status === 'won');
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
@@ -161,7 +161,7 @@ app.get('/samael', async (req, res) => {
     const solPaperWins = solPaper.filter(t => t.status === 'won');
     const solPaperPnl  = solPaper.reduce((a,t) => a + (t.pnl_usd||0), 0);
 
-    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper');
+    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
     const tradeRows = realTrades.slice(0,25).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.23 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.24 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -574,7 +574,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
 
       // Circuit breaker global diario
-      if (trade.source !== 'manual' && trade.source !== 'shadow') circuitBreaker.addPnl(pnl_usd);
+      if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long') circuitBreaker.addPnl(pnl_usd);
       // Circuit breaker por símbolo (sweep/whale)
       if ((trade.source === 'sweep' || trade.source === 'whale') && _symTrackers[symbol]) {
         if (status === 'lost') _symTrackers[symbol].recordLoss();
@@ -588,7 +588,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      if (trade.source !== 'shadow' && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
+      if (trade.source !== 'shadow' && trade.source !== 'bull_run_long' && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
       console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
@@ -839,7 +839,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       console.log(`✅ Whale ${direction} ${symbol} — hora ${horaLima}h SALTADA por señal fuerte (CVD:${metrics.cvdLive.toFixed(1)}% Vol:${metrics.volumeMultiplier.toFixed(1)}x)`);
     }
     // v4.5.20: excluir shadow/sol_paper/meanrev de caps
-    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev').neq('source', 'bull_run_long');
     if (existing?.length) { console.log(`⏭ Whale trade omitido — ya hay trade abierto para ${symbol}`); return; }
     const { data: recentWhale } = await supabase.from('paper_trades').select('opened_at').eq('symbol', symbol).eq('source', 'sweep').order('opened_at', { ascending: false }).limit(1);
     if (recentWhale?.length) {
@@ -1027,6 +1027,25 @@ async function openShadowTrade(symbol, sweepDirection, price) {
   } catch(e) { console.error('Shadow trade error:', e.message); }
 }
 
+// v4.5.24: paper LONG con real sizing cuando sweep detecta bull run — observar WR antes de activar real
+async function openBullRunLong(symbol, price) {
+  try {
+    const { data: existing } = await supabase.from('paper_trades').select('id')
+      .eq('symbol', symbol).eq('status', 'open').eq('source', 'bull_run_long');
+    if (existing?.length) return; // ya hay bull_run_long abierto para este símbolo
+    const atr = price * 0.003;
+    const sizeUsd = parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62');
+    const lev = parseInt(process.env.PAPER_LEVERAGE || '5');
+    await supabase.from('paper_trades').insert({
+      symbol, direction: 'LONG', entry: price,
+      tp1: price + atr * 2.5, sl: price - atr * 0.8,
+      size_usd: sizeUsd, leverage: lev, source: 'bull_run_long', status: 'open',
+      opened_at: new Date().toISOString()
+    });
+    console.log(`📈 Bull-run LONG paper: ${symbol} @ ${price.toFixed(2)} size=$${sizeUsd}/lev=${lev} (observando WR antes de activar real)`);
+  } catch(e) { console.error('bull_run_long error:', e.message); }
+}
+
 async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
   if (_openingTrades.has(symbol)) { console.log('Sweep omitido -- apertura en curso para ' + symbol); return; }
   _openingTrades.add(symbol);
@@ -1034,10 +1053,10 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // Sweep corre 24/7 — crypto no tiene sesión; vol≥7x+CVD extremo son señales reales en cualquier hora
     // (bloqueo madrugada removido v4.5.8 — cap-por-dirección es la protección correcta)
     // v4.5.20: excluir shadow/sol_paper/meanrev de caps — no deben bloquear trades reales
-    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
+    const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev').neq('source', 'bull_run_long');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
     // v4.5.4: límite global trades simultáneos
-    const { data: allOpen } = await supabase.from('paper_trades').select('id,direction').eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev');
+    const { data: allOpen } = await supabase.from('paper_trades').select('id,direction').eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev').neq('source', 'bull_run_long');
     if ((allOpen?.length || 0) >= 3) { console.log(`⏭ Sweep omitido — ${allOpen.length} trades reales abiertos (máx 3 simultáneos)`); return; }
     // v4.5.7: cap por dirección — máx 1 trade por dirección — previene BTC+ETH+SOL todos LONG/SHORT simultáneos
     const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
@@ -1054,7 +1073,12 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Sweep SUI bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.23: auto-bloqueo dinámico por bull run detector
-    if (_bullRunBlocked.has(symbol)) { console.log(`⏭ Sweep ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`); return; }
+    if (_bullRunBlocked.has(symbol)) {
+      console.log(`⏭ Sweep ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`);
+      // v4.5.24: paper LONG track para calibrar si LONGs son viables en bull run
+      openBullRunLong(symbol, metrics.lastPrice).catch(e => console.error('bull_run_long error:', e.message));
+      return;
+    }
     // v4.5.17: restaurar filtro horario (WR madrugada Lima era 0-20%, removido en v4.5.8)
     if (isHoraBloqueada()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — hora Lima fuera de ventana`); return; }
     if (circuitBreaker.isActive()) { console.log(`⏸️ Sweep ${direction} ${symbol} bloqueado — Circuit Breaker activo hoy`); return; }
@@ -4278,7 +4302,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.23 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.24 corriendo en puerto ${PORT}`);
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
