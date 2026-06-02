@@ -792,6 +792,7 @@ async function evaluateAnomaly(symbol) {
       if (metrics.volumeMultiplier >= 7) await killSwitchOpposite(symbol, direction, reason);
       await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
       openShadowTrade(symbol, direction, metrics.lastPrice).catch(e => console.error('Shadow error:', e.message));
+      openRealLong(symbol, direction, metrics.lastPrice).catch(e => console.error('LONG real error:', e.message)); // v4.5.26
     } else if (isMassiveWhale) {
       await killSwitchOpposite(symbol, massiveWhaleDirection, reason);
       await openWhaleCounterTrade(symbol, massiveWhaleDirection, metrics, reason, liqZoneBonus);
@@ -1005,6 +1006,37 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       }
     }
   } catch(e) { console.error('Kill switch error:', e.message); }
+}
+
+// v4.5.26: LONG real para WLD/XRP/BTC cuando sweep bajista falla (shadow WR>42%)
+const LONG_REAL_SYMBOLS = new Set((process.env.LONG_REAL_SYMBOLS || 'WLDUSDT,XRPUSDT,BTCUSDT').split(','));
+async function openRealLong(symbol, sweepDirection, price) {
+  if (sweepDirection !== 'SHORT') return;
+  if (!LONG_REAL_SYMBOLS.has(symbol)) return;
+  try {
+    const { data: existing } = await supabase.from('paper_trades').select('id,direction')
+      .eq('symbol', symbol).eq('status', 'open')
+      .not('source', 'in', '(shadow,sol_paper,meanrev,bull_run_long)');
+    if (existing?.length) { console.log('LONG real omitido -- ya hay trade abierto ' + symbol); return; }
+    const { data: allOpen } = await supabase.from('paper_trades').select('id')
+      .eq('status', 'open').eq('direction', 'LONG')
+      .not('source', 'in', '(shadow,sol_paper,meanrev,bull_run_long)');
+    if ((allOpen?.length || 0) >= 1) { console.log('LONG real omitido -- ya hay 1 LONG abierto (max 1)'); return; }
+    const sz = parseFloat(process.env.LONG_SIZE_USD || '8');
+    const lev = parseInt(process.env.LONG_LEVERAGE || '3');
+    const fill = _LIVE_TRADING ? await openFuturesPosition(symbol, 'LONG', sz, lev, price) : { price };
+    if (!fill && _LIVE_TRADING) { console.error('LONG real abortado -- Binance rechazo ' + symbol); return; }
+    const ep = fill?.price || price;
+    const atr = ep * 0.003;
+    const tp1 = ep + atr * 2.5;
+    const sl  = ep - atr * 0.8;
+    await supabase.from('paper_trades').insert({
+      symbol, direction: 'LONG', entry: ep, tp1, sl,
+      rr: '1:3.1', size_usd: sz, leverage: lev,
+      source: 'sweep', status: 'open', opened_at: new Date().toISOString()
+    });
+    console.log('LONG real abierto: ' + symbol + ' @ ' + ep.toFixed(4) + ' $' + sz + '/lev=' + lev);
+  } catch(e) { console.error('openRealLong error:', e.message); }
 }
 
 async function openShadowTrade(symbol, sweepDirection, price) {
