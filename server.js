@@ -321,7 +321,7 @@ tr:hover td{background:#1c2128}
 // ══════════════════════════════════════════════════════════════════
 const _LIVE_TRADING = process.env.LIVE_TRADING === 'true' && !!BINANCE_API_KEY && !!BINANCE_SECRET;
 // Símbolos en paper-only: WS conectado + paper_trades, sin orden real en Binance
-const PAPER_ONLY_SYMBOLS = new Set(['SOLUSDT']);
+const PAPER_ONLY_SYMBOLS = new Set([]); // v4.5.24: SOL promovido a real (paper WR=63% n=16)
 const _futuresInfoCache = {};   // symbol → { stepSize, quantityPrecision }
 const _leverageSet     = new Set(); // `${symbol}_${lev}` ya configurado
 
@@ -588,7 +588,8 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      if (trade.source !== 'shadow' && trade.source !== 'bull_run_long' && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
+      const _PAPER_SRCS = new Set(['shadow','bull_run_long','sol_paper','meanrev']); // v4.5.24-fix: Bug2 — sol_paper nunca abre posicion real en Binance
+      if (!_PAPER_SRCS.has(trade.source) && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
       console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
@@ -819,9 +820,9 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Whale pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH
-    if (symbol === 'ETHUSDT') { console.log(`⏭ Whale ETH bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.24: ETH desbloqueado — shadow 30% LONG, bull run normalizado
     // v4.5.19: bloquear WLD (bull run — WR SHORT 14%, mismo perfil que ETH)
-    if (symbol === 'WLDUSDT') { console.log(`⏭ Whale WLD bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.25: WLD desbloqueado — shadow 7d WR=48% n=95, bull run normalizado (52% LONG)
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Whale SUI bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.23: auto-bloqueo dinámico por bull run detector
@@ -1067,9 +1068,9 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Sweep pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH (bull run — sweeps bajistas revertidos de inmediato)
-    if (symbol === 'ETHUSDT') { console.log(`⏭ Sweep ETH bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.24: ETH desbloqueado — shadow 30% LONG, bull run normalizado
     // v4.5.19: bloquear WLD (bull run — WR SHORT 14%, mismo perfil que ETH)
-    if (symbol === 'WLDUSDT') { console.log(`⏭ Sweep WLD bloqueado — no confiable en bull run (${direction})`); return; }
+    // v4.5.25: WLD desbloqueado — shadow 7d WR=48% n=95, bull run normalizado (52% LONG)
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Sweep SUI bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.23: auto-bloqueo dinámico por bull run detector
@@ -2765,7 +2766,7 @@ const solLossTracker = createLossTracker('SOL');
 
 // Circuit breaker por símbolo — sweep/whale — 3 SL consecutivos → 24h pausa
 const _symTrackers = {};
-['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT','SOLUSDT'].forEach(s => {
+['BTCUSDT','ETHUSDT','DOGEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','BNBUSDT','SOLUSDT'].forEach(s => { // v4.5.24-fix: DOGE+BNB, removed PEPE+WIF
   _symTrackers[s] = createLossTracker(s.replace('1000PEPE','PEPE').replace('USDT','') + '-sweep', 3, 1440);
 });
 
@@ -2806,7 +2807,7 @@ async function initSymTrackers() {
 
 // v4.5.23: bull run auto-detector — chequea ratio LONG/SHORT en shadow trades 24h
 async function updateBullRunState() {
-  const symbols = ['BTCUSDT','ETHUSDT','1000PEPEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','WIFUSDT','SOLUSDT'];
+  const symbols = ['BTCUSDT','ETHUSDT','DOGEUSDT','WLDUSDT','SUIUSDT','XRPUSDT','BNBUSDT','SOLUSDT']; // v4.5.24: DOGE+BNB reemplazan PEPE+WIF
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   for (const symbol of symbols) {
     try {
@@ -2823,7 +2824,7 @@ async function updateBullRunState() {
       if (ratio >= 0.65 && !wasBlocked) {
         _bullRunBlocked.add(symbol);
         console.log(`🔴 Bull run auto-block ${symbol}: ${(ratio*100).toFixed(0)}% LONG en 24h (n=${data.length}) — SHORTs sistémicamente perdedores`);
-      } else if (ratio < 0.50 && wasBlocked) {
+      } else if (ratio < 0.58 && wasBlocked) { // v4.5.24: was 0.50
         _bullRunBlocked.delete(symbol);
         console.log(`🟢 Bull run unblock ${symbol}: ${(ratio*100).toFixed(0)}% LONG en 24h (n=${data.length}) — mercado normalizado`);
       }
