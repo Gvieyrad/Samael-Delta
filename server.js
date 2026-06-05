@@ -23,7 +23,7 @@ const BINANCE_WS = 'wss://stream.binance.com:9443';
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
-const HORAS_ACTIVAS_LIMA = new Set([7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 21, 23]); // v4.5.21: sacar 13h (WR=0%, n=3, -$1.18)
+const HORAS_ACTIVAS_LIMA = new Set([1, 4, 5, 6, 7, 9, 12, 14, 16, 17, 18, 23]); // v4.5.40: +12h Lima (UTC17) para data meanrev: backtest 2.5y — Lima→UTC: 1→6(+$29),4→9(+$45),5→10(+$22),6→11(+$29),7→12(+$100),9→14(+$55),14→19(+$44),16→21(+$17),17→22(+$36),18→23(+$23),23→4(+$38)
 
 const WALL_ENABLED       = false; // solo sweep activo
 const SCALP_ENABLED      = false; // solo sweep activo
@@ -140,10 +140,10 @@ app.get('/', (req, res) => res.json({ status: 'Samael Delta activo', version: '4
 
 app.get('/samael', async (req, res) => {
   try {
-    const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(100);
+    const { data: trades } = await supabase.from('paper_trades').select('*').order('id', { ascending: false }).limit(500); // v4.5.39: aumentado para mostrar todos los trades reales
     const done  = trades.filter(t => t.status === 'won' || t.status === 'lost');
-    const open  = trades.filter(t => t.status === 'open' && t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
-    const real  = done.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
+    const open  = trades.filter(t => t.status === 'open' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long'); // v4.5.39: meanrev incluido
+    const real  = done.filter(t => t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long'); // v4.5.39: meanrev incluido
     const wins  = done.filter(t => t.status === 'won');
     const realWins = real.filter(t => t.status === 'won');
     const pnlTotal = done.reduce((a,t) => a + (t.pnl_usd||0), 0);
@@ -161,7 +161,7 @@ app.get('/samael', async (req, res) => {
     const solPaperWins = solPaper.filter(t => t.status === 'won');
     const solPaperPnl  = solPaper.reduce((a,t) => a + (t.pnl_usd||0), 0);
 
-    const realTrades = trades.filter(t => t.source !== 'meanrev' && t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long');
+    const realTrades = trades.filter(t => t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long'); // v4.5.39: meanrev incluido
     const tradeRows = realTrades.slice(0,25).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
@@ -319,7 +319,7 @@ tr:hover td{background:#1c2128}
 // Activo solo si BINANCE_API_KEY + BINANCE_SECRET_KEY + LIVE_TRADING=true
 // Sin esas 3 variables el bot sigue en paper mode (comportamiento anterior)
 // ══════════════════════════════════════════════════════════════════
-const _LIVE_TRADING = process.env.LIVE_TRADING === 'true' && !!BINANCE_API_KEY && !!BINANCE_SECRET;
+let _LIVE_TRADING = process.env.LIVE_TRADING === 'true' && !!BINANCE_API_KEY && !!BINANCE_SECRET; // v4.5.47: let para que weekly CB pueda apagarlo
 // Símbolos en paper-only: WS conectado + paper_trades, sin orden real en Binance
 const PAPER_ONLY_SYMBOLS = new Set([]); // v4.5.24: SOL promovido a real (paper WR=63% n=16)
 const _futuresInfoCache = {};   // symbol → { stepSize, quantityPrecision }
@@ -385,7 +385,10 @@ async function openFuturesPosition(symbol, direction, sizeUsd, leverage, price) 
     await _setFuturesLeverage(symbol, leverage);
     const side = direction === 'LONG' ? 'BUY' : 'SELL';
     const res = await _placeFuturesMarket(symbol, side, qty, false);
-    const avgPrice = parseFloat(res.avgPrice || price);
+    // v4.5.31: cumQuote/executedQty da el precio real de fill (avgPrice="0" para market orders)
+    const _cumQ = parseFloat(res.cumQuote || 0);
+    const _execQ = parseFloat(res.executedQty || qty);
+    const avgPrice = (_cumQ > 0 && _execQ > 0) ? parseFloat((_cumQ / _execQ).toFixed(4)) : parseFloat(res.avgPrice) || price;
     console.log(`✅ LIVE OPEN: ${side} ${symbol} qty=${qty} avgPrice=$${avgPrice} orderId=${res.orderId}`);
     sendWaDelta(`🟢 *SAMAEL DELTA — OPEN*\n${side} ${symbol}\nQty: ${qty} | Precio: $${avgPrice}\nSize: $${sizeUsd} x${leverage} | Order: ${res.orderId}`);
     return { orderId: res.orderId, qty, avgPrice };
@@ -401,7 +404,7 @@ async function openFuturesPosition(symbol, direction, sizeUsd, leverage, price) 
  * Cerrar posición: obtiene qty actual de /positionRisk y coloca MARKET reduce-only.
  * Retorna orderId o null.
  */
-async function closeFuturesPosition(symbol, direction) {
+async function closeFuturesPosition(symbol, direction, pnl_usd = null, closePrice = null) {
   if (!_LIVE_TRADING) return null;
   try {
     const ts = Date.now() + binanceTimeOffset;
@@ -416,7 +419,10 @@ async function closeFuturesPosition(symbol, direction) {
     const closeSide = direction === 'LONG' ? 'SELL' : 'BUY';
     const res = await _placeFuturesMarket(symbol, closeSide, qty, true);
     console.log(`✅ LIVE CLOSE: ${closeSide} ${symbol} qty=${qty} orderId=${res.orderId}`);
-    sendWaDelta(`🔴 *SAMAEL DELTA — CLOSE*\n${closeSide} ${symbol}\nQty: ${qty} | Order: ${res.orderId}`);
+    // v4.5.31: incluir PnL y precio de salida en notificación WA
+    const _pnlStr = pnl_usd !== null ? `\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}` : '';
+    const _closePxStr = closePrice !== null ? ` | Exit: $${parseFloat(closePrice).toFixed(4)}` : '';
+    sendWaDelta(`🔴 *SAMAEL DELTA — CLOSE*\n${closeSide} ${symbol}\nQty: ${qty}${_closePxStr} | Order: ${res.orderId}${_pnlStr}`);
     return res.orderId;
   } catch(e) {
     const msg = e.response?.data?.msg || e.message;
@@ -452,6 +458,9 @@ const killSwitchCooldown = {};
 const _cooldownLastLog = {}; // throttle cooldown logs — 1x por minuto por clave
 const _nearWhaleLastLog = {}; // v4.5.22: throttle near-whale monitor logs — 1x por 5min por símbolo
 const _bullRunBlocked = new Set(); // v4.5.23: símbolos auto-bloqueados por bull run detector
+const _consecSLData  = {};          // v4.5.28: {times:[ts1,ts2]} por símbolo para cooldown
+const _consecSLPause = {};          // v4.5.28: {until:timestamp} si 2 SLs consecutivos en <3h
+const _consecSLCount = {};          // v4.5.29: {count:N, blockedUntil:ts} 3 SLs consecutivos = block hasta midnight
 const _wsNoDataCount = {}; // contador fallos WS consecutivos por símbolo
 const _openLock = new Set(); // lock síncrono anti-race: previene doble apertura por aggTrade concurrente
 
@@ -476,9 +485,10 @@ const _maxProfitCache = {}; // max unrealized profit por trade id
 const _partialTpTrades = {}; // trades con partial TP activado (BE stop + TP2)
 async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = price) {
   try {
-    const { data: openTrades } = await supabase
+    const { data: openTrades, error: _slErr } = await supabase
       .from('paper_trades').select('*')
       .eq('symbol', symbol).eq('status', 'open');
+    if (_slErr) { console.error(`checkSlTpOnTick Supabase error (${symbol}): ${_slErr.message}`); return; } // v4.5.52: don't silently bypass SL
     if (!openTrades?.length) return;
 
     for (const trade of openTrades) {
@@ -559,7 +569,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
 
       // Lock para evitar doble cierre
       _slTpLocks[trade.id] = true;
-      setTimeout(() => { delete _slTpLocks[trade.id]; }, 1000);
+      setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.48: 1s → 10s to cover Supabase round-trip
 
       const priceDiff = isLong ? (closePrice - entry) / entry : (entry - closePrice) / entry;
       const pnl_usd   = parseFloat((size * priceDiff * lev - size * lev * _FEE_RT).toFixed(2));
@@ -581,6 +591,36 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         else _symTrackers[symbol].recordWin();
       }
 
+      // v4.5.28: consecutive-SL cooldown (SLs rápidos <3h)
+      // v4.5.29: 3-consecutive-SL daily block (rachas largas)
+      if (trade.source === 'sweep' || trade.source === 'whale') {
+        if (!_consecSLData[symbol])  _consecSLData[symbol]  = { times: [] };
+        if (!_consecSLCount[symbol]) _consecSLCount[symbol] = { count: 0 };
+        if (closeReason === 'sl') {
+          // v4.5.28: ventana 3h
+          _consecSLData[symbol].times.push(Date.now());
+          _consecSLData[symbol].times = _consecSLData[symbol].times.slice(-2);
+          const [t1, t2] = _consecSLData[symbol].times;
+          if (t1 && t2 && (t2 - t1) < 3 * 60 * 60 * 1000) {
+            _consecSLPause[symbol] = { until: Date.now() + 2 * 60 * 60 * 1000 };
+            console.log(`⏸ Consec-SL cooldown ${symbol}: 2 SLs en ${Math.round((t2-t1)/60000)}min → pausa 2h`);
+            if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏸ ${symbol} pausado 2h — 2 SLs consecutivos en ${Math.round((t2-t1)/60000)}min`).catch(()=>{});
+          }
+          // v4.5.29: contador sin límite de tiempo — 3 consecutivos = midnight block
+          _consecSLCount[symbol].count++;
+          if (_consecSLCount[symbol].count >= 3) {
+            const midnight = new Date(); midnight.setUTCHours(24,0,0,0);
+            _consecSLCount[symbol].blockedUntil = midnight.getTime();
+            console.log(`🚫 3-SL block ${symbol}: ${_consecSLCount[symbol].count} SLs consecutivos → bloqueado hasta medianoche UTC`);
+            if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚫 ${symbol} bloqueado hasta medianoche — ${_consecSLCount[symbol].count} SLs consecutivos`).catch(()=>{});
+          }
+        } else if (closeReason === 'tp1' || closeReason === 'trailing_tp') {
+          _consecSLData[symbol] = { times: [] };
+          _consecSLCount[symbol] = { count: 0 };
+          delete _consecSLPause[symbol];
+        }
+      }
+
       // Loss trackers
       if (trade.source === 'scalping') {
         const tracker = trade.symbol.includes('ETH') ? ethLossTracker
@@ -588,8 +628,11 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         if (tracker) { if (status === 'lost') tracker.recordLoss(); else tracker.recordWin(); }
       }
 
-      const _PAPER_SRCS = new Set(['shadow','bull_run_long','sol_paper','meanrev']); // v4.5.24-fix: Bug2 — sol_paper nunca abre posicion real en Binance
-      if (!_PAPER_SRCS.has(trade.source) && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction);
+      // v4.5.27: si MEANREV_REAL=true, meanrev sí cierra posición real en Binance
+      const _mrRealClose = process.env.MEANREV_REAL === 'true' && _LIVE_TRADING;
+      const _shRealClose = process.env.SHADOW_REAL==='true' && trade.source==='shadow' && trade.market_data?.shadow_real===true; // v4.5.38
+      const _PAPER_SRCS = new Set(_mrRealClose ? (_shRealClose?['bull_run_long','sol_paper']:[ 'shadow','bull_run_long','sol_paper']) : (_shRealClose?['bull_run_long','sol_paper','meanrev']:[ 'shadow','bull_run_long','sol_paper','meanrev'])); // v4.5.24-fix+v4.5.38
+      if (!_PAPER_SRCS.has(trade.source) && !PAPER_ONLY_SYMBOLS.has(symbol)) await closeFuturesPosition(symbol, trade.direction, pnl_usd, closePrice);
       console.log(`⚡ WS ${closeReason.toUpperCase()}: ${trade.direction} ${symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl_usd}`);
 
       // Telegram
@@ -714,7 +757,7 @@ async function evaluateAnomaly(symbol) {
   const metrics = getWsMetrics(symbol);
   if (!metrics) return;
   const _symCfg = { BTCUSDT:{vm:5,cvd:60,pm:0.07}, ETHUSDT:{vm:10,cvd:70,pm:0.15}, '1000PEPEUSDT':{vm:5,cvd:60,pm:0.05}, WLDUSDT:{vm:5,cvd:60,pm:0.05}, SUIUSDT:{vm:7,cvd:60,pm:0.05}, XRPUSDT:{vm:10,cvd:60,pm:0.05} };
-  const _sc = _symCfg[symbol] || { vm: parseInt(process.env.WS_VOLUME_MULTIPLIER || '7'), cvd: 60, pm: 0.10 };
+  const _sc = _symCfg[symbol] || { vm: parseInt(process.env.WS_VOLUME_MULTIPLIER || '10'), cvd: 60, pm: 0.10 }; // v4.5.33: default 7x→10x (backtest: 7-10x negativo)
   const volMultiplier = _sc.vm;
   const now = Date.now();
   const isVolumeAnomaly = metrics.volumeMultiplier >= volMultiplier;
@@ -789,7 +832,7 @@ async function evaluateAnomaly(symbol) {
   try {
     if (isSweep) {
       // v4.5.2: kill_switch solo en sweeps vol≥7x — sweeps débiles no deben cerrar trades existentes sin abrir compensación
-      if (metrics.volumeMultiplier >= 7) await killSwitchOpposite(symbol, direction, reason);
+      if (metrics.volumeMultiplier >= 10) await killSwitchOpposite(symbol, direction, reason);
       await openSweepCounterTrade(symbol, direction, metrics, reason, liqZoneBonus);
       openShadowTrade(symbol, direction, metrics.lastPrice).catch(e => console.error('Shadow error:', e.message));
       openRealLong(symbol, direction, metrics.lastPrice).catch(e => console.error('LONG real error:', e.message)); // v4.5.26
@@ -816,8 +859,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
   if (_openingTrades.has(symbol)) { console.log('Whale omitido -- apertura en curso para ' + symbol); return; }
   _openingTrades.add(symbol);
   try {
-    // v4.5.16: bloquear ALL LONGs — WR LONG real 14%, sistemáticamente negativo
-    if (direction === 'LONG') { console.log(`⏭ Whale LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
+    // v4.5.34: LONGs habilitados (backtest +$177 Net, WR=24.1%). Safeguards: conf>=92%, bias_1d, bull_run, precio_5min
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Whale pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH
@@ -827,7 +869,15 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Whale SUI bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.23: auto-bloqueo dinámico por bull run detector
-    if (_bullRunBlocked.has(symbol)) { console.log(`⏭ Whale ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`); return; }
+    if (_consecSLPause[symbol] && _consecSLPause[symbol].until > Date.now()) {
+      const minLeft = Math.ceil((_consecSLPause[symbol].until - Date.now()) / 60000);
+      console.log(`⏸ Whale ${symbol} en cooldown post-SLs — ${minLeft}min restantes`); return;
+    }
+    if (_consecSLCount[symbol]?.blockedUntil > Date.now()) {
+      const minLeft = Math.ceil((_consecSLCount[symbol].blockedUntil - Date.now()) / 60000);
+      console.log(`🚫 Whale ${symbol} bloqueado por 3-SL diario — ${minLeft}min hasta medianoche`); return;
+    }
+    if (_bullRunBlocked.has(symbol) && direction === 'LONG') { console.log(`⏭ Whale ${symbol} LONG bloqueado — bull run (>65% LONG 24h)`); return; } // v4.5.49
     // Filtro horario — ballenas fuertes (CVD>85% + Vol>8x) saltan restricción
     if (isHoraBloqueada()) {
       const horaLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getHours();
@@ -940,7 +990,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
       parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
       parseInt(process.env.PAPER_LEVERAGE || '5'), price);
     if (!_whaleFillResult && _LIVE_TRADING && !_isPaperOnlyW) { console.error(`Whale trade abortado — Binance rechazó orden ${symbol}`); return; }
-    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: _isPaperOnlyW ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: _whaleFillResult?.avgPrice || price, tp1, tp2: isLong ? price + atr * 3.5 : price - atr * 3.5, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: whaleConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '5'), source: _isPaperOnlyW ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: { mode: 'whale', reason, cvd_live: metrics.cvdLive, volume_multiplier: metrics.volumeMultiplier, liq_bonus: liqBonus, timestamp: new Date().toISOString(), ...tradeCtx } });
     console.log(`🐋 Whale trade abierto: ${direction} ${symbol} @ $${price} R:R 1:${rrVal.toFixed(1)} conf:${whaleConfidence}%`);
     if (process.env.TELEGRAM_CHAT_ID) {
       const e = direction === 'SHORT' ? '▼' : '▲';
@@ -959,7 +1009,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       return;
     }
     const oppositeDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
-    const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+    const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir).not('source', 'in', '(shadow,bull_run_long,sol_paper)'); // v4.5.48: excluir trades de papel
     if (!openTrades?.length) return;
     for (const trade of openTrades) {
       const currentPrice = wsState[symbol]?.lastPrice || parseFloat(trade.entry);
@@ -982,7 +1032,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       if (totalDistance < 0.0001) { console.log(`⏭ Kill switch omitido — totalDistance≈0 (SL≈entry) ${trade.direction} ${symbol}`); continue; }
       const slProgress = trade.direction === 'LONG'
         ? (entry - currentPrice) / totalDistance
-        : (currentPrice - entry) / (sl - entry);
+        : (currentPrice - entry) / totalDistance; // v4.5.48: fix SHORT denominator (was sl-entry, should be totalDistance)
       if (slProgress <= 0) {
         console.log(`⏭ Kill switch omitido — trade en profit (sl=${(slProgress*100).toFixed(0)}%) ${trade.direction} ${symbol}`);
         continue;
@@ -1010,23 +1060,43 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
 
 // v4.5.26: LONG real para WLD/XRP/BTC cuando sweep bajista falla (shadow WR>42%)
 const LONG_REAL_SYMBOLS = new Set((process.env.LONG_REAL_SYMBOLS || 'WLDUSDT,XRPUSDT,BTCUSDT').split(','));
+const _realLongLocks = new Set(); // v4.5.31: lock para evitar race condition doble apertura
 async function openRealLong(symbol, sweepDirection, price) {
   if (sweepDirection !== 'SHORT') return;
   if (!LONG_REAL_SYMBOLS.has(symbol)) return;
+  if (_realLongLocks.has(symbol)) { console.log('LONG real omitido -- lock activo ' + symbol); return; }
+  _realLongLocks.add(symbol);
   try {
     const { data: existing } = await supabase.from('paper_trades').select('id,direction')
       .eq('symbol', symbol).eq('status', 'open')
       .not('source', 'in', '(shadow,sol_paper,meanrev,bull_run_long)');
-    if (existing?.length) { console.log('LONG real omitido -- ya hay trade abierto ' + symbol); return; }
+    if (existing?.length) { console.log('LONG real omitido -- ya hay trade abierto ' + symbol); _realLongLocks.delete(symbol); return; }
     const { data: allOpen } = await supabase.from('paper_trades').select('id')
       .eq('status', 'open').eq('direction', 'LONG')
       .not('source', 'in', '(shadow,sol_paper,meanrev,bull_run_long)');
-    if ((allOpen?.length || 0) >= 1) { console.log('LONG real omitido -- ya hay 1 LONG abierto (max 1)'); return; }
+    if ((allOpen?.length || 0) >= 1) { console.log('LONG real omitido -- ya hay 1 LONG abierto (max 1)'); _realLongLocks.delete(symbol); return; }
+    // v4.5.46: bias_1d + bias_4h filter — no LONG en mercado bajista diario
+    try {
+      const [k4hLong, k1dLong] = await Promise.all([
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=50`),
+        axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=30`),
+      ]);
+      const bias1dLong = calcBias(k1dLong.data, null, 0);
+      const bias4hLong = calcBias(k4hLong.data, null, 0);
+      if (bias1dLong && (bias1dLong.bias === 'short' || bias1dLong.score < 42)) {
+        console.log(`LONG real omitido -- bias_1d bajista (score:${bias1dLong.score}) ${symbol}`);
+        _realLongLocks.delete(symbol); return;
+      }
+      if (bias4hLong && (bias4hLong.bias === 'short' || bias4hLong.score < 42)) {
+        console.log(`LONG real omitido -- bias_4h bajista (score:${bias4hLong.score}) ${symbol}`);
+        _realLongLocks.delete(symbol); return;
+      }
+    } catch(biasErr) { console.error('LONG real abortado -- error fetching bias (' + symbol + '): ' + biasErr.message); _realLongLocks.delete(symbol); return; }
     const sz = parseFloat(process.env.LONG_SIZE_USD || '8');
     const lev = parseInt(process.env.LONG_LEVERAGE || '3');
     const fill = _LIVE_TRADING ? await openFuturesPosition(symbol, 'LONG', sz, lev, price) : { price };
-    if (!fill && _LIVE_TRADING) { console.error('LONG real abortado -- Binance rechazo ' + symbol); return; }
-    const ep = fill?.price || price;
+    if (!fill && _LIVE_TRADING) { console.error('LONG real abortado -- Binance rechazo ' + symbol); _realLongLocks.delete(symbol); return; }
+    const ep = fill?.avgPrice || price; // v4.5.47: avgPrice es el campo correcto de openFuturesPosition
     const atr = ep * 0.003;
     const tp1 = ep + atr * 2.5;
     const sl  = ep - atr * 0.8;
@@ -1036,27 +1106,55 @@ async function openRealLong(symbol, sweepDirection, price) {
       source: 'sweep', status: 'open', opened_at: new Date().toISOString()
     });
     console.log('LONG real abierto: ' + symbol + ' @ ' + ep.toFixed(4) + ' $' + sz + '/lev=' + lev);
-  } catch(e) { console.error('openRealLong error:', e.message); }
+    _realLongLocks.delete(symbol); // v4.5.31: liberar lock tras apertura exitosa
+  } catch(e) { console.error('openRealLong error:', e.message); _realLongLocks.delete(symbol); }
 }
 
 async function openShadowTrade(symbol, sweepDirection, price) {
-  // Counter-trend tracker: bearish sweep (SHORT) -> shadow LONG; bullish -> shadow SHORT
-  // Sin Binance call real — solo paper track para evaluar si contrarian es mejor
+  // Counter-trend tracker: bearish sweep -> shadow counter-trend
   const shadowDir = sweepDirection === 'SHORT' ? 'LONG' : 'SHORT';
+  // v4.5.38: SHADOW_REAL — ejecutar en Binance si configurado
+  const _shSyms = new Set((process.env.SHADOW_REAL_SYMBOLS||'').split(',').map(s=>s.trim()).filter(Boolean));
+  const _shDir = process.env.SHADOW_REAL_DIRECTION||'BOTH';
+  const _shReal = process.env.SHADOW_REAL==='true' && _LIVE_TRADING && _shSyms.has(symbol) && (_shDir==='BOTH'||shadowDir===_shDir);
+  const _shSz = parseFloat(process.env['SHADOW_REAL_SIZE_USD_'+symbol]||process.env.SHADOW_REAL_SIZE_USD||'8');
+  const _shLv = parseInt(process.env.SHADOW_REAL_LEVERAGE||'5');
   try {
     const { data: existing } = await supabase.from('paper_trades').select('id')
       .eq('symbol', symbol).eq('status', 'open').eq('source', 'shadow');
-    if (existing?.length) return; // ya hay shadow abierto para este símbolo
+    if (existing?.length) return;
     const atr = price * 0.003;
     const isShadowShort = shadowDir === 'SHORT';
     const tp1 = isShadowShort ? price - atr * 2.5 : price + atr * 2.5;
     const sl  = isShadowShort ? price + atr * 0.8  : price - atr * 0.8;
-    await supabase.from('paper_trades').insert({
-      symbol, direction: shadowDir, entry: price, tp1, sl,
-      size_usd: 62, leverage: 10, source: 'shadow', status: 'open',
-      opened_at: new Date().toISOString()
-    });
-    console.log(`🔮 Shadow CT: ${shadowDir} ${symbol} @ ${price.toFixed(2)} (sweep fue ${sweepDirection})`);
+    if (_shReal) {
+      const _shFill = await openFuturesPosition(symbol, shadowDir, _shSz, _shLv, price);
+      if (!_shFill) { console.error('Shadow real abortado — Binance rechazó ('+symbol+')'); return; }
+      console.log('Shadow REAL: '+shadowDir+' '+symbol+' @ '+price.toFixed(4)+' $'+_shSz+'/lev='+_shLv);
+      try {
+        await supabase.from('paper_trades').insert({
+          symbol, direction: shadowDir, entry: price, tp1, sl,
+          size_usd: _shSz, leverage: _shLv,
+          source: 'shadow', status: 'open', opened_at: new Date().toISOString(),
+          market_data: { shadow_real: true }
+        });
+      } catch(dbErr) {
+        // v4.5.38 bug fix: si DB falla, cerrar posición real para no dejar huérfana
+        console.error('Shadow DB error — cerrando posición real:', dbErr.message);
+        await closeFuturesPosition(symbol, shadowDir, 0, price).catch(e=>console.error('Shadow rollback error:',e.message));
+        return;
+      }
+      const _shTag = ' [REAL]';
+      console.log('Shadow CT: '+shadowDir+' '+symbol+' @ '+price.toFixed(2)+' (sweep fue '+sweepDirection+')'+_shTag);
+    } else {
+      await supabase.from('paper_trades').insert({
+        symbol, direction: shadowDir, entry: price, tp1, sl,
+        size_usd: 62, leverage: 10,
+        source: 'shadow', status: 'open', opened_at: new Date().toISOString(),
+        market_data: null
+      });
+      console.log('Shadow CT: '+shadowDir+' '+symbol+' @ '+price.toFixed(2)+' (sweep fue '+sweepDirection+')');
+    }
   } catch(e) { console.error('Shadow trade error:', e.message); }
 }
 
@@ -1080,11 +1178,13 @@ async function openBullRunLong(symbol, price) {
 }
 
 async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonus) {
+  if (process.env.SWEEP_ENABLED === 'false') { console.log('⏸ Sweep deshabilitado vía SWEEP_ENABLED=false'); return; } // v4.5.35
   if (_openingTrades.has(symbol)) { console.log('Sweep omitido -- apertura en curso para ' + symbol); return; }
   _openingTrades.add(symbol);
   try {
-    // Sweep corre 24/7 — crypto no tiene sesión; vol≥7x+CVD extremo son señales reales en cualquier hora
-    // (bloqueo madrugada removido v4.5.8 — cap-por-dirección es la protección correcta)
+    // v4.5.30: filtro horario re-activado — datos reales UTC 2,17,18,20h = 0% WR (Lima 21,12,13,15)
+    // US morning (UTC 12-16 = Lima 7-11) WR>50%; madrugada y tarde-Lima muy pobres
+    if (isHoraBloqueada()) { console.log(`⏸ Sweep ${symbol} omitido — hora bloqueada (${new Date().toISOString().slice(11,16)} UTC)`); return; }
     // v4.5.20: excluir shadow/sol_paper/meanrev de caps — no deben bloquear trades reales
     const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').neq('source', 'shadow').neq('source', 'sol_paper').neq('source', 'meanrev').neq('source', 'bull_run_long');
     if (existing?.length) { console.log(`⏭ Sweep trade omitido — ya hay trade abierto para ${symbol}`); return; }
@@ -1095,8 +1195,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     const sameDir = (allOpen || []).filter(t => t.direction === direction).length;
     if (sameDir >= 1) { console.log(`⏭ Sweep omitido — ya hay ${sameDir} trade(s) ${direction} abierto(s) (máx 1 por dirección)`); return; }
     // v4.5.9: Circuit Breaker — sweep no lo consultaba, seguía abriendo trades aunque CB activo
-    // v4.5.16: bloquear ALL LONGs
-    if (direction === 'LONG') { console.log(`⏭ Sweep LONG bloqueado — solo SHORTs permitidos (${symbol})`); return; }
+    // v4.5.34: LONGs habilitados (safeguards: conf>=92%, bias_1d, bull_run, precio_5min)
     // Circuit breaker por símbolo
     if (_symTrackers[symbol]?.isPaused()) { console.log(`⏸️ ${symbol} Sweep pausado — 3 SL consecutivos`); return; }
     // v4.5.17: bloquear ETH (bull run — sweeps bajistas revertidos de inmediato)
@@ -1106,9 +1205,16 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     // v4.5.21: bloquear SUI (bull run — 6 losses consecutivos May-31, LONG anomalías dominantes)
     if (symbol === 'SUIUSDT') { console.log(`⏭ Sweep SUI bloqueado — no confiable en bull run (${direction})`); return; }
     // v4.5.23: auto-bloqueo dinámico por bull run detector
-    if (_bullRunBlocked.has(symbol)) {
-      console.log(`⏭ Sweep ${symbol} auto-bloqueado — bull run detectado (>65% LONG 24h)`);
-      // v4.5.24: paper LONG track para calibrar si LONGs son viables en bull run
+    if (_consecSLPause[symbol] && _consecSLPause[symbol].until > Date.now()) {
+      const minLeft = Math.ceil((_consecSLPause[symbol].until - Date.now()) / 60000);
+      console.log(`⏸ Sweep ${symbol} en cooldown post-SLs — ${minLeft}min restantes`); return;
+    }
+    if (_consecSLCount[symbol]?.blockedUntil > Date.now()) {
+      const minLeft = Math.ceil((_consecSLCount[symbol].blockedUntil - Date.now()) / 60000);
+      console.log(`🚫 Sweep ${symbol} bloqueado por 3-SL diario — ${minLeft}min hasta medianoche`); return;
+    }
+    if (_bullRunBlocked.has(symbol) && direction === 'LONG') { // v4.5.49: solo bloquear LONGs
+      console.log(`⏭ Sweep ${symbol} LONG bloqueado — bull run (>65% LONG 24h)`);
       openBullRunLong(symbol, metrics.lastPrice).catch(e => console.error('bull_run_long error:', e.message));
       return;
     }
@@ -1160,7 +1266,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (!isShort && sl >= price) { console.log(`⚠️ Sweep trade descartado — SL inválido LONG: sl=${sl.toFixed(4)} >= entry=${price.toFixed(4)} (ATR=${atr5m.toFixed(4)})`); return; }
     const rrVal = Math.abs(tp1 - price) / Math.abs(sl - price);
     if (rrVal < 1.2) { console.log(`⚠️ Sweep trade descartado — R:R ${rrVal.toFixed(2)} < 1.2`); return; }
-    const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 10 ? 15 : metrics.volumeMultiplier >= 7 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
+    const sweepConfidence = Math.min(95, Math.round(70 + (metrics.volumeMultiplier >= 15 ? 15 : metrics.volumeMultiplier >= 10 ? 10 : 5) + (Math.abs(metrics.cvdLive) >= 50 ? 10 : 5) + liqBonus));
     // v4.5.2: 80→86 — vol<7x da conf=85, bloqueado. Solo vol≥7x (conf≥90) abre. Corta pérdidas de señales débiles.
     if (sweepConfidence < 86) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 86% (requiere vol≥7x)`); return; }
     // v4.5.13: LONG tiene WR 20% vs SHORT 40% — LONG requiere señal más fuerte
@@ -1223,7 +1329,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
       parseInt(process.env.PAPER_LEVERAGE || '10'), price);
     if (!_sweepFillResult && _LIVE_TRADING && !_isPaperOnlyS) { console.error(`Sweep trade abortado — Binance rechazó orden ${symbol}`); return; }
-    await supabase.from('paper_trades').insert({ symbol, direction, entry: price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: _isPaperOnlyS ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
+    await supabase.from('paper_trades').insert({ symbol, direction, entry: _sweepFillResult?.avgPrice || price, tp1, tp2: isShort ? price - atr * 4 : price + atr * 4, sl, rr: `1:${rrVal.toFixed(1)}`, confidence: sweepConfidence, size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'), leverage: parseInt(process.env.PAPER_LEVERAGE || '10'), source: _isPaperOnlyS ? 'sol_paper' : 'sweep', status: 'open', opened_at: new Date().toISOString(), market_data: mlDataSweep });
     // Cooldown se setea aquí — solo cuando trade realmente abre, no en detección de anomalía
     const _ck = `${symbol}_${direction}`;
     killSwitchCooldown[_ck] = Date.now();
@@ -1941,7 +2047,7 @@ Responde SOLO JSON sin markdown:
       console.log(`💰 Auto trade ${signal.direction} ${symbol} — size $${autoSizeUsd.toFixed(0)} lev ${autoLeverage}x riesgo $${autoMaxLoss?.toFixed(2)}`);
       try {
         const oppositeDir = signal.direction === 'LONG' ? 'SHORT' : 'LONG';
-        const { data: oppTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir);
+        const { data: oppTrades } = await supabase.from('paper_trades').select('*').eq('symbol', symbol).eq('status', 'open').eq('direction', oppositeDir).in('source', ['auto', 'manual']); // v4.5.52: only close paper auto/manual, not real sweep/whale
         if (oppTrades?.length) {
           for (const oppTrade of oppTrades) {
             const currentPrice = wsState[symbol]?.lastPrice || signal.entry, entry = parseFloat(oppTrade.entry);
@@ -1949,6 +2055,7 @@ Responde SOLO JSON sin markdown:
             const _lev2 = parseFloat(oppTrade.leverage || 10);
             const pnl_usd = parseFloat((parseFloat(oppTrade.size_usd) * priceDiff * _lev2 - parseFloat(oppTrade.size_usd) * _lev2 * _FEE_RT).toFixed(2));
             const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
+            _slTpLocks[oppTrade.id] = true; setTimeout(() => { delete _slTpLocks[oppTrade.id]; }, 10000); // v4.5.52
             await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'signal_reversal', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', oppTrade.id);
             circuitBreaker.addPnl(pnl_usd);
             delete _maxProfitCache[oppTrade.id]; delete _trailingLastUpdate[oppTrade.id]; delete _partialTpTrades[oppTrade.id];
@@ -2018,6 +2125,28 @@ async function sendDailySummary() {
   } catch(e) { console.error('Daily summary error:', e.message); }
 }
 
+
+async function checkOrphanPositions() {
+  if (!_LIVE_TRADING) return;
+  try {
+    const ts=Date.now()+binanceTimeOffset;
+    const sig=require('crypto').createHmac('sha256',BINANCE_SECRET).update('timestamp='+ts).digest('hex');
+    const r=await axios.get('https://fapi.binance.com/fapi/v2/positionRisk?timestamp='+ts+'&signature='+sig,{headers:{'X-MBX-APIKEY':BINANCE_API_KEY},timeout:10000});
+    const open=(r.data||[]).filter(p=>Math.abs(parseFloat(p.positionAmt))>0);
+    if(!open.length){console.log('Orphan check OK');return;}
+    for(const pos of open){
+      const sym=pos.symbol;
+      const {data:db}=await supabase.from('paper_trades').select('id').eq('symbol',sym).eq('status','open').not('source','in','(shadow,bull_run_long,sol_paper)');
+      if(!db?.length){
+        const amt=parseFloat(pos.positionAmt),dir=amt>0?'LONG':'SHORT';
+        console.error('ORPHAN DETECTADA: '+dir+' '+sym+' cerrando...');
+        await closeFuturesPosition(sym,dir,0,parseFloat(pos.markPrice||pos.entryPrice)).catch(e=>console.error('close err:',e));
+        sendWaDelta('Posicion huerfana cerrada: '+dir+' '+sym).catch(()=>{});
+      }
+    }
+    console.log('Orphan check: '+open.length+' pos verificadas');
+  }catch(e){console.error('Orphan error:',e.message);}
+}
 function startAlertJob() {
   // WebSocket y monitoreo corren siempre, con o sin Telegram
   setInterval(monitorPaperTrades, 1 * 60 * 1000);
@@ -2037,6 +2166,25 @@ function startAlertJob() {
   }, 60 * 1000);
 
     // ── Mean Reversion scanner — cada 1 minuto
+
+  // v4.5.44: Auto-update WEEKLY_CB_BALANCE cada lunes 00:00 Lima
+  setInterval(()=>{
+    if(!_LIVE_TRADING) return;
+    const d=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Lima'}));
+    if(d.getDay()===1&&d.getHours()===0&&d.getMinutes()===0){
+      const t=Date.now()+binanceTimeOffset;
+      const s=require('crypto').createHmac('sha256',BINANCE_SECRET).update('timestamp='+t).digest('hex');
+      axios.get('https://fapi.binance.com/fapi/v2/balance?timestamp='+t+'&signature='+s,{headers:{'X-MBX-APIKEY':BINANCE_API_KEY}}).then(r=>{
+        const b=(r.data||[]).find(a=>a.asset==='USDT');
+        if(b){
+          process.env.WEEKLY_CB_BALANCE=parseFloat(b.balance).toFixed(2);
+          try { require('fs').writeFileSync('/home/noc/samael_delta/.wcb_state.json', JSON.stringify({base:process.env.WEEKLY_CB_BALANCE,ts:Date.now()})); } catch(_){} // v4.5.51: persist across restarts
+          console.log('Weekly CB auto-actualizado: $'+process.env.WEEKLY_CB_BALANCE);
+          sendWaDelta('Balance semanal: $'+process.env.WEEKLY_CB_BALANCE).catch(()=>{});
+        }
+      }).catch(e=>console.error('Weekly CB auto:',e.message));
+    }
+  },60*1000);
   setInterval(runMeanRevScanner, 60 * 1000);
   console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
 
@@ -2258,6 +2406,7 @@ async function monitorPaperTrades() {
             const pnl_pct = trade.direction === 'LONG'
               ? (currentWsPrice - entry) / entry * parseFloat(trade.leverage || 5) * 100
               : (entry - currentWsPrice) / entry * parseFloat(trade.leverage || 5) * 100;
+            _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
             await supabase.from('paper_trades').update({
               status: pnl_usd >= 0 ? 'won' : 'lost',
               close_price: currentWsPrice,
@@ -2282,11 +2431,12 @@ async function monitorPaperTrades() {
           const entry = parseFloat(trade.entry);
           const lev = parseFloat(trade.leverage || 10);
           const pnl_usd = parseFloat((trade.direction === 'LONG'
-            ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * lev
-            : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * lev).toFixed(2));
+            ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * lev - parseFloat(trade.size_usd) * lev * _FEE_RT
+            : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * lev - parseFloat(trade.size_usd) * lev * _FEE_RT).toFixed(2)); // v4.5.50: fee
           const pnl_pct = parseFloat((trade.direction === 'LONG'
             ? (currentWsPrice - entry) / entry * lev * 100
             : (entry - currentWsPrice) / entry * lev * 100).toFixed(2));
+          _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
           await supabase.from('paper_trades').update({
             status: pnl_usd >= 0 ? 'won' : 'lost',
             close_price: currentWsPrice,
@@ -2297,6 +2447,7 @@ async function monitorPaperTrades() {
           circuitBreaker.addPnl(pnl_usd);
           _closedInThisRun.add(trade.id);
           delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
+          if (_LIVE_TRADING) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Scalping timeout close err:', e.message)); // v4.5.50
           console.log(`⏱️ Timeout scalping 2h: ${trade.direction} ${trade.symbol} cerrado a $${currentWsPrice} — ${minutosAbierto.toFixed(0)}min — PnL: $${pnl_usd}`);
           if (process.env.TELEGRAM_CHAT_ID) {
             const _dCt = new Date(), _limaCt = `${_dCt.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCt.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
@@ -2313,8 +2464,9 @@ async function monitorPaperTrades() {
           if (wsP6h) {
             const e6h = parseFloat(trade.entry), lev6h = parseFloat(trade.leverage || 5);
             const pDiff6h = trade.direction === 'LONG' ? (wsP6h - e6h) / e6h : (e6h - wsP6h) / e6h;
-            const pnl6h = parseFloat((pDiff6h * parseFloat(trade.size_usd) * lev6h).toFixed(2));
+            const pnl6h = parseFloat((pDiff6h * parseFloat(trade.size_usd) * lev6h - parseFloat(trade.size_usd) * lev6h * _FEE_RT).toFixed(2)); // v4.5.49: fee deducted
             const pnlPct6h = parseFloat((pDiff6h * lev6h * 100).toFixed(2));
+            _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.49: lock to prevent double-close
             await supabase.from('paper_trades').update({
               status: pnl6h >= 0 ? 'won' : 'lost', close_price: wsP6h,
               close_reason: 'timeout', pnl_usd: pnl6h, pnl_pct: pnlPct6h,
@@ -2323,7 +2475,8 @@ async function monitorPaperTrades() {
             circuitBreaker.addPnl(pnl6h);
             _closedInThisRun.add(trade.id);
             delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
-            await closeFuturesPosition(trade.symbol, trade.direction);
+            const _paperSrcs6h = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
+            if (!_paperSrcs6h.has(trade.source)) await closeFuturesPosition(trade.symbol, trade.direction); // v4.5.49: no cerrar paper en Binance
             console.log(`⏱️ Timeout 6h (${trade.source}): ${trade.direction} ${trade.symbol} a $${wsP6h} — ${minAbierto6h.toFixed(0)}min — PnL: $${pnl6h}`);
           }
         }
@@ -2404,6 +2557,7 @@ async function monitorPaperTrades() {
           const finalCloseReason = trailingActuo ? 'trailing_tp' : closeReason;
           const tradeStatus = pnl_usd > 0 ? 'won' : 'lost';
           if (trailingActuo) console.log(`🎯 Trailing TP: ${trade.direction} ${trade.symbol} cerró en ganancia $${pnl_usd} vía trailing stop`);
+          _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
           await supabase.from('paper_trades').update({ status: tradeStatus, close_price: closeAtPrice, close_reason: finalCloseReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
           // ── Circuit Breaker: acumular PnL diario ──
           if (trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto' || trade.source === 'meanrev') {
@@ -2434,6 +2588,9 @@ async function monitorPaperTrades() {
               : `${_closedEmojiM} ${trade.direction} ${trade.symbol} — ${_srcIconM} ${_srcNameM}\n💰 Entry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\n🎯 Razón: ${_razonM}\n💵 PnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\n🕐 Cierre: ${_limaCm}`;
             try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg); } catch(e) { console.error("Telegram send error:", e.message); }
           }
+          // v4.5.50: cerrar posicion real en Binance si WS gap perdio el evento
+          const _paperSrcsM = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
+          if (!_paperSrcsM.has(trade.source) && _LIVE_TRADING) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Monitor poll close err:', e.message));
         }
       } catch(_) {}
     }
@@ -2747,7 +2904,10 @@ const circuitBreaker = {
         .select('pnl_usd')
         .gte('closed_at', startUTC)
         .neq('source', 'manual')
-        .not('pnl_usd', 'is', null);
+        .neq('source', 'shadow')
+        .neq('source', 'sol_paper')
+        .neq('source', 'bull_run_long')
+        .not('pnl_usd', 'is', null); // v4.5.47: excluir fuentes no-reales del CB
       if (!data?.length) { console.log('✅ CB init — sin trades cerrados hoy, PnL=0'); return; }
       const totalPnl = data.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
       const day = this.getToday();
@@ -4133,12 +4293,33 @@ async function detectMeanReversion(symbol) {
 
   if (circuitBreaker.isActive()) { console.log(`MeanRev omitido — Circuit Breaker activo (${symbol})`); return; }
 
+  // v4.5.42: Weekly Circuit Breaker
+  const _wcbBase = parseFloat(process.env.WEEKLY_CB_BALANCE || '0');
+  if (_wcbBase > 0 && _LIVE_TRADING) {
+    try {
+      const _ts42 = Date.now() + binanceTimeOffset;
+      const _sig42 = require('crypto').createHmac('sha256', BINANCE_SECRET).update('timestamp='+_ts42).digest('hex');
+      const _wbal42 = await axios.get('https://fapi.binance.com/fapi/v2/balance?timestamp='+_ts42+'&signature='+_sig42, {headers:{'X-MBX-APIKEY':BINANCE_API_KEY}}).catch(()=>null);
+      const _bal42 = _wbal42 ? parseFloat((_wbal42.data||[]).find(a=>a.asset==='USDT')?.balance||0) : 0;
+      if (_bal42 > 0) {
+        const _drop42 = (_wcbBase - _bal42) / _wcbBase;
+        if (_drop42 >= 0.08) {
+          console.error('Weekly CB ACTIVADO: $'+_bal42.toFixed(2)+' (-'+(_drop42*100).toFixed(1)+'%) vs inicio semana $'+_wcbBase);
+          if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, 'Weekly CB activado: $'+_bal42.toFixed(2)+' (-'+(_drop42*100).toFixed(1)+'%) — LIVE_TRADING=false').catch(()=>{});
+          process.env.LIVE_TRADING = 'false'; _LIVE_TRADING = false; // v4.5.47: sincronizar variable
+          return;
+        } else if (_drop42 >= 0.04) {
+          console.warn('Weekly CB warning: -'+(_drop42*100).toFixed(1)+'% vs $'+_wcbBase);
+        }
+      }
+    } catch(e) { /* no bloquear si falla */ }
+  }
   // No abrir si ya hay trade abierto para este símbolo
   const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
   if (existing?.length) return;
-  // v4.5.5: cap global 2 trades — igual que sweep
-  const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open');
-  if ((_mrAllOpen?.length || 0) >= 3) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades abiertos (máx 3)`); return; }
+  // v4.5.27: cap global — excluir shadow/bull_run_long (no deben bloquear meanrev)
+  const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open').not('source','in','(shadow,bull_run_long,sol_paper)');
+  if ((_mrAllOpen?.length || 0) >= 3) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades reales abiertos (máx 3)`); return; }
 
   const price = wsState[symbol]?.lastPrice;
   const _mrPriceAge = Date.now() - (wsState[symbol]?.lastWsMsgTime || 0);
@@ -4150,8 +4331,8 @@ async function detectMeanReversion(symbol) {
   // ── CONDICIÓN 1: Pre-trend 1H >1% ────────────────────────────────
   // ¿El precio de 1H se movió >1% en alguna dirección?
   const k1hData = await getCachedKlines(symbol, '1h', 3);
-  const h1Open  = parseFloat(k1hData[1][1]);
-  const h1Close = parseFloat(k1hData[k1hData.length - 2][4]);
+  const h1Open  = parseFloat(k1hData[1][1]); // open del candle cerrado previo
+  const h1Close = wsState[symbol]?.lastPrice || parseFloat(k1hData[2][4]); // precio actual vs hora atras v4.5.51
   const h1Move  = (h1Close - h1Open) / h1Open * 100;
   const absH1   = Math.abs(h1Move);
 
@@ -4204,6 +4385,18 @@ async function detectMeanReversion(symbol) {
     return;
   }
 
+  // ── CONDICIÓN 5: SMA20 diaria — no pelear contra régimen macro (v4.5.41) ──────
+  const sma20closes = k1dData.slice(-21, -1).map(k => parseFloat(k[4]));
+  const sma20d = sma20closes.reduce((s,v) => s+v, 0) / sma20closes.length;
+  if (direction === 'LONG' && price < sma20d * 0.97) {
+    console.log('MeanRev LONG '+symbol+' omitido — precio bajo SMA20d ('+price.toFixed(2)+' < '+(sma20d*0.97).toFixed(2)+')');
+    return;
+  }
+  if (direction === 'SHORT' && price > sma20d * 1.03) {
+    console.log('MeanRev SHORT '+symbol+' omitido — precio sobre SMA20d ('+price.toFixed(2)+' > '+(sma20d*1.03).toFixed(2)+')');
+    return;
+  }
+
   // ── CALCULAR SL y TP FIJOS v4.4.44 ──────────────────────────────
   // SL: 0.3% fijo | TP: 15% — dejar correr ganadores
   // Basado en backtest: TP20% = 133% APR | TP15% = balance entre frecuencia y magnitud
@@ -4217,13 +4410,25 @@ async function detectMeanReversion(symbol) {
   const exitMins = symbol.includes('BTC') ? 60 : 45;
   const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
 
+  // v4.5.27: meanrev real — si MEANREV_REAL=true, abrir posición Binance con tamaño pequeño
+  const _mrReal = process.env.MEANREV_REAL === 'true' && _LIVE_TRADING;
+  const _mrSizeUsd = parseFloat(process.env['MEANREV_SIZE_USD_' + symbol] || process.env.MEANREV_SIZE_USD || '5'); // v4.5.36: per-symbol override
+  const _mrLeverage = parseInt(process.env.MEANREV_LEVERAGE || '3');
+  let _mrFill = null; // v4.5.48: hoisted so it's in scope at supabase.insert
+  if (_mrReal) {
+    const _mrExisting = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').not('source', 'in', '(shadow,bull_run_long,sol_paper,sweep,whale)'); // v4.5.52: exclude sweep/whale to prevent double-LONG
+    if (_mrExisting.data?.length) { console.log(`MeanRev real omitido — ya hay trade real abierto (${symbol})`); return; }
+    _mrFill = await openFuturesPosition(symbol, direction, _mrSizeUsd, _mrLeverage, price);
+    if (!_mrFill) { console.error(`MeanRev real abortado — Binance rechazó (${symbol})`); return; }
+    console.log(`📊 MeanRev REAL: ${direction} ${symbol} @ ${price.toFixed(4)} $${_mrSizeUsd}/lev=${_mrLeverage}`);
+  }
   const tradeCtxMR = await captureTradeContext(symbol);
-  await supabase.from('paper_trades').insert({
-    symbol, direction, entry: price, tp1: tp, tp2: tp, sl,
+  const { error: _mrInsErr } = await supabase.from('paper_trades').insert({
+    symbol, direction, entry: _mrReal ? (_mrFill?.avgPrice || price) : price, tp1: tp, tp2: tp, sl, // v4.5.47: precio real de ejecucion
     rr: `1:${rr.toFixed(1)}`,
     confidence: conf,
-    size_usd: parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
-    leverage: parseInt(process.env.PAPER_LEVERAGE || '5'),
+    size_usd: _mrReal ? _mrSizeUsd : parseFloat(process.env['PAPER_SIZE_USD_' + symbol] || process.env.PAPER_SIZE_USD || '62'),
+    leverage: _mrReal ? _mrLeverage : parseInt(process.env.PAPER_LEVERAGE || '5'),
     source: 'meanrev',
     status: 'open',
     opened_at: new Date().toISOString(),
@@ -4239,6 +4444,13 @@ async function detectMeanReversion(symbol) {
       ...tradeCtxMR,
     }
   });
+  if (_mrInsErr) {
+    console.error(`MeanRev DB insert failed (${symbol}): ${_mrInsErr.message}`);
+    if (_mrReal && _mrFill) { // v4.5.52: rollback Binance position if DB write failed
+      await closeFuturesPosition(symbol, direction).catch(e => console.error('MeanRev DB rollback error:', e.message));
+    }
+    return;
+  }
   meanRevCooldown[symbol] = now; // Bug #8: cooldown solo si INSERT exitoso
 
   console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
@@ -4334,11 +4546,24 @@ app.get('/api/tracker/status', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Samael Delta v4.5.24 corriendo en puerto ${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`🚀 Samael Delta v4.5.51 corriendo en puerto ${PORT}`);
+  // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
+  try {
+    const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
+    if (_sbStartErr) throw _sbStartErr;
+    console.log('✅ Supabase OK');
+  } catch(_sbEx) {
+    console.error('🚨 Supabase unreachable — LIVE_TRADING=false:', _sbEx.message);
+    _LIVE_TRADING = false; process.env.LIVE_TRADING = 'false';
+    if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, '🚨 Samael Delta: Supabase caído al iniciar — LIVE DESACTIVADO').catch(()=>{});
+  }
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
+  // v4.5.51: restore weekly CB base persisted before last restart
+  try { const _wcbF='/home/noc/samael_delta/.wcb_state.json'; if(require('fs').existsSync(_wcbF)){const _s=JSON.parse(require('fs').readFileSync(_wcbF));if((Date.now()-_s.ts)<7*24*3600*1000&&parseFloat(_s.base)>0){process.env.WEEKLY_CB_BALANCE=_s.base;console.log('Weekly CB base restaurado: $'+_s.base);}} } catch(e){console.error('Weekly CB state load:',e.message);}
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
+  if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),30*60*1000); } // v4.5.48: periodic every 30min
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
   updateBullRunState().catch(e => console.error('Bull run init error:', e.message));
   setInterval(() => updateBullRunState().catch(e => console.error('Bull run check error:', e.message)), 30 * 60 * 1000); // v4.5.23: re-evaluar cada 30min
