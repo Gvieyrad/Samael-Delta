@@ -4567,7 +4567,59 @@ app.listen(PORT, async () => {
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
   updateBullRunState().catch(e => console.error('Bull run init error:', e.message));
   setInterval(() => updateBullRunState().catch(e => console.error('Bull run check error:', e.message)), 30 * 60 * 1000); // v4.5.23: re-evaluar cada 30min
+
+// -- Symbol Performance Monitor v4.5.52 --
+// Cada 6h: NET<WARN(-0.50)->alerta. NET<KILL(-2.00)->auto-elimina de WS_SYMBOLS
+const SYMPERF_WARN = parseFloat(process.env.SYMPERF_WARN || '-0.50');
+const SYMPERF_KILL = parseFloat(process.env.SYMPERF_KILL || '-2.00');
+async function checkSymbolPerformance() {
+  if (!BINANCE_API_KEY || !BINANCE_SECRET) return;
+  try {
+    const _st7 = Date.now()-7*24*3600*1000, _ts=Date.now()+binanceTimeOffset;
+    const _sig=(p)=>require('crypto').createHmac('sha256',BINANCE_SECRET).update(p).digest('hex');
+    const bySym={};
+    for (const itype of ['REALIZED_PNL','COMMISSION']) {
+      const _p='incomeType='+itype+'&startTime='+_st7+'&limit=1000&timestamp='+_ts;
+      const _r=await axios.get('https://fapi.binance.com/fapi/v1/income?'+_p+'&signature='+_sig(_p),
+        {headers:{'X-MBX-APIKEY':BINANCE_API_KEY}}).catch(()=>null);
+      for (const t of (_r?.data||[])) {
+        if (!bySym[t.symbol]) bySym[t.symbol]={pnl:0,comm:0};
+        bySym[t.symbol][itype==='REALIZED_PNL'?'pnl':'comm']+=parseFloat(t.income);
+      }
+    }
+    const syms=(process.env.WS_SYMBOLS||'').split(',').filter(Boolean);
+    let lines=['Samael Delta - Perf 7d'], toKill=[];
+    for (const sym of syms) {
+      const d=bySym[sym]||{pnl:0,comm:0}, net=d.pnl+d.comm;
+      const e=net>=0?'OK':net<SYMPERF_KILL?'KILL':'WARN';
+      lines.push(e+' '+sym+': PnL='+(d.pnl>=0?'+':'')+d.pnl.toFixed(2)+' COMM='+d.comm.toFixed(2)+' NET='+(net>=0?'+':'')+net.toFixed(2));
+      if (net<SYMPERF_KILL) toKill.push(sym);
+    }
+    const hasWarn=syms.some(s=>((bySym[s]||{pnl:0,comm:0}).pnl+(bySym[s]||{pnl:0,comm:0}).comm)<SYMPERF_WARN);
+    if (!hasWarn){console.log('[SymPerf] todos OK');return;}
+    const msg=lines.join('\n');
+    if(process.env.TELEGRAM_CHAT_ID)bot.sendMessage(process.env.TELEGRAM_CHAT_ID,msg).catch(()=>{});
+    sendWaDelta(msg).catch(()=>{});
+    console.log('[SymPerf]',msg);
+    if(toKill.length){
+      const newSyms=syms.filter(s=>!toKill.includes(s));
+      process.env.WS_SYMBOLS=newSyms.join(',');
+      const fs=require('fs'),ep='/home/noc/samael_delta/.env';
+      let env=fs.readFileSync(ep,'utf8');
+      env=env.replace(/^WS_SYMBOLS=.*/m,'WS_SYMBOLS='+newSyms.join(','));
+      fs.writeFileSync(ep,env);
+      const km='[AUTO-KILL] Eliminados: '+toKill.join(', ')+' | Nuevo WS: '+newSyms.join(',');
+      if(process.env.TELEGRAM_CHAT_ID)bot.sendMessage(process.env.TELEGRAM_CHAT_ID,km).catch(()=>{});
+      sendWaDelta(km).catch(()=>{});
+      console.error('[SymPerf] AUTO-KILL:',toKill.join(','),'| nuevo:',newSyms.join(','));
+    }
+  } catch(e){console.error('[SymPerf] error:',e.message);}
+}
+
   startAlertJob();
+  checkSymbolPerformance().catch(e=>console.error('[SymPerf] init:',e.message));
+  setInterval(()=>checkSymbolPerformance().catch(e=>console.error('[SymPerf]:',e.message)),6*60*60*1000);
+
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
   // N=89 trades, WR 33.7%, PnL -$108 — sin edge estadístico, peor source del sistema
   // connectDepthWebSocket('BTCUSDT');  // no descomentar
