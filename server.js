@@ -4374,18 +4374,22 @@ async function detectMeanReversion(symbol) {
   // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
   const k1dData = await getCachedKlines(symbol, '1d', 30, 15 * 60 * 1000);
   const bias1d = calcBias(k1dData, null, 0);
-
-  // v4.5.53: bias_1d dual filter — bloquear falling knife (<35) y bull run (>60, doble-up)
+  // v4.5.53-54: bias_1d dual filter LONG (falling knife + bull run) SHORT (extreme bull + bear run)
+  // Solo bloquear si 1D es extremamente contrario (score <35 para LONG o >65 para SHORT)
   if (direction === 'LONG'  && bias1d.score < 35) {
     console.log(`MeanRev LONG ${symbol} omitido — 1D muy bajista (score:${bias1d.score})`);
     return;
   }
   if (direction === 'LONG' && bias1d.bias === 'long' && bias1d.score > 60) {
-    console.log(`MeanRev LONG ${symbol} omitido — bias_1d alcista (score:${bias1d.score}) — bull run, evitar doble exposicion`);
+    console.log(`MeanRev LONG ${symbol} omitido - bias_1d alcista (score:${bias1d.score}) - bull run`);
     return;
   }
   if (direction === 'SHORT' && bias1d.score > 65) {
     console.log(`MeanRev SHORT ${symbol} omitido — 1D muy alcista (score:${bias1d.score})`);
+    return;
+  }
+  if (direction === 'SHORT' && bias1d.bias === 'short' && bias1d.score < 40) {
+    console.log(`MeanRev SHORT ${symbol} omitido - bias_1d bajista (score:${bias1d.score}) - bear run, squeeze risk`);
     return;
   }
 
