@@ -4375,9 +4375,13 @@ async function detectMeanReversion(symbol) {
   const k1dData = await getCachedKlines(symbol, '1d', 30, 15 * 60 * 1000);
   const bias1d = calcBias(k1dData, null, 0);
 
-  // Solo bloquear si 1D es extremamente contrario (score <35 para LONG o >65 para SHORT)
+  // v4.5.53: bias_1d dual filter — bloquear falling knife (<35) y bull run (>60, doble-up)
   if (direction === 'LONG'  && bias1d.score < 35) {
     console.log(`MeanRev LONG ${symbol} omitido — 1D muy bajista (score:${bias1d.score})`);
+    return;
+  }
+  if (direction === 'LONG' && bias1d.bias === 'long' && bias1d.score > 60) {
+    console.log(`MeanRev LONG ${symbol} omitido — bias_1d alcista (score:${bias1d.score}) — bull run, evitar doble exposicion`);
     return;
   }
   if (direction === 'SHORT' && bias1d.score > 65) {
