@@ -4419,7 +4419,7 @@ async function detectMeanReversion(symbol) {
   const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
 
   // v4.5.27: meanrev real — si MEANREV_REAL=true, abrir posición Binance con tamaño pequeño
-  const _mrReal = process.env.MEANREV_REAL === 'true' && _LIVE_TRADING;
+  const _mrRealSyms = process.env.MEANREV_REAL_SYMBOLS ? new Set(process.env.MEANREV_REAL_SYMBOLS.split(",").map(s=>s.trim())) : null; const _mrReal = process.env.MEANREV_REAL === "true" && _LIVE_TRADING && (!_mrRealSyms || _mrRealSyms.has(symbol)); // v4.5.54: per-symbol real override via MEANREV_REAL_SYMBOLS
   const _mrSizeUsd = parseFloat(process.env['MEANREV_SIZE_USD_' + symbol] || process.env.MEANREV_SIZE_USD || '5'); // v4.5.36: per-symbol override
   const _mrLeverage = parseInt(process.env.MEANREV_LEVERAGE || '3');
   let _mrFill = null; // v4.5.48: hoisted so it's in scope at supabase.insert
