@@ -2,3 +2,11 @@ node_modules/
 .env
 .DS_Store
 *.log
+.env.bak*
+*.bak*
+server.js.bak*
+_patch_v*.py
+patch_v*.py
+*.db
+.wcb_state.json
+backtest_*.js

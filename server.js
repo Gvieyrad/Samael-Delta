@@ -23,7 +23,7 @@ const BINANCE_WS = 'wss://stream.binance.com:9443';
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
-const HORAS_ACTIVAS_LIMA = new Set([1, 4, 5, 6, 7, 9, 12, 14, 16, 17, 18, 23]); // v4.5.40: +12h Lima (UTC17) para data meanrev: backtest 2.5y — Lima→UTC: 1→6(+$29),4→9(+$45),5→10(+$22),6→11(+$29),7→12(+$100),9→14(+$55),14→19(+$44),16→21(+$17),17→22(+$36),18→23(+$23),23→4(+$38)
+const HORAS_ACTIVAS_LIMA = new Set([1, 4, 5, 6, 7, 9, 12, 13, 14, 16, 17, 18, 23]); // v4.5.40: +12h Lima (UTC17) para data meanrev: backtest 2.5y — Lima→UTC: 1→6(+$29),4→9(+$45),5→10(+$22),6→11(+$29),7→12(+$100),9→14(+$55),14→19(+$44),16→21(+$17),17→22(+$36),18→23(+$23),23→4(+$38)
 
 const WALL_ENABLED       = false; // solo sweep activo
 const SCALP_ENABLED      = false; // solo sweep activo
@@ -321,7 +321,7 @@ tr:hover td{background:#1c2128}
 // ══════════════════════════════════════════════════════════════════
 let _LIVE_TRADING = process.env.LIVE_TRADING === 'true' && !!BINANCE_API_KEY && !!BINANCE_SECRET; // v4.5.47: let para que weekly CB pueda apagarlo
 // Símbolos en paper-only: WS conectado + paper_trades, sin orden real en Binance
-const PAPER_ONLY_SYMBOLS = new Set([]); // v4.5.24: SOL promovido a real (paper WR=63% n=16)
+const PAPER_ONLY_SYMBOLS = new Set(['DOGEUSDT','BTCUSDT']); // v4.5.60: Cantera — 30 paper trades + WR>45% para promover a live // v4.5.24: SOL promovido a real (paper WR=63% n=16)
 const _futuresInfoCache = {};   // symbol → { stepSize, quantityPrecision }
 const _leverageSet     = new Set(); // `${symbol}_${lev}` ya configurado
 
