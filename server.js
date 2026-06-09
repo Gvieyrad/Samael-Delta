@@ -8,7 +8,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(cors({ origin: '*' }));
-const _FEE_RT = 0.00014; // 0.07% taker x2 lados — Binance Futures maker/taker
+const _FEE_RT = 0.0008; // 0.04% taker x2 lados — Binance Futures (v4.5.58: era 0.00014, typo 10x subestimado)
 app.use(express.json());
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY });
@@ -524,11 +524,12 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
           newSlTr = isLong ? Math.max(sl, slFloor) : Math.min(sl, slFloor);
         }
         if ((isLong && newSlTr > sl) || (!isLong && newSlTr < sl)) {
-          const newSlRounded = parseFloat(newSlTr.toFixed(1));
+          const _slDec = trailExtreme >= 100 ? 2 : trailExtreme >= 1 ? 4 : 6; // v4.5.57: adaptive precision
+          const newSlRounded = parseFloat(newSlTr.toFixed(_slDec));
           await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
           sl = newSlRounded;
           _trailingLastUpdate[trade.id] = Date.now();
-          console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(1)} (extreme ${trailExtreme.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
+          console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(_slDec)} (extreme ${trailExtreme.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
         }
       }
 
@@ -584,7 +585,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
 
       // Circuit breaker global diario
-      if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long') circuitBreaker.addPnl(pnl_usd);
+      if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.58: consistent with initFromSupabase
       // Circuit breaker por símbolo (sweep/whale)
       if ((trade.source === 'sweep' || trade.source === 'whale') && _symTrackers[symbol]) {
         if (status === 'lost') _symTrackers[symbol].recordLoss();
@@ -1041,12 +1042,14 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
         console.log(`⏭ Kill switch omitido — ${trade.direction} ${symbol} al ${(slProgress*100).toFixed(0)}% del SL (umbral: ${(slThreshold*100).toFixed(0)}%)`);
         continue;
       }
+      if (_slTpLocks[trade.id]) continue; // v4.5.59: prevent double-close
+      _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000);
       const priceDiff = trade.direction === 'LONG' ? (currentPrice - entry) / entry : (entry - currentPrice) / entry;
       const _lev1 = parseFloat(trade.leverage || 10);
       const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff * _lev1 - parseFloat(trade.size_usd) * _lev1 * _FEE_RT).toFixed(2));
       const pnl_pct = parseFloat((priceDiff * _lev1 * 100).toFixed(2));
       await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'kill_switch', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
-      circuitBreaker.addPnl(pnl_usd);
+      if (trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper' && trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd); // v4.5.59
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
       await closeFuturesPosition(symbol, trade.direction);
       console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} (${(slProgress*100).toFixed(0)}% hacia SL)`);
@@ -2057,7 +2060,7 @@ Responde SOLO JSON sin markdown:
             const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
             _slTpLocks[oppTrade.id] = true; setTimeout(() => { delete _slTpLocks[oppTrade.id]; }, 10000); // v4.5.52
             await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'signal_reversal', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', oppTrade.id);
-            circuitBreaker.addPnl(pnl_usd);
+            if (oppTrade.source !== 'manual' && oppTrade.source !== 'shadow' && oppTrade.source !== 'bull_run_long' && oppTrade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.59
             delete _maxProfitCache[oppTrade.id]; delete _trailingLastUpdate[oppTrade.id]; delete _partialTpTrades[oppTrade.id];
             console.log(`🔄 Reversión de señal: cerrado ${oppTrade.direction} ${symbol} @ $${currentPrice}`);
             if (process.env.TELEGRAM_CHAT_ID) { const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); } }
@@ -2196,6 +2199,21 @@ function startAlertJob() {
   const wsSymbols = (process.env.WS_SYMBOLS || process.env.ALERT_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',');
   wsSymbols.forEach(sym => { setTimeout(() => connectWebSocket(sym.trim()), 2000); });
   console.log(`🔌 WebSocket iniciando para: ${wsSymbols.join(', ')}`);
+  // v4.5.55: cleanup zombie paper trades cuyos símbolos salieron de WS_SYMBOLS
+  setTimeout(async () => {
+    try {
+      const activeSet = new Set(wsSymbols.map(s => s.trim()));
+      const { data: openAll } = await supabase.from('paper_trades').select('id,symbol,direction,entry,size_usd,leverage').eq('status','open');
+      if (!openAll?.length) return;
+      const zombies = openAll.filter(t => !activeSet.has(t.symbol));
+      if (!zombies.length) return;
+      const now = new Date().toISOString();
+      for (const t of zombies) {
+        await supabase.from('paper_trades').update({ status:'cancelled', close_reason:'zombie_cleanup', pnl_usd:0, closed_at:now }).eq('id',t.id); // v4.5.59: phantom
+        console.log(`🧹 Zombie cleanup: #${t.id} ${t.symbol} ${t.direction} (símbolo fuera de WS_SYMBOLS)`);
+      }
+    } catch(e) { console.error('zombie cleanup error:', e.message); }
+  }, 10000);
   setInterval(async () => {
     for (const sym of wsSymbols) {
       const s = sym.trim();
@@ -2358,7 +2376,7 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const finalStatus = pnl_usd >= 0 ? 'won' : 'lost';
     const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;
-    circuitBreaker.addPnl(pnl_usd);
+    if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.59
     delete _maxProfitCache[id]; delete _trailingLastUpdate[id]; delete _partialTpTrades[id];
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -2385,7 +2403,10 @@ app.get('/api/paper/stats', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+let _monitorRunning = false; // v4.5.59: prevent setInterval overlap
 async function monitorPaperTrades() {
+  if (_monitorRunning) return;
+  _monitorRunning = true;
   try {
     const { data: openTrades } = await supabase.from('paper_trades').select('*').eq('status', 'open');
     const _closedInThisRun = new Set();
@@ -2400,12 +2421,13 @@ async function monitorPaperTrades() {
           const movPct = Math.abs((currentWsPrice - entry) / entry * 100);
           if (movPct < 0.25) {
             // Precio no se movió ±0.25% en 45 min — trade lateral, cerrar
-            const pnl_usd = trade.direction === 'LONG'
-              ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * parseFloat(trade.leverage || 5)
-              : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * parseFloat(trade.leverage || 5);
+            const _levLat = parseFloat(trade.leverage || 5);
+            const pnl_usd = parseFloat(((trade.direction === 'LONG'
+              ? (currentWsPrice - entry) / entry * parseFloat(trade.size_usd) * _levLat
+              : (entry - currentWsPrice) / entry * parseFloat(trade.size_usd) * _levLat) - parseFloat(trade.size_usd) * _levLat * _FEE_RT).toFixed(2)); // v4.5.59: fee
             const pnl_pct = trade.direction === 'LONG'
-              ? (currentWsPrice - entry) / entry * parseFloat(trade.leverage || 5) * 100
-              : (entry - currentWsPrice) / entry * parseFloat(trade.leverage || 5) * 100;
+              ? (currentWsPrice - entry) / entry * _levLat * 100
+              : (entry - currentWsPrice) / entry * _levLat * 100;
             _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
             await supabase.from('paper_trades').update({
               status: pnl_usd >= 0 ? 'won' : 'lost',
@@ -2415,7 +2437,7 @@ async function monitorPaperTrades() {
               pnl_pct: parseFloat(pnl_pct.toFixed(2)),
               closed_at: new Date().toISOString()
             }).eq('id', trade.id);
-            circuitBreaker.addPnl(pnl_usd);
+            if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd); // v4.5.59: manual is paper
             _closedInThisRun.add(trade.id);
             delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
             await closeFuturesPosition(trade.symbol, trade.direction);
@@ -2472,11 +2494,10 @@ async function monitorPaperTrades() {
               close_reason: 'timeout', pnl_usd: pnl6h, pnl_pct: pnlPct6h,
               closed_at: new Date().toISOString()
             }).eq('id', trade.id);
-            circuitBreaker.addPnl(pnl6h);
+            const _paperSrcs6h = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
+            if (!_paperSrcs6h.has(trade.source)) { circuitBreaker.addPnl(pnl6h); await closeFuturesPosition(trade.symbol, trade.direction); } // v4.5.56: shadow no contamina CB
             _closedInThisRun.add(trade.id);
             delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
-            const _paperSrcs6h = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
-            if (!_paperSrcs6h.has(trade.source)) await closeFuturesPosition(trade.symbol, trade.direction); // v4.5.49: no cerrar paper en Binance
             console.log(`⏱️ Timeout 6h (${trade.source}): ${trade.direction} ${trade.symbol} a $${wsP6h} — ${minAbierto6h.toFixed(0)}min — PnL: $${pnl6h}`);
           }
         }
@@ -2485,6 +2506,7 @@ async function monitorPaperTrades() {
     if (!openTrades?.length) return;
     for (const trade of openTrades) {
       if (_closedInThisRun.has(trade.id)) continue;
+      if (_slTpLocks[trade.id]) continue; // v4.5.59: prevent double-close with WS path
       try {
         const currentPrice = wsState[trade.symbol]?.lastPrice;
         if (!currentPrice) continue;
@@ -2520,10 +2542,11 @@ async function monitorPaperTrades() {
           newSl = isLong ? Math.max(sl, slFloor) : Math.min(sl, slFloor);
         }
         if ((isLong && newSl > sl) || (!isLong && newSl < sl)) {
-          const newSlRounded = parseFloat(newSl.toFixed(1));
+          const _slDecP = currentPrice >= 100 ? 2 : currentPrice >= 1 ? 4 : 6; // v4.5.57: adaptive precision
+          const newSlRounded = parseFloat(newSl.toFixed(_slDecP));
           await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
           sl = newSlRounded;
-          console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(0)} → ${newSlRounded.toFixed(0)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
+          console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(_slDecP)} → ${newSlRounded.toFixed(_slDecP)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
         }
         if (priceDiffPct >= 1.0) {
           try {
@@ -2551,7 +2574,7 @@ async function monitorPaperTrades() {
           const closeAtPrice = closeReason === 'sl' ? sl : closeReason === 'tp2' ? tp2 : tp1;
           const priceDiff = trade.direction === 'LONG' ? (closeAtPrice - entry) / entry : (entry - closeAtPrice) / entry;
           const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4 - trade.size_usd * _lev4 * _FEE_RT).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
-          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'closed', close_price: closeAtPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; }
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'cancelled', close_price: closeAtPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; } // v4.5.59
           // Si el trailing movió el SL al profit zone y cierra en ganancia → trailing_tp
           const trailingActuo = closeReason === 'sl' && pnl_usd > 0;
           const finalCloseReason = trailingActuo ? 'trailing_tp' : closeReason;
@@ -2595,6 +2618,7 @@ async function monitorPaperTrades() {
       } catch(_) {}
     }
   } catch(e) { console.error('Monitor paper trades error:', e.message); }
+  finally { _monitorRunning = false; } // v4.5.59
 }
 
 app.get('/api/news/latest', async (req, res) => {
@@ -4314,8 +4338,8 @@ async function detectMeanReversion(symbol) {
       }
     } catch(e) { /* no bloquear si falla */ }
   }
-  // No abrir si ya hay trade abierto para este símbolo
-  const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open');
+  // No abrir si ya hay trade real abierto para este símbolo (excluir shadow/paper que no deben bloquear meanrev)
+  const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').not('source', 'in', '(shadow,bull_run_long,sol_paper)'); // v4.5.57: shadow no bloquea
   if (existing?.length) return;
   // v4.5.27: cap global — excluir shadow/bull_run_long (no deben bloquear meanrev)
   const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open').not('source','in','(shadow,bull_run_long,sol_paper)');
@@ -4524,8 +4548,8 @@ app.get('/api/sesion', (req, res) => {
 // ── ENDPOINT: Estado trackers v4.4.38 ──
 // ── Reset Circuit Breaker manual — usar tras deploy con nuevas reglas
 app.post('/api/reset-cb', (req, res) => {
-  const authSecret = process.env.ADMIN_SECRET || 'samael-delta-admin';
-  if (req.headers['x-admin-secret'] !== authSecret) return res.status(401).json({ error: 'Unauthorized' });
+  const authSecret = process.env.ADMIN_SECRET;
+  if (!authSecret || req.headers['x-admin-secret'] !== authSecret) return res.status(401).json({ error: 'Unauthorized' }); // v4.5.59
   const today = circuitBreaker.getToday();
   const prevPnl = circuitBreaker.dailyPnl[today] || 0;
   delete circuitBreaker.dailyPnl[today];
@@ -4555,7 +4579,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Samael Delta v4.5.51 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.59 corriendo en puerto ${PORT}`);
   // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
   try {
     const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
