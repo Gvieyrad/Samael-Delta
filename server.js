@@ -2583,8 +2583,8 @@ async function monitorPaperTrades() {
           _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
           await supabase.from('paper_trades').update({ status: tradeStatus, close_price: closeAtPrice, close_reason: finalCloseReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
           // ── Circuit Breaker: acumular PnL diario ──
-          if (trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto' || trade.source === 'meanrev') {
-            circuitBreaker.addPnl(pnl_usd);
+          if ((trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto' || trade.source === 'meanrev') && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) {
+            circuitBreaker.addPnl(pnl_usd); // v4.5.61: exclude Cantera paper trades from CB
           }
           // ── Consecutive loss tracker por símbolo ──
           if (trade.source === 'scalping') {
@@ -4294,15 +4294,22 @@ async function getCachedKlines(symbol, interval, limit, ttlMs = 3 * 60 * 1000) {
   return res.data;
 }
 
+let _scannerRunning = false; // v4.5.60: prevent setInterval overlap on 418 sleep
 async function runMeanRevScanner() {
-  const _mrSymbols = (process.env.WS_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',').map(s => s.trim());
-  for (const symbol of _mrSymbols) {
-    try {
-      await detectMeanReversion(symbol);
-    } catch(e) {
-      console.log(`MeanRev error ${symbol}: ${e.message}`);
-      if (e.response?.status === 418) { console.log(`🚫 IP ban 418 meanrev — esperando 60s`); await new Promise(r => setTimeout(r, 60000)); }
+  if (_scannerRunning) return;
+  _scannerRunning = true;
+  try {
+    const _mrSymbols = (process.env.WS_SYMBOLS || 'BTCUSDT,ETHUSDT').split(',').map(s => s.trim());
+    for (const symbol of _mrSymbols) {
+      try {
+        await detectMeanReversion(symbol);
+      } catch(e) {
+        console.log(`MeanRev error ${symbol}: ${e.message}`);
+        if (e.response?.status === 418) { console.log(`🚫 IP ban 418 meanrev — esperando 60s`); await new Promise(r => setTimeout(r, 60000)); }
+      }
     }
+  } finally {
+    _scannerRunning = false; // v4.5.60
   }
 }
 
@@ -4443,7 +4450,7 @@ async function detectMeanReversion(symbol) {
   const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
 
   // v4.5.27: meanrev real — si MEANREV_REAL=true, abrir posición Binance con tamaño pequeño
-  const _mrRealSyms = process.env.MEANREV_REAL_SYMBOLS ? new Set(process.env.MEANREV_REAL_SYMBOLS.split(",").map(s=>s.trim())) : null; const _mrReal = process.env.MEANREV_REAL === "true" && _LIVE_TRADING && (!_mrRealSyms || _mrRealSyms.has(symbol)); // v4.5.54: per-symbol real override via MEANREV_REAL_SYMBOLS
+  const _mrRealSyms = process.env.MEANREV_REAL_SYMBOLS ? new Set(process.env.MEANREV_REAL_SYMBOLS.split(",").map(s=>s.trim())) : null; const _mrReal = process.env.MEANREV_REAL === "true" && _LIVE_TRADING && (!_mrRealSyms || _mrRealSyms.has(symbol)) && !PAPER_ONLY_SYMBOLS.has(symbol); // v4.5.61: PAPER_ONLY guard added; v4.5.54: per-symbol real override via MEANREV_REAL_SYMBOLS
   const _mrSizeUsd = parseFloat(process.env['MEANREV_SIZE_USD_' + symbol] || process.env.MEANREV_SIZE_USD || '5'); // v4.5.36: per-symbol override
   const _mrLeverage = parseInt(process.env.MEANREV_LEVERAGE || '3');
   let _mrFill = null; // v4.5.48: hoisted so it's in scope at supabase.insert
@@ -4579,7 +4586,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Samael Delta v4.5.59 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.61 corriendo en puerto ${PORT}`);
   // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
   try {
     const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
