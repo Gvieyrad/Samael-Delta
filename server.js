@@ -2613,7 +2613,7 @@ async function monitorPaperTrades() {
           }
           // v4.5.50: cerrar posicion real en Binance si WS gap perdio el evento
           const _paperSrcsM = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
-          if (!_paperSrcsM.has(trade.source) && _LIVE_TRADING) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Monitor poll close err:', e.message));
+          if (!_paperSrcsM.has(trade.source) && _LIVE_TRADING && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Monitor poll close err:', e.message));
         }
       } catch(_) {}
     }
@@ -4586,7 +4586,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Samael Delta v4.5.61 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.62 corriendo en puerto ${PORT}`);
   // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
   try {
     const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
