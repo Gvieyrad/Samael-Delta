@@ -2466,7 +2466,7 @@ async function monitorPaperTrades() {
             pnl_usd, pnl_pct,
             closed_at: new Date().toISOString()
           }).eq('id', trade.id);
-          circuitBreaker.addPnl(pnl_usd);
+          if (trade.source !== "shadow" && trade.source !== "manual" && trade.source !== "bull_run_long" && trade.source !== "sol_paper") circuitBreaker.addPnl(pnl_usd); // v4.5.63: scalping timeout source guard
           _closedInThisRun.add(trade.id);
           delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
           if (_LIVE_TRADING) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Scalping timeout close err:', e.message)); // v4.5.50
@@ -4586,7 +4586,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Samael Delta v4.5.62 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.63 corriendo en puerto ${PORT}`);
   // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
   try {
     const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
@@ -4626,7 +4626,7 @@ async function checkSymbolPerformance() {
         bySym[t.symbol][itype==='REALIZED_PNL'?'pnl':'comm']+=parseFloat(t.income);
       }
     }
-    const syms=(process.env.WS_SYMBOLS||'').split(',').filter(Boolean);
+    const syms=(process.env.WS_SYMBOLS||'').split(',').filter(Boolean).filter(s=>!PAPER_ONLY_SYMBOLS.has(s)); // v4.5.63: skip Cantera symbols from kill eval
     let lines=['Samael Delta - Perf 7d'], toKill=[];
     for (const sym of syms) {
       const d=bySym[sym]||{pnl:0,comm:0}, net=d.pnl+d.comm;
