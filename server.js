@@ -12,7 +12,7 @@ const _FEE_RT = 0.0008; // 0.04% taker x2 lados — Binance Futures (v4.5.58: er
 app.use(express.json());
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
+const supabase = require('./sqlite_shim'); // v4.5.68: SQLite local reemplaza Supabase (egress quota). createClient ya no se usa.
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
 const BINANCE = 'https://fapi.binance.com';
 // ⚠️ IMPORTANTE: usar stream.binance.com:9443 (SPOT), NO fstream.binance.com (futures)
@@ -162,14 +162,14 @@ app.get('/samael', async (req, res) => {
     const solPaperPnl  = solPaper.reduce((a,t) => a + (t.pnl_usd||0), 0);
 
     const realTrades = trades.filter(t => t.source !== 'shadow' && t.source !== 'sol_paper' && t.source !== 'bull_run_long'); // v4.5.39: meanrev incluido
-    const tradeRows = realTrades.slice(0,25).map(t => {
+    const tradeRows = trades.slice(0,50).map(t => {
       const icon = t.status === 'won' ? '&#x2705;' : t.status === 'lost' ? '&#x274C;' : '&#x23F3;';
       const pnl  = t.pnl_usd != null ? (t.pnl_usd >= 0 ? '<span class="pos">+$'+t.pnl_usd.toFixed(2)+'</span>' : '<span class="neg">$'+t.pnl_usd.toFixed(2)+'</span>') : '<span class="muted">open</span>';
       const dir  = t.direction === 'LONG' ? '<span class="long">&#x25B2; LONG</span>' : '<span class="short">&#x25BC; SHORT</span>';
       const sig  = t.source === 'sweep' ? 'sweep' : t.source === 'whale' ? '<span style="color:#e3b341">whale</span>' : (t.source||'');
       const ts   = t.opened_at ? new Date(new Date(t.opened_at)-18000000).toISOString().slice(5,16).replace('T',' ') : '';
       const reason = t.close_reason || (t.status === 'open' ? '<span class="muted">open</span>' : '&#x2014;');
-      return '<tr><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td class="muted">'+sig+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
+      return '<tr style="'+(t.source==='shadow'?'opacity:0.45':'')+'"><td>'+t.id+'</td><td>'+t.symbol.replace('USDT','')+'</td><td>'+dir+'</td><td>'+pnl+'</td><td>'+reason+'</td><td class="muted">'+sig+'</td><td class="muted">'+ts+'</td><td>'+icon+'</td></tr>';
     }).join('');
 
     const openRows = open.length > 0 ? open.map(t => {
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.24 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.62 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -418,7 +418,8 @@ async function closeFuturesPosition(symbol, direction, pnl_usd = null, closePric
     const qty = _roundStep(posAmt, info.stepSize);
     const closeSide = direction === 'LONG' ? 'SELL' : 'BUY';
     const res = await _placeFuturesMarket(symbol, closeSide, qty, true);
-    console.log(`✅ LIVE CLOSE: ${closeSide} ${symbol} qty=${qty} orderId=${res.orderId}`);
+    const _fillPx = res.cumQuote && res.executedQty ? parseFloat(res.cumQuote) / parseFloat(res.executedQty) : null;
+    console.log(`✅ LIVE CLOSE: ${closeSide} ${symbol} qty=${qty} fillPx=${_fillPx ? _fillPx.toFixed(4) : "n/a"} orderId=${res.orderId}`);
     // v4.5.31: incluir PnL y precio de salida en notificación WA
     const _pnlStr = pnl_usd !== null ? `\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}` : '';
     const _closePxStr = closePrice !== null ? ` | Exit: $${parseFloat(closePrice).toFixed(4)}` : '';
@@ -483,13 +484,25 @@ const _openingTrades = new Set(); // mutex sincrono para apertura de trades (evi
 const _trailingLastUpdate = {}; // throttle trailing SL writes — 30s por trade
 const _maxProfitCache = {}; // max unrealized profit por trade id
 const _partialTpTrades = {}; // trades con partial TP activado (BE stop + TP2)
+// v4.5.67: cache open trades por simbolo (TTL 5s) — checkSlTpOnTick consultaba Supabase en CADA tick WS (~25/s) y revento la cuota egress (Jun 22). _slTpLocks (10s>TTL) previene doble-cierre aunque el cache muestre un trade ya cerrado por <=5s.
+const _slCache = {};
+const _SL_CACHE_MS = 5000;
+function _invalidateSlCache(symbol) { delete _slCache[symbol]; }
 async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = price) {
   try {
-    const { data: openTrades, error: _slErr } = await supabase
-      .from('paper_trades').select('*')
-      .eq('symbol', symbol).eq('status', 'open');
-    if (_slErr) { console.error(`checkSlTpOnTick Supabase error (${symbol}): ${_slErr.message}`); return; } // v4.5.52: don't silently bypass SL
-    if (!openTrades?.length) return;
+    let openTrades;
+    const _cached = _slCache[symbol];
+    if (_cached && Date.now() - _cached.time < _SL_CACHE_MS) {
+      openTrades = _cached.trades; // v4.5.67: cache en memoria, no query por tick (fix exceed_egress_quota)
+    } else {
+      const { data: _slData, error: _slErr } = await supabase
+        .from('paper_trades').select('*')
+        .eq('symbol', symbol).eq('status', 'open');
+      if (_slErr) { console.error(`checkSlTpOnTick Supabase error (${symbol}): ${_slErr.message}`); return; } // v4.5.52: don't silently bypass SL
+      openTrades = _slData || [];
+      _slCache[symbol] = { trades: openTrades, time: Date.now() };
+    }
+    if (!openTrades.length) return;
 
     for (const trade of openTrades) {
       const entry = parseFloat(trade.entry);
@@ -529,6 +542,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
           await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
           sl = newSlRounded;
           _trailingLastUpdate[trade.id] = Date.now();
+          _invalidateSlCache(symbol); // v4.5.67: SL cambio -> refrescar cache
           console.log(`📈 Trailing (WS): ${trade.direction} ${symbol} SL → ${newSlRounded.toFixed(_slDec)} (extreme ${trailExtreme.toFixed(1)}, +${priceDiffPctTr.toFixed(2)}%)`);
         }
       }
@@ -565,9 +579,20 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
           await supabase.from('paper_trades').update({ sl: entry, tp1: _tp2val }).eq('id', trade.id);
           console.log(`🔄 Partial TP activado: ${symbol} SL→entry=$${entry} TP→$${_tp2val.toFixed(1)}`);
         }
+        _invalidateSlCache(symbol); // v4.5.67: partial TP cambio tp1/sl
         continue;
       }
 
+      // v4.5.62: slippage guard — trailing_tp meanrev: si precio ya rebotó >0.3% del trigger, reanclar SL
+      if (closeReason === 'trailing_tp' && trade.source === 'meanrev') {
+        const _slipPct = isLong ? (closePrice - price) / closePrice : (price - closePrice) / closePrice;
+        if (_slipPct > 0.003) {
+          console.log(`⚠️ Slippage guard ${symbol}: price=${price.toFixed(4)} trigger=${closePrice.toFixed(4)} desliz=${(_slipPct*100).toFixed(2)}% — reancl SL`);
+          await supabase.from('paper_trades').update({ sl: isLong ? price * 0.997 : price * 1.003 }).eq('id', trade.id);
+          _invalidateSlCache(symbol); // v4.5.67
+          continue;
+        }
+      }
       // Lock para evitar doble cierre
       _slTpLocks[trade.id] = true;
       setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.48: 1s → 10s to cover Supabase round-trip
@@ -583,9 +608,10 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         max_profit_usd: parseFloat((_maxProfitCache[trade.id] ?? pnl_usd).toFixed(2))
       }).eq('id', trade.id);
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
+      _invalidateSlCache(symbol); // v4.5.67: refrescar cache tras cierre
 
       // Circuit breaker global diario
-      if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.58: consistent with initFromSupabase
+      if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper' && !PAPER_ONLY_SYMBOLS.has(symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.58: consistent with initFromSupabase
       // Circuit breaker por símbolo (sweep/whale)
       if ((trade.source === 'sweep' || trade.source === 'whale') && _symTrackers[symbol]) {
         if (status === 'lost') _symTrackers[symbol].recordLoss();
@@ -704,11 +730,11 @@ function connectWebSocket(symbol) {
           const _low  = wsState[symbol].trailLow  || _p;
           wsState[symbol].trailHigh = _p; // reset tras cada check
           wsState[symbol].trailLow  = _p;
-          checkSlTpOnTick(symbol, _p, _high, _low);
+          checkSlTpOnTick(symbol, _p, _high, _low).catch(e => console.error('[tick SL]', symbol, e.message)); // v4.5.73
         }, 200);
       }
       if (!wsState[symbol]._evalTimer) {
-        wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol); }, 500);
+        wsState[symbol]._evalTimer = setTimeout(() => { wsState[symbol]._evalTimer = null; evaluateAnomaly(symbol).catch(e => console.error('[anomaly]', symbol, e.message)); }, 500); // v4.5.73
       }
     } catch(e) { console.error(`❌ WS msg error ${symbol}:`, e.message); }
   });
@@ -940,7 +966,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
           return;
         }
       }
-    } catch(_) {}
+    } catch(e) { console.error('sweep whale bias fetch error:', e.message); } // v4.5.72
     // v4.4.32 Fix A: vol_multiplier mínimo 6x — backtest 365d confirma: 6x da mejor Z-Score y WR que 4x
     if (metrics.volumeMultiplier < 6) {
       console.log(`⏭ Whale trade omitido — vol ${metrics.volumeMultiplier.toFixed(1)}x insuficiente (<6x) — señal débil (${symbol})`);
@@ -970,7 +996,7 @@ async function openWhaleCounterTrade(symbol, direction, metrics, reason, liqBonu
         console.log(`⏭ Whale SHORT omitido — CVD 5min positivo (${cvd5mPct.toFixed(1)}%) instituciones comprando (${symbol})`);
         return;
       }
-    } catch(_) {}
+    } catch(e) { console.error('sweep CVD5m fetch error:', e.message); } // v4.5.72
     const k5m = await axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=20`);
     const highs5m = k5m.data.map(k => parseFloat(k[2])), lows5m = k5m.data.map(k => parseFloat(k[3]));
     const atr5m = highs5m.slice(-10).reduce((s,h,i) => s + (h - lows5m[lows5m.length - 10 + i]), 0) / 10;
@@ -1049,9 +1075,10 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
       const pnl_usd = parseFloat((parseFloat(trade.size_usd) * priceDiff * _lev1 - parseFloat(trade.size_usd) * _lev1 * _FEE_RT).toFixed(2));
       const pnl_pct = parseFloat((priceDiff * _lev1 * 100).toFixed(2));
       await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'kill_switch', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
-      if (trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper' && trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd); // v4.5.59
+      _invalidateSlCache(symbol); // v4.5.73
+      if (trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper' && trade.source !== 'manual' && !PAPER_ONLY_SYMBOLS.has(symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.59
       delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
-      await closeFuturesPosition(symbol, trade.direction);
+      try { await closeFuturesPosition(symbol, trade.direction); } catch(_ksCloseErr) { console.error(`🚨 killSwitch: DB cerrado pero Binance close FALLÓ ${symbol}:`, _ksCloseErr.message); if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `🚨 URGENTE Kill Switch: DB actualizado pero Binance close falló ${symbol} — verificar posición manualmente`).catch(()=>{}); } // v4.5.72
       console.log(`🛡️ Kill switch: cerrado ${trade.direction} ${symbol} @ $${currentPrice} PnL: $${pnl_usd} (${(slProgress*100).toFixed(0)}% hacia SL)`);
       if (process.env.TELEGRAM_CHAT_ID) {
         const msg = `🛡️ *Kill Switch activado*\n${trade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: ${reason}`;
@@ -1062,7 +1089,7 @@ async function killSwitchOpposite(symbol, sweepDirection, reason) {
 }
 
 // v4.5.26: LONG real para WLD/XRP/BTC cuando sweep bajista falla (shadow WR>42%)
-const LONG_REAL_SYMBOLS = new Set((process.env.LONG_REAL_SYMBOLS || 'WLDUSDT,XRPUSDT,BTCUSDT').split(','));
+const LONG_REAL_SYMBOLS = new Set((process.env.LONG_REAL_SYMBOLS || '').split(',').map(s=>s.trim()).filter(Boolean)); // v4.5.64: vacio/unset=desactivado (era footgun: default WLD,XRP,BTC abria LONGs reales pese a .env vaciado)
 const _realLongLocks = new Set(); // v4.5.31: lock para evitar race condition doble apertura
 async function openRealLong(symbol, sweepDirection, price) {
   if (sweepDirection !== 'SHORT') return;
@@ -1288,7 +1315,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       bias1dSweep = calcBias(k1dSw.data, null, fundingSweep);
       oiTrend15mSweep = calcOITrend(oi15mSw);
       fib15mSweep = calcFibonacci(k15mSw.data, price);
-    } catch(_) {}
+    } catch(e) { console.error('sweep 4h/1d bias fetch error:', e.message); } // v4.5.72
     // v4.4.16 C3: bloquear sweep si bias_1d es contrario — mercado diario manda
     // ETH estaba en acumulación (bias_1d=long), ballenas SHORT de $10-15M no podían revertirlo
     if (bias1dSweep) {
@@ -2060,7 +2087,8 @@ Responde SOLO JSON sin markdown:
             const pnl_pct = parseFloat((priceDiff * _lev2 * 100).toFixed(2));
             _slTpLocks[oppTrade.id] = true; setTimeout(() => { delete _slTpLocks[oppTrade.id]; }, 10000); // v4.5.52
             await supabase.from('paper_trades').update({ status: pnl_usd >= 0 ? 'won' : 'lost', close_price: currentPrice, close_reason: 'signal_reversal', pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', oppTrade.id);
-            if (oppTrade.source !== 'manual' && oppTrade.source !== 'shadow' && oppTrade.source !== 'bull_run_long' && oppTrade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.59
+            _invalidateSlCache(symbol); // v4.5.70: invalidate cache on signal_reversal close
+            if (oppTrade.source !== 'manual' && oppTrade.source !== 'shadow' && oppTrade.source !== 'bull_run_long' && oppTrade.source !== 'sol_paper' && !PAPER_ONLY_SYMBOLS.has(symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.59, v4.5.73
             delete _maxProfitCache[oppTrade.id]; delete _trailingLastUpdate[oppTrade.id]; delete _partialTpTrades[oppTrade.id];
             console.log(`🔄 Reversión de señal: cerrado ${oppTrade.direction} ${symbol} @ $${currentPrice}`);
             if (process.env.TELEGRAM_CHAT_ID) { const msg = `🔄 *Reversión de señal*\n${oppTrade.direction} ${symbol} cerrado\nEntry: $${parseInt(entry).toLocaleString()} → $${parseInt(currentPrice).toLocaleString()}\nPnL: ${pnl_usd >= 0 ? '+' : ''}$${pnl_usd}\nRazón: Nueva señal ${signal.direction} ${signal.confidence}%`; try { await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' }); } catch(e) { console.error("Telegram send error:", e.message); } }
@@ -2164,7 +2192,7 @@ function startAlertJob() {
     const today = circuitBreaker.getToday();
     if (_dSummary.getHours() === 23 && _dSummary.getMinutes() === 0 && _dailySummarySentToday !== today) {
       _dailySummarySentToday = today;
-      sendDailySummary();
+      sendDailySummary().catch(e => console.error('[daily summary]', e.message)); // v4.5.73
     }
   }, 60 * 1000);
 
@@ -2260,7 +2288,7 @@ function startAlertJob() {
         const vols = k1m.data.map(k => parseFloat(k[4]) * parseFloat(k[5]));
         const avg = vols.reduce((a,b)=>a+b,0)/vols.length;
         if (wsState[sym.trim()]) { wsState[sym.trim()].avgVolume1m = avg; }
-      } catch(_) {}
+      } catch(e) { console.error(`pollBaseline ${sym} error:`, e.message); } // v4.5.72
     }
   };
   setTimeout(pollBaseline, 10000); // inicializar baseline 10s después de arrancar
@@ -2333,6 +2361,7 @@ app.post('/api/paper/open', async (req, res) => {
   try {
     const _openIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip;
     const { symbol, direction, entry, tp1, tp2, sl, rr, confidence, size_usd, leverage, divergences, fibonacci, source } = req.body;
+    const _admS=process.env.ADMIN_SECRET; if(!_admS||req.headers['x-admin-secret']!==_admS) return res.status(401).json({error:'Unauthorized'}); // v4.5.71
     console.log(`📡 POST /api/paper/open — IP: ${_openIp} — ${direction || '?'} ${symbol || '?'} src=${source || 'manual'}`);
     if ((source || 'manual') !== 'sweep') {
       console.log(`⛔ Bloqueo trade no-sweep — source=${source || 'manual'} IP=${_openIp}`);
@@ -2360,6 +2389,7 @@ app.post('/api/paper/open', async (req, res) => {
 
 app.post('/api/paper/close/:id', async (req, res) => {
   try {
+    const _admS=process.env.ADMIN_SECRET; if(!_admS||req.headers['x-admin-secret']!==_admS) return res.status(401).json({error:'Unauthorized'}); // v4.5.71
     const { id } = req.params, { close_price, close_reason } = req.body;
     const { data: trade, error: fetchErr } = await supabase.from('paper_trades').select('*').eq('id', id).single();
     if (fetchErr) throw fetchErr;
@@ -2369,6 +2399,7 @@ app.post('/api/paper/close/:id', async (req, res) => {
     if (close_reason === 'manual') {
       const { data, error } = await supabase.from('paper_trades').update({ status: 'cancelled', close_price: closeP, close_reason: 'manual', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', id).select().single();
       if (error) throw error;
+      _invalidateSlCache(trade.symbol); // v4.5.70: invalidate cache on manual cancel
       return res.json({ ok: true, trade: data });
     }
     const priceDiff = trade.direction === 'LONG' ? (closeP - entry) / entry : (entry - closeP) / entry;
@@ -2376,7 +2407,8 @@ app.post('/api/paper/close/:id', async (req, res) => {
     const finalStatus = pnl_usd >= 0 ? 'won' : 'lost';
     const { data, error } = await supabase.from('paper_trades').update({ status: finalStatus, close_price: closeP, close_reason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;
-    if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper') circuitBreaker.addPnl(pnl_usd); // v4.5.59
+    _invalidateSlCache(trade.symbol); // v4.5.70: invalidate cache on close
+    if (trade.source !== 'manual' && trade.source !== 'shadow' && trade.source !== 'bull_run_long' && trade.source !== 'sol_paper' && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.59
     delete _maxProfitCache[id]; delete _trailingLastUpdate[id]; delete _partialTpTrades[id];
     res.json({ ok: true, trade: data });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -2437,7 +2469,8 @@ async function monitorPaperTrades() {
               pnl_pct: parseFloat(pnl_pct.toFixed(2)),
               closed_at: new Date().toISOString()
             }).eq('id', trade.id);
-            if (trade.source !== 'manual') circuitBreaker.addPnl(pnl_usd); // v4.5.59: manual is paper
+            _invalidateSlCache(trade.symbol); // v4.5.73
+            if (trade.source !== 'manual' && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.59: manual is paper
             _closedInThisRun.add(trade.id);
             delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
             await closeFuturesPosition(trade.symbol, trade.direction);
@@ -2466,7 +2499,8 @@ async function monitorPaperTrades() {
             pnl_usd, pnl_pct,
             closed_at: new Date().toISOString()
           }).eq('id', trade.id);
-          if (trade.source !== "shadow" && trade.source !== "manual" && trade.source !== "bull_run_long" && trade.source !== "sol_paper") circuitBreaker.addPnl(pnl_usd); // v4.5.63: scalping timeout source guard
+          _invalidateSlCache(trade.symbol); // v4.5.73
+          if (trade.source !== "shadow" && trade.source !== "manual" && trade.source !== "bull_run_long" && trade.source !== "sol_paper" && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) circuitBreaker.addPnl(pnl_usd); // v4.5.63: scalping timeout source guard
           _closedInThisRun.add(trade.id);
           delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
           if (_LIVE_TRADING) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Scalping timeout close err:', e.message)); // v4.5.50
@@ -2494,8 +2528,9 @@ async function monitorPaperTrades() {
               close_reason: 'timeout', pnl_usd: pnl6h, pnl_pct: pnlPct6h,
               closed_at: new Date().toISOString()
             }).eq('id', trade.id);
+            _invalidateSlCache(trade.symbol); // v4.5.73
             const _paperSrcs6h = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
-            if (!_paperSrcs6h.has(trade.source)) { circuitBreaker.addPnl(pnl6h); await closeFuturesPosition(trade.symbol, trade.direction); } // v4.5.56: shadow no contamina CB
+            if (!_paperSrcs6h.has(trade.source) && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) { circuitBreaker.addPnl(pnl6h); await closeFuturesPosition(trade.symbol, trade.direction); } // v4.5.56, v4.5.73
             _closedInThisRun.add(trade.id);
             delete _maxProfitCache[trade.id]; delete _trailingLastUpdate[trade.id]; delete _partialTpTrades[trade.id];
             console.log(`⏱️ Timeout 6h (${trade.source}): ${trade.direction} ${trade.symbol} a $${wsP6h} — ${minAbierto6h.toFixed(0)}min — PnL: $${pnl6h}`);
@@ -2546,6 +2581,7 @@ async function monitorPaperTrades() {
           const newSlRounded = parseFloat(newSl.toFixed(_slDecP));
           await supabase.from('paper_trades').update({ sl: newSlRounded }).eq('id', trade.id);
           sl = newSlRounded;
+          _invalidateSlCache(trade.symbol); // v4.5.69: mirror WS path — polling also must invalidate cache
           console.log(`📈 Trailing stop: ${trade.direction} ${trade.symbol} SL ${parseFloat(trade.sl).toFixed(_slDecP)} → ${newSlRounded.toFixed(_slDecP)} (precio: ${currentPrice.toFixed(0)}, +${priceDiffPct.toFixed(2)}%)`);
         }
         if (priceDiffPct >= 1.0) {
@@ -2574,7 +2610,7 @@ async function monitorPaperTrades() {
           const closeAtPrice = closeReason === 'sl' ? sl : closeReason === 'tp2' ? tp2 : tp1;
           const priceDiff = trade.direction === 'LONG' ? (closeAtPrice - entry) / entry : (entry - closeAtPrice) / entry;
           const pnl_usd = parseFloat((trade.size_usd * priceDiff * _lev4 - trade.size_usd * _lev4 * _FEE_RT).toFixed(2)), pnl_pct = parseFloat((priceDiff * _lev4 * 100).toFixed(2));
-          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'cancelled', close_price: closeAtPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); continue; } // v4.5.59
+          if (Math.abs(pnl_usd) > parseFloat(trade.size_usd) * _lev4 * 1.1) { await supabase.from('paper_trades').update({ status: 'cancelled', close_price: closeAtPrice, close_reason: 'invalid_pnl', pnl_usd: 0, pnl_pct: 0, closed_at: new Date().toISOString() }).eq('id', trade.id); _invalidateSlCache(trade.symbol); continue; } // v4.5.59, v4.5.73
           // Si el trailing movió el SL al profit zone y cierra en ganancia → trailing_tp
           const trailingActuo = closeReason === 'sl' && pnl_usd > 0;
           const finalCloseReason = trailingActuo ? 'trailing_tp' : closeReason;
@@ -2582,6 +2618,7 @@ async function monitorPaperTrades() {
           if (trailingActuo) console.log(`🎯 Trailing TP: ${trade.direction} ${trade.symbol} cerró en ganancia $${pnl_usd} vía trailing stop`);
           _slTpLocks[trade.id] = true; setTimeout(() => { delete _slTpLocks[trade.id]; }, 10000); // v4.5.50
           await supabase.from('paper_trades').update({ status: tradeStatus, close_price: closeAtPrice, close_reason: finalCloseReason, pnl_usd, pnl_pct, closed_at: new Date().toISOString() }).eq('id', trade.id);
+          _invalidateSlCache(trade.symbol); // v4.5.73
           // ── Circuit Breaker: acumular PnL diario ──
           if ((trade.source === 'scalping' || trade.source === 'sweep' || trade.source === 'auto' || trade.source === 'meanrev') && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) {
             circuitBreaker.addPnl(pnl_usd); // v4.5.61: exclude Cantera paper trades from CB
@@ -2615,7 +2652,7 @@ async function monitorPaperTrades() {
           const _paperSrcsM = new Set(process.env.MEANREV_REAL === 'true' ? ['shadow','bull_run_long','sol_paper'] : ['shadow','bull_run_long','sol_paper','meanrev']);
           if (!_paperSrcsM.has(trade.source) && _LIVE_TRADING && !PAPER_ONLY_SYMBOLS.has(trade.symbol)) await closeFuturesPosition(trade.symbol, trade.direction).catch(e => console.error('Monitor poll close err:', e.message));
         }
-      } catch(_) {}
+      } catch(e) { console.error(`monitorPaperTrades trade #${trade.id} ${trade.symbol} error:`, e.message); }
     }
   } catch(e) { console.error('Monitor paper trades error:', e.message); }
   finally { _monitorRunning = false; } // v4.5.59
@@ -2683,6 +2720,7 @@ app.post('/api/ml/optimize', async (req, res) => {
 let scalpingActive = false, scalpingInterval = null;
 
 app.post('/api/scalping/start', (req, res) => {
+  const _admS=process.env.ADMIN_SECRET; if(!_admS||req.headers['x-admin-secret']!==_admS) return res.status(401).json({error:'Unauthorized'}); // v4.5.71
   if (scalpingActive) return res.json({ ok: false, message: 'Scalping ya activo' });
   const symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(','), intervalMin = parseFloat(process.env.SCALP_INTERVAL_MIN || '3');
   scalpingActive = true;
@@ -2692,6 +2730,7 @@ app.post('/api/scalping/start', (req, res) => {
 });
 
 app.post('/api/scalping/stop', (req, res) => {
+  const _admS=process.env.ADMIN_SECRET; if(!_admS||req.headers['x-admin-secret']!==_admS) return res.status(401).json({error:'Unauthorized'}); // v4.5.71
   if (!scalpingActive) return res.json({ ok: false, message: 'Scalping no estaba activo' });
   clearInterval(scalpingInterval); scalpingActive = false; scalpingInterval = null;
   res.json({ ok: true, message: 'Scalping desactivado' });
@@ -2931,7 +2970,8 @@ const circuitBreaker = {
         .neq('source', 'shadow')
         .neq('source', 'sol_paper')
         .neq('source', 'bull_run_long')
-        .not('pnl_usd', 'is', null); // v4.5.47: excluir fuentes no-reales del CB
+        .not('pnl_usd', 'is', null)
+        .not('symbol', 'in', '(DOGEUSDT,BTCUSDT)'); // v4.5.47, v4.5.73: excluir Cantera symbols del CB
       if (!data?.length) { console.log('✅ CB init — sin trades cerrados hoy, PnL=0'); return; }
       const totalPnl = data.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
       const day = this.getToday();
@@ -4322,6 +4362,10 @@ async function detectMeanReversion(symbol) {
   // Cooldown
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
 
+  // v4.5.62: bloquear meanrev si BTC sweep activo en <90s
+  const _btcAnomalyAge = wsState['BTCUSDT']?.anomaly?.time ? (now - wsState['BTCUSDT'].anomaly.time) : Infinity;
+  if (_btcAnomalyAge < 20000) { console.log(`MeanRev ${symbol} omitido — BTC sweep activo hace ${Math.round(_btcAnomalyAge/1000)}s`); return; }
+
   if (circuitBreaker.isActive()) { console.log(`MeanRev omitido — Circuit Breaker activo (${symbol})`); return; }
 
   // v4.5.42: Weekly Circuit Breaker
@@ -4338,6 +4382,7 @@ async function detectMeanReversion(symbol) {
           console.error('Weekly CB ACTIVADO: $'+_bal42.toFixed(2)+' (-'+(_drop42*100).toFixed(1)+'%) vs inicio semana $'+_wcbBase);
           if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, 'Weekly CB activado: $'+_bal42.toFixed(2)+' (-'+(_drop42*100).toFixed(1)+'%) — LIVE_TRADING=false').catch(()=>{});
           process.env.LIVE_TRADING = 'false'; _LIVE_TRADING = false; // v4.5.47: sincronizar variable
+          try { require('fs').writeFileSync('/home/noc/samael_delta/.wcb_state.json', JSON.stringify({base:process.env.WEEKLY_CB_BALANCE, ts:Date.now(), triggered:true})); } catch(_){} // v4.5.71: latch triggered
           return;
         } else if (_drop42 >= 0.04) {
           console.warn('Weekly CB warning: -'+(_drop42*100).toFixed(1)+'% vs $'+_wcbBase);
@@ -4379,11 +4424,7 @@ async function detectMeanReversion(symbol) {
   const h1Dir = h1Move < 0 ? 'down' : 'up';
   const h4Dir = h4Move < 0 ? 'down' : 'up';
 
-  // Si 4H va en misma dirección que 1H con fuerza → tendencia fuerte, no entrar contra ella
-  if (h1Dir === h4Dir && Math.abs(h4Move) > 1.0) {
-    console.log(`MeanRev ${symbol} omitido — tendencia 4H (${h4Move.toFixed(2)}%) confirma 1H (${h1Move.toFixed(2)}%) — sin reversión`);
-    return;
-  }
+  // v4.5.74: filtro 4H eliminado — backtest mostró -$1024 vs base sin él
 
   // ── CONDICIÓN 3: Volume spike >3x mediana en velas 1m ─────────────
   const k1mData = await getCachedKlines(symbol, '1m', 21, 60 * 1000);
@@ -4401,6 +4442,7 @@ async function detectMeanReversion(symbol) {
   // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
   // 1H subió >1% + spike → vendedores agotaron compradores → SHORT
   const direction = h1Move < -1.0 ? 'LONG' : 'SHORT';
+  if (process.env.MEANREV_SHORT_ONLY === 'true' && direction === 'LONG') { console.log(`MeanRev LONG ${symbol} omitido — MEANREV_SHORT_ONLY (LONGs -EV: backtest -0.7% vs SHORT-only +2.1%; XRP LONG 0% WR historico)`); return; } // v4.5.66
 
   // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
   const k1dData = await getCachedKlines(symbol, '1d', 30, 15 * 60 * 1000);
@@ -4419,7 +4461,7 @@ async function detectMeanReversion(symbol) {
     console.log(`MeanRev SHORT ${symbol} omitido — 1D muy alcista (score:${bias1d.score})`);
     return;
   }
-  if (direction === 'SHORT' && bias1d.bias === 'short' && bias1d.score < 40) {
+  if (direction === 'SHORT' && bias1d.bias === 'short' && bias1d.score < 20) {
     console.log(`MeanRev SHORT ${symbol} omitido - bias_1d bajista (score:${bias1d.score}) - bear run, squeeze risk`);
     return;
   }
@@ -4450,7 +4492,7 @@ async function detectMeanReversion(symbol) {
   const conf = Math.min(88, Math.round(75 + (volMult >= 5 ? 8 : 4) + (absH1 >= 2 ? 5 : 0)));
 
   // v4.5.27: meanrev real — si MEANREV_REAL=true, abrir posición Binance con tamaño pequeño
-  const _mrRealSyms = process.env.MEANREV_REAL_SYMBOLS ? new Set(process.env.MEANREV_REAL_SYMBOLS.split(",").map(s=>s.trim())) : null; const _mrReal = process.env.MEANREV_REAL === "true" && _LIVE_TRADING && (!_mrRealSyms || _mrRealSyms.has(symbol)) && !PAPER_ONLY_SYMBOLS.has(symbol); // v4.5.61: PAPER_ONLY guard added; v4.5.54: per-symbol real override via MEANREV_REAL_SYMBOLS
+  const _mrRealSyms = new Set((process.env.MEANREV_REAL_SYMBOLS || '').split(",").map(s=>s.trim()).filter(Boolean)); const _mrReal = process.env.MEANREV_REAL === "true" && _LIVE_TRADING && _mrRealSyms.has(symbol) && !PAPER_ONLY_SYMBOLS.has(symbol); // v4.5.65: real requiere lista explicita; vacio/unset = sin real (footgun gemelo de LONG_REAL_SYMBOLS L1075); v4.5.61: PAPER_ONLY guard; v4.5.54: per-symbol override
   const _mrSizeUsd = parseFloat(process.env['MEANREV_SIZE_USD_' + symbol] || process.env.MEANREV_SIZE_USD || '5'); // v4.5.36: per-symbol override
   const _mrLeverage = parseInt(process.env.MEANREV_LEVERAGE || '3');
   let _mrFill = null; // v4.5.48: hoisted so it's in scope at supabase.insert
@@ -4491,6 +4533,7 @@ async function detectMeanReversion(symbol) {
     return;
   }
   meanRevCooldown[symbol] = now; // Bug #8: cooldown solo si INSERT exitoso
+  _invalidateSlCache(symbol); // v4.5.67: nuevo trade visible al monitor WS sin esperar TTL
 
   console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
 
@@ -4586,7 +4629,7 @@ app.get('/api/tracker/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Samael Delta v4.5.63 corriendo en puerto ${PORT}`);
+  console.log(`🚀 Samael Delta v4.5.74 corriendo (SQLite) en puerto ${PORT}`);
   // v4.5.51: Supabase health check — if down, disable live trading to prevent blind orders
   try {
     const { error: _sbStartErr } = await supabase.from('paper_trades').select('id').limit(1);
@@ -4600,7 +4643,7 @@ app.listen(PORT, async () => {
   // CB arranca limpio en cada restart/deploy — nuevo deploy = nuevas reglas = fresh start
   syncBinanceTime();
   // v4.5.51: restore weekly CB base persisted before last restart
-  try { const _wcbF='/home/noc/samael_delta/.wcb_state.json'; if(require('fs').existsSync(_wcbF)){const _s=JSON.parse(require('fs').readFileSync(_wcbF));if((Date.now()-_s.ts)<7*24*3600*1000&&parseFloat(_s.base)>0){process.env.WEEKLY_CB_BALANCE=_s.base;console.log('Weekly CB base restaurado: $'+_s.base);}} } catch(e){console.error('Weekly CB state load:',e.message);}
+  try { const _wcbF='/home/noc/samael_delta/.wcb_state.json'; if(require('fs').existsSync(_wcbF)){const _s=JSON.parse(require('fs').readFileSync(_wcbF));if((Date.now()-_s.ts)<7*24*3600*1000&&parseFloat(_s.base)>0){process.env.WEEKLY_CB_BALANCE=_s.base;console.log('Weekly CB base restaurado: $'+_s.base); if(_s.triggered){_LIVE_TRADING=false;process.env.LIVE_TRADING='false';console.log('Weekly CB fue activado antes del restart, LIVE=false');}}} } catch(e){console.error('Weekly CB state load:',e.message);} // v4.5.71
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
   if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),30*60*1000); } // v4.5.48: periodic every 30min
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
