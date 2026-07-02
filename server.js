@@ -717,7 +717,7 @@ function connectWebSocket(symbol) {
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
       // ── WS h1Move trigger (v4.5.76b) ──
-      if (!wsState[symbol]._mrWsTrig) { wsState[symbol]._mrWsTrig = setTimeout(() => { wsState[symbol]._mrWsTrig = null; try { const _hl=((new Date().getUTCHours()-5)+24)%24; if (!HORAS_ACTIVAS_LIMA.has(_hl)) return; const _hc=_klineCache[symbol+'|1h|3']; if (!_hc||Date.now()-_hc.ts>180000) return; const _ho=parseFloat(_hc.data[1][1]); const _cp=wsState[symbol].lastPrice; if (!_ho||!_cp) return; const _mv=(_cp-_ho)/_ho*100; if (Math.abs(_mv)>=1.0&&!wsState[symbol]._mrWsCd) { wsState[symbol]._mrWsCd=true; setTimeout(()=>{wsState[symbol]._mrWsCd=false;},3*60*1000); console.log('⚡ WS h1Trig '+symbol+': mv='+_mv.toFixed(2)+'% → scanner NOW (v4.5.76b)'); runMeanRevScanner().catch(()=>{}); } } catch(_e){} },2000); }
+      if (!wsState[symbol]._mrWsTrig) { wsState[symbol]._mrWsTrig = setTimeout(() => { wsState[symbol]._mrWsTrig = null; try { const _hl=((new Date().getUTCHours()-5)+24)%24; if (!HORAS_ACTIVAS_LIMA.has(_hl)) return; const _hc=_klineCache[symbol+'|1h|3']; if (!_hc||Date.now()-_hc.ts>180000) return; const _ho=parseFloat(_hc.data[1][1]); const _cp=wsState[symbol].lastPrice; if (!_ho||!_cp) return; const _mv=(_cp-_ho)/_ho*100; if (Math.abs(_mv)>=0.5&&!wsState[symbol]._mrWsCd) { wsState[symbol]._mrWsCd=true; setTimeout(()=>{wsState[symbol]._mrWsCd=false;},3*60*1000); console.log('⚡ WS h1Trig '+symbol+': mv='+_mv.toFixed(2)+'% → scanner NOW (v4.5.76b)'); runMeanRevScanner().catch(()=>{}); } } catch(_e){} },2000); }
       // ── Watermarks de high/low para trailing y SL preciso ──
       if (price > wsState[symbol].trailHigh) wsState[symbol].trailHigh = price;
       if (price < wsState[symbol].trailLow)  wsState[symbol].trailLow  = price;
@@ -4416,7 +4416,7 @@ async function detectMeanReversion(symbol) {
   const h1Move  = (h1Close - h1Open) / h1Open * 100;
   const absH1   = Math.abs(h1Move);
 
-  if (absH1 < 1.0) return; // movimiento insuficiente en 1H
+  if (absH1 < 0.5) return; // v4.5.79: 0.5% umbral (antes 1.0%)
 
   // ── CONDICIÓN 2: Filtro 4H — no pelear contra tendencia fuerte ────
   // Si 4H va en la misma dirección que 1H con >1% → NO tradear
@@ -4445,7 +4445,7 @@ async function detectMeanReversion(symbol) {
   // ── DIRECCIÓN: Mean reversion contra el movimiento de 1H ──────────
   // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
   // 1H subió >1% + spike → vendedores agotaron compradores → SHORT
-  const direction = h1Move < -1.0 ? 'LONG' : 'SHORT';
+  const direction = h1Move < -0.5 ? 'LONG' : 'SHORT'; // v4.5.79
   if (process.env.MEANREV_SHORT_ONLY === 'true' && direction === 'LONG') { console.log(`MeanRev LONG ${symbol} omitido — MEANREV_SHORT_ONLY (LONGs -EV: backtest -0.7% vs SHORT-only +2.1%; XRP LONG 0% WR historico)`); return; } // v4.5.66
 
   // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
