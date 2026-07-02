@@ -23,7 +23,7 @@ const BINANCE_WS = 'wss://stream.binance.com:9443';
 // Horas Lima (UTC-5) con WR <35%: 0,1,2,7,10,11,14,16,22
 // Sesiones de Luis: Mañana 7-10h | Tarde 15-19h Lima
 // Horas extra rentables: 13h (WR 73%), 21h (WR 50%), 23h (WR 75%)
-const HORAS_ACTIVAS_LIMA = new Set([1, 4, 5, 6, 7, 9, 12, 13, 14, 16, 17, 18, 23]); // v4.5.40: +12h Lima (UTC17) para data meanrev: backtest 2.5y — Lima→UTC: 1→6(+$29),4→9(+$45),5→10(+$22),6→11(+$29),7→12(+$100),9→14(+$55),14→19(+$44),16→21(+$17),17→22(+$36),18→23(+$23),23→4(+$38)
+const HORAS_ACTIVAS_LIMA = new Set([1, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16, 17, 18, 23]); // v4.5.78: 11 temp // v4.5.77: 10 temporal // v4.5.40: +12h Lima (UTC17) para data meanrev: backtest 2.5y — Lima→UTC: 1→6(+$29),4→9(+$45),5→10(+$22),6→11(+$29),7→12(+$100),9→14(+$55),14→19(+$44),16→21(+$17),17→22(+$36),18→23(+$23),23→4(+$38)
 
 const WALL_ENABLED       = false; // solo sweep activo
 const SCALP_ENABLED      = false; // solo sweep activo
@@ -235,7 +235,7 @@ tr:hover td{background:#1c2128}
 </head>
 <body>
 <h1>&#9889; Samael Delta</h1>
-<div class="sub">v4.5.62 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
+<div class="sub">v4.5.75 &middot; Auto-refresh 30s &middot; <span id="ts"></span><script>document.getElementById('ts').textContent=new Date().toLocaleTimeString('es-PE',{timeZone:'America/Lima'})+' Lima'</script></div>
 
 <div class="cards">
   <div class="card">
@@ -583,7 +583,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         continue;
       }
 
-      // v4.5.62: slippage guard — trailing_tp meanrev: si precio ya rebotó >0.3% del trigger, reanclar SL
+      // v4.5.75: slippage guard — trailing_tp meanrev: si precio ya rebotó >0.3% del trigger, reanclar SL
       if (closeReason === 'trailing_tp' && trade.source === 'meanrev') {
         const _slipPct = isLong ? (closePrice - price) / closePrice : (price - closePrice) / closePrice;
         if (_slipPct > 0.003) {
@@ -716,6 +716,8 @@ function connectWebSocket(symbol) {
       wsState[symbol].lastWsMsgTime = now;
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
+      // ── WS h1Move trigger (v4.5.76b) ──
+      if (!wsState[symbol]._mrWsTrig) { wsState[symbol]._mrWsTrig = setTimeout(() => { wsState[symbol]._mrWsTrig = null; try { const _hl=((new Date().getUTCHours()-5)+24)%24; if (!HORAS_ACTIVAS_LIMA.has(_hl)) return; const _hc=_klineCache[symbol+'|1h|3']; if (!_hc||Date.now()-_hc.ts>180000) return; const _ho=parseFloat(_hc.data[1][1]); const _cp=wsState[symbol].lastPrice; if (!_ho||!_cp) return; const _mv=(_cp-_ho)/_ho*100; if (Math.abs(_mv)>=1.0&&!wsState[symbol]._mrWsCd) { wsState[symbol]._mrWsCd=true; setTimeout(()=>{wsState[symbol]._mrWsCd=false;},3*60*1000); console.log('⚡ WS h1Trig '+symbol+': mv='+_mv.toFixed(2)+'% → scanner NOW (v4.5.76b)'); runMeanRevScanner().catch(()=>{}); } } catch(_e){} },2000); }
       // ── Watermarks de high/low para trailing y SL preciso ──
       if (price > wsState[symbol].trailHigh) wsState[symbol].trailHigh = price;
       if (price < wsState[symbol].trailLow)  wsState[symbol].trailLow  = price;
@@ -2216,8 +2218,10 @@ function startAlertJob() {
       }).catch(e=>console.error('Weekly CB auto:',e.message));
     }
   },60*1000);
-  setInterval(runMeanRevScanner, 60 * 1000);
-  console.log('📈 Mean Reversion scanner iniciado — cada 1 min');
+  setInterval(runMeanRevScanner, 30 * 1000); // v4.5.76: 30s catches brief h1Move spikes
+  // v4.5.76b: pre-warm h1 klines cada 3min (WS trigger funciona en horas bloqueadas)
+  setInterval(async () => { const _pw = (process.env.WS_SYMBOLS||'').split(',').map(s=>s.trim()).filter(Boolean); for (const _s of _pw) { try { await getCachedKlines(_s,'1h',3); } catch(_){} } }, 3*60*1000);
+  console.log('📈 MeanRev 30s + WS h1Trig activo (v4.5.76b)');
 
   // DESACTIVADO — runAutoAnalysis usa Anthropic API, no necesario en sweep-only mode
   // const intervalMin = parseInt(process.env.ALERT_INTERVAL_MIN || '15'), symbols = (process.env.ALERT_SYMBOLS || 'BTCUSDT').split(',');
@@ -4362,9 +4366,9 @@ async function detectMeanReversion(symbol) {
   // Cooldown
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
 
-  // v4.5.62: bloquear meanrev si BTC sweep activo en <90s
+  // v4.5.75: bloquear meanrev si BTC sweep activo en <90s
   const _btcAnomalyAge = wsState['BTCUSDT']?.anomaly?.time ? (now - wsState['BTCUSDT'].anomaly.time) : Infinity;
-  if (_btcAnomalyAge < 20000) { console.log(`MeanRev ${symbol} omitido — BTC sweep activo hace ${Math.round(_btcAnomalyAge/1000)}s`); return; }
+  if (_btcAnomalyAge < 5000) { console.log(`MeanRev ${symbol} omitido — BTC sweep activo hace ${Math.round(_btcAnomalyAge/1000)}s`); return; } // v4.5.76c: 5s (era 20s)
 
   if (circuitBreaker.isActive()) { console.log(`MeanRev omitido — Circuit Breaker activo (${symbol})`); return; }
 
@@ -4436,7 +4440,7 @@ async function detectMeanReversion(symbol) {
   const median  = sorted[Math.floor(sorted.length / 2)];
   const volMult = median > 0 ? lastVol / median : 0;
 
-  if (volMult < 3) return; // spike insuficiente
+  if (volMult < parseFloat(process.env.MR_VOL_MIN||2.5)) return; // v4.5.77: env MR_VOL_MIN
 
   // ── DIRECCIÓN: Mean reversion contra el movimiento de 1H ──────────
   // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
