@@ -4662,6 +4662,22 @@ app.listen(PORT, async () => {
   // v4.5.51: restore weekly CB base persisted before last restart
   try { const _wcbF='/home/noc/samael_delta/.wcb_state.json'; if(require('fs').existsSync(_wcbF)){const _s=JSON.parse(require('fs').readFileSync(_wcbF));if((Date.now()-_s.ts)<7*24*3600*1000&&parseFloat(_s.base)>0){process.env.WEEKLY_CB_BALANCE=_s.base;console.log('Weekly CB base restaurado: $'+_s.base); if(_s.triggered){_LIVE_TRADING=false;process.env.LIVE_TRADING='false';console.log('Weekly CB fue activado antes del restart, LIVE=false');}}} } catch(e){console.error('Weekly CB state load:',e.message);} // v4.5.71
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
+  // v4.5.86: restore consecSL daily block from DB — 3-SL blocks were lost on restart
+  (async()=>{ try {
+    const _mrRestSyms=(process.env.MEANREV_REAL_SYMBOLS||'').split(',').filter(Boolean);
+    for (const _rSym of _mrRestSyms) {
+      const {data:_rc}=await supabase.from('paper_trades').select('close_reason').eq('symbol',_rSym).eq('source','meanrev').not('status','eq','open').order('opened_at',{ascending:false}).limit(30);
+      if(!_rc?.length) continue;
+      let _csl=0;
+      for (const t of _rc) { // most recent first
+        const r=t.close_reason;
+        if (r==='sl'||r==='kill_switch') _csl++;
+        else if (r==='tp1'||r==='trailing_tp') break; // win resets
+        // timeout: neutral, skip
+      }
+      if(_csl>=3){const _mid=new Date();_mid.setUTCHours(24,0,0,0);if(!_consecSLCount[_rSym])_consecSLCount[_rSym]={};_consecSLCount[_rSym].count=_csl;_consecSLCount[_rSym].blockedUntil=_mid.getTime();console.log(`[Restore] 3-SL block ${_rSym}: ${_csl} SLs consecutivos → bloqueado hasta medianoche UTC`);}
+    }
+  } catch(_rErr){console.error('[Restore] consecSL state:',_rErr.message);}})();
   if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),10*60*1000); } // v4.5.83: periodic every 10min
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
   updateBullRunState().catch(e => console.error('Bull run init error:', e.message));
