@@ -2260,7 +2260,8 @@ function startAlertJob() {
       const state = wsState[s];
       if (!state || !wsConnections[s]) continue;
       const elapsed = Date.now() - (state.lastWsMsgTime || 0);
-      const watchdogMs = (s.includes('BTC') || s.includes('ETH')) ? 60000 : 180000;
+      const _mrRealWd = (process.env.MEANREV_REAL_SYMBOLS||'').split(',').includes(s);
+      const watchdogMs = (s.includes('BTC') || s.includes('ETH') || _mrRealWd) ? 60000 : 180000; // v4.5.90: real symbols get 60s watchdog
       if (elapsed > watchdogMs) {
         _wsNoDataCount[s] = (_wsNoDataCount[s] || 0) + 1;
         console.log(`⚠️ WS watchdog: sin aggTrade ${(elapsed/1000)|0}s — reconectando ${s} (fallo #${_wsNoDataCount[s]})`);
