@@ -357,7 +357,7 @@ async function _setFuturesLeverage(symbol, leverage) {
       { headers: { 'X-MBX-APIKEY': BINANCE_API_KEY }, timeout: 10000 });
     _leverageSet.add(key);
     console.log(`⚙️ Leverage ${symbol}: ${leverage}x`);
-  } catch(e) { console.error(`_setLeverage ${symbol}: ${e.response?.data?.msg || e.message}`); }
+  } catch(e) { console.error(`_setLeverage ${symbol}: ${e.response?.data?.msg || e.message}`); throw e; } // v4.5.89: propagate — order must not open at wrong leverage
 }
 
 async function _placeFuturesMarket(symbol, side, qty, reduceOnly = false) {
