@@ -8,7 +8,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(cors({ origin: '*' }));
-const _FEE_RT = 0.0008; // 0.04% taker x2 lados — Binance Futures (v4.5.58: era 0.00014, typo 10x subestimado)
+const _FEE_RT = 0.001; // 0.05% taker x2 lados = 0.10% RT — Binance Futures (v4.5.85: corregido de 0.0008)
 app.use(express.json());
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY });
@@ -620,7 +620,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
 
       // v4.5.28: consecutive-SL cooldown (SLs rápidos <3h)
       // v4.5.29: 3-consecutive-SL daily block (rachas largas)
-      if (trade.source === 'sweep' || trade.source === 'whale') {
+      if (trade.source === 'sweep' || trade.source === 'whale' || trade.source === 'meanrev') { // v4.5.83
         if (!_consecSLData[symbol])  _consecSLData[symbol]  = { times: [] };
         if (!_consecSLCount[symbol]) _consecSLCount[symbol] = { count: 0 };
         if (closeReason === 'sl') {
@@ -629,9 +629,11 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
           _consecSLData[symbol].times = _consecSLData[symbol].times.slice(-2);
           const [t1, t2] = _consecSLData[symbol].times;
           if (t1 && t2 && (t2 - t1) < 3 * 60 * 60 * 1000) {
-            _consecSLPause[symbol] = { until: Date.now() + 2 * 60 * 60 * 1000 };
-            console.log(`⏸ Consec-SL cooldown ${symbol}: 2 SLs en ${Math.round((t2-t1)/60000)}min → pausa 2h`);
-            if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏸ ${symbol} pausado 2h — 2 SLs consecutivos en ${Math.round((t2-t1)/60000)}min`).catch(()=>{});
+            const _csPauseMs = (trade.source === 'meanrev') ? 30 * 60 * 1000 : 2 * 60 * 60 * 1000; // v4.5.83: meanrev=30min, sweep/whale=2h
+            const _csPauseLabel = (trade.source === 'meanrev') ? '30min' : '2h';
+            _consecSLPause[symbol] = { until: Date.now() + _csPauseMs };
+            console.log(`⏸ Consec-SL cooldown ${symbol}: 2 SLs en ${Math.round((t2-t1)/60000)}min → pausa ${_csPauseLabel}`);
+            if (process.env.TELEGRAM_CHAT_ID) bot.sendMessage(process.env.TELEGRAM_CHAT_ID, `⏸ ${symbol} pausado ${_csPauseLabel} — 2 SLs consecutivos en ${Math.round((t2-t1)/60000)}min`).catch(()=>{});
           }
           // v4.5.29: contador sin límite de tiempo — 3 consecutivos = midnight block
           _consecSLCount[symbol].count++;
@@ -717,7 +719,7 @@ function connectWebSocket(symbol) {
       wsState[symbol].trades.push({ price, qty, usdVal, isBuy, time: now });
       wsState[symbol].trades = wsState[symbol].trades.filter(tr => now - tr.time < 120000);
       // ── WS h1Move trigger (v4.5.76b) ──
-      if (!wsState[symbol]._mrWsTrig) { wsState[symbol]._mrWsTrig = setTimeout(() => { wsState[symbol]._mrWsTrig = null; try { const _hl=((new Date().getUTCHours()-5)+24)%24; if (!HORAS_ACTIVAS_LIMA.has(_hl)) return; const _hc=_klineCache[symbol+'|1h|3']; if (!_hc||Date.now()-_hc.ts>180000) return; const _ho=parseFloat(_hc.data[1][1]); const _cp=wsState[symbol].lastPrice; if (!_ho||!_cp) return; const _mv=(_cp-_ho)/_ho*100; if (Math.abs(_mv)>=0.5&&!wsState[symbol]._mrWsCd) { wsState[symbol]._mrWsCd=true; setTimeout(()=>{wsState[symbol]._mrWsCd=false;},3*60*1000); console.log('⚡ WS h1Trig '+symbol+': mv='+_mv.toFixed(2)+'% → scanner NOW (v4.5.76b)'); runMeanRevScanner().catch(()=>{}); } } catch(_e){} },2000); }
+      if (!wsState[symbol]._mrWsTrig) { wsState[symbol]._mrWsTrig = setTimeout(() => { wsState[symbol]._mrWsTrig = null; try { const _hl=((new Date().getUTCHours()-5)+24)%24; if (!HORAS_ACTIVAS_LIMA.has(_hl)) return; const _hc=_klineCache[symbol+'|1h|3']; if (!_hc||Date.now()-_hc.ts>180000) return; const _ho=parseFloat(_hc.data[1][1]); const _cp=wsState[symbol].lastPrice; if (!_ho||!_cp) return; const _mv=(_cp-_ho)/_ho*100; if (Math.abs(_mv)>=0.3&&!wsState[symbol]._mrWsCd) { wsState[symbol]._mrWsCd=true; setTimeout(()=>{wsState[symbol]._mrWsCd=false;},3*60*1000); console.log('⚡ WS h1Trig '+symbol+': mv='+_mv.toFixed(2)+'% → scanner NOW (v4.5.76b)'); runMeanRevScanner().catch(()=>{}); } } catch(_e){} },2000); }
       // ── Watermarks de high/low para trailing y SL preciso ──
       if (price > wsState[symbol].trailHigh) wsState[symbol].trailHigh = price;
       if (price < wsState[symbol].trailLow)  wsState[symbol].trailLow  = price;
@@ -1303,7 +1305,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     if (sweepConfidence < 86) { console.log(`⏭ Sweep trade descartado — confidence ${sweepConfidence}% < 86% (requiere vol≥7x)`); return; }
     // v4.5.13: LONG tiene WR 20% vs SHORT 40% — LONG requiere señal más fuerte
     if (direction === 'LONG' && sweepConfidence < 92) { console.log(`⏭ LONG descartado — conf ${sweepConfidence}% < 92% (LONG requiere señal más fuerte, WR histórico bajo)`); return; }
-    let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null;
+    let bias4hSweep = null, bias1dSweep = null, oiTrend15mSweep = null, fundingSweep = 0, fib15mSweep = null, sma20dSweep = null;
     try {
       const [k15mSw, k4hSw, k1dSw, oi15mSw, oi4hSw, fundSw] = await Promise.all([
         axios.get(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=50`),
@@ -1315,6 +1317,7 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
       fundingSweep = parseFloat(fundSw.data.lastFundingRate);
       bias4hSweep = calcBias(k4hSw.data, oi4hSw, fundingSweep);
       bias1dSweep = calcBias(k1dSw.data, null, fundingSweep);
+      const _sw1dCloses = k1dSw.data.slice(-21,-1).map(k=>parseFloat(k[4])); sma20dSweep = _sw1dCloses.length>=20 ? _sw1dCloses.reduce((s,v)=>s+v,0)/_sw1dCloses.length : null; // v4.5.81
       oiTrend15mSweep = calcOITrend(oi15mSw);
       fib15mSweep = calcFibonacci(k15mSw.data, price);
     } catch(e) { console.error('sweep 4h/1d bias fetch error:', e.message); } // v4.5.72
@@ -1340,6 +1343,11 @@ async function openSweepCounterTrade(symbol, direction, metrics, reason, liqBonu
     }
     if (bias4hSweep?.bias === 'short' && direction === 'LONG') {
       console.log(`⏭ Sweep LONG omitido — bias_4h bajista (score:${bias4hSweep.score}) — tendencia 4h en contra (${symbol})`);
+      return;
+    }
+    // v4.5.81: SMA20d check — no LONG sweep si activo >3% bajo SMA20d (downtrend macro)
+    if (direction === 'LONG' && sma20dSweep !== null && price < sma20dSweep * 0.97) {
+      console.log(`⏭ Sweep LONG omitido — precio bajo SMA20d (${price.toFixed(4)} < ${(sma20dSweep*0.97).toFixed(4)}) — v4.5.81`);
       return;
     }
     // v4.5.9: sobreextensión — b4h score > 90 = mercado sobrecomprado, sweep LONG en techo (0W 9L en datos)
@@ -2518,7 +2526,7 @@ async function monitorPaperTrades() {
       } else {
         // ── Timeout 60min para meanrev, 6h para whale/wall/sweep ──
         const minAbierto6h = (Date.now() - new Date(trade.opened_at).getTime()) / 60000;
-        const timeoutMin = trade.source === 'meanrev' ? 60 : 360;
+        const timeoutMin = trade.source === 'meanrev' ? (trade.market_data?.exit_mins || 60) : 360; // v4.5.82: respect exit_mins from market_data
         if (minAbierto6h >= timeoutMin) {
           const wsP6h = wsState[trade.symbol]?.lastPrice;
           if (wsP6h) {
@@ -4365,12 +4373,17 @@ async function detectMeanReversion(symbol) {
 
   // Cooldown
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
+  // v4.5.83: DB-backed cooldown — survives restarts (in-memory resets on restart lose per-symbol state)
+  { const _mrCdDb = await supabase.from('paper_trades').select('id').eq('symbol', symbol).in('source', ['meanrev']).gte('opened_at', new Date(now - 30 * 60 * 1000).toISOString()); if (_mrCdDb.data?.length) /* v4.5.85: 30min DB cooldown */ { meanRevCooldown[symbol] = now; return; } }
 
   // v4.5.75: bloquear meanrev si BTC sweep activo en <90s
   const _btcAnomalyAge = wsState['BTCUSDT']?.anomaly?.time ? (now - wsState['BTCUSDT'].anomaly.time) : Infinity;
-  if (_btcAnomalyAge < 5000) { console.log(`MeanRev ${symbol} omitido — BTC sweep activo hace ${Math.round(_btcAnomalyAge/1000)}s`); return; } // v4.5.76c: 5s (era 20s)
+  const _earlyDir = (() => { try { const _ch=_klineCache[symbol+'|1h|3']; if(!_ch) return null; const _ho=parseFloat(_ch.data[1][1]); const _cp=wsState[symbol]?.lastPrice; if(!_cp) return null; const _mv=(_cp-_ho)/_ho*100; return _mv < -0.3 ? 'LONG' : _mv > 0.3 ? 'SHORT' : null; } catch(e){return null;} })(); // v4.5.82: sync with v4.5.79d threshold
+  if (_btcAnomalyAge < 5000 && _earlyDir === 'LONG') { console.log(`MeanRev LONG ${symbol} omitido — BTC sweep activo`); return; } // v4.5.79c: solo LONG
 
   if (circuitBreaker.isActive()) { console.log(`MeanRev omitido — Circuit Breaker activo (${symbol})`); return; }
+  if (_consecSLPause[symbol] && _consecSLPause[symbol].until > Date.now()) { const _mrMinLeft = Math.ceil((_consecSLPause[symbol].until - Date.now()) / 60000); console.log(`MeanRev omitido — consecSL pause ${symbol} (${_mrMinLeft}min restantes)`); return; } // v4.5.84: check consecSL pause before opening meanrev
+  if (_consecSLCount[symbol]?.blockedUntil > Date.now()) { const _mrMinLeft2 = Math.ceil((_consecSLCount[symbol].blockedUntil - Date.now()) / 60000); console.log(`MeanRev omitido — 3-SL diario ${symbol} (${_mrMinLeft2}min hasta medianoche)`); return; } // v4.5.84: check 3-SL daily block
 
   // v4.5.42: Weekly Circuit Breaker
   const _wcbBase = parseFloat(process.env.WEEKLY_CB_BALANCE || '0');
@@ -4398,7 +4411,7 @@ async function detectMeanReversion(symbol) {
   const { data: existing } = await supabase.from('paper_trades').select('id').eq('symbol', symbol).eq('status', 'open').not('source', 'in', '(shadow,bull_run_long,sol_paper)'); // v4.5.57: shadow no bloquea
   if (existing?.length) return;
   // v4.5.27: cap global — excluir shadow/bull_run_long (no deben bloquear meanrev)
-  const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open').not('source','in','(shadow,bull_run_long,sol_paper)');
+  const { data: _mrAllOpen } = await supabase.from('paper_trades').select('id').eq('status', 'open').not('source','in','(shadow,bull_run_long,sol_paper)').not('symbol','in','(BTCUSDT,DOGEUSDT)'); // v4.5.80: excluir PAPER_ONLY de conteo real
   if ((_mrAllOpen?.length || 0) >= 3) { console.log(`MeanRev omitido — ${_mrAllOpen.length} trades reales abiertos (máx 3)`); return; }
 
   const price = wsState[symbol]?.lastPrice;
@@ -4416,7 +4429,7 @@ async function detectMeanReversion(symbol) {
   const h1Move  = (h1Close - h1Open) / h1Open * 100;
   const absH1   = Math.abs(h1Move);
 
-  if (absH1 < 0.5) return; // v4.5.79: 0.5% umbral (antes 1.0%)
+  if (absH1 < 0.3) return; // v4.5.79d: 0.3% umbral
 
   // ── CONDICIÓN 2: Filtro 4H — no pelear contra tendencia fuerte ────
   // Si 4H va en la misma dirección que 1H con >1% → NO tradear
@@ -4445,7 +4458,7 @@ async function detectMeanReversion(symbol) {
   // ── DIRECCIÓN: Mean reversion contra el movimiento de 1H ──────────
   // 1H cayó >1% + spike → compradores agotaron vendedores → LONG
   // 1H subió >1% + spike → vendedores agotaron compradores → SHORT
-  const direction = h1Move < -0.5 ? 'LONG' : 'SHORT'; // v4.5.79
+  const direction = h1Move < -0.3 ? 'LONG' : 'SHORT'; // v4.5.79d
   if (process.env.MEANREV_SHORT_ONLY === 'true' && direction === 'LONG') { console.log(`MeanRev LONG ${symbol} omitido — MEANREV_SHORT_ONLY (LONGs -EV: backtest -0.7% vs SHORT-only +2.1%; XRP LONG 0% WR historico)`); return; } // v4.5.66
 
   // ── CONDICIÓN 4: bias_1d no contradice completamente ─────────────
@@ -4457,11 +4470,11 @@ async function detectMeanReversion(symbol) {
     console.log(`MeanRev LONG ${symbol} omitido — 1D muy bajista (score:${bias1d.score})`);
     return;
   }
-  if (direction === 'LONG' && bias1d.bias === 'long' && bias1d.score > 60) {
+  if (direction === 'LONG' && bias1d.bias === 'long' && bias1d.score > 75) { // v4.5.79b: 60→75
     console.log(`MeanRev LONG ${symbol} omitido - bias_1d alcista (score:${bias1d.score}) - bull run`);
     return;
   }
-  if (direction === 'SHORT' && bias1d.score > 65) {
+  if (direction === 'SHORT' && bias1d.score > 80) { // v4.5.79c: 65→80
     console.log(`MeanRev SHORT ${symbol} omitido — 1D muy alcista (score:${bias1d.score})`);
     return;
   }
@@ -4473,12 +4486,12 @@ async function detectMeanReversion(symbol) {
   // ── CONDICIÓN 5: SMA20 diaria — no pelear contra régimen macro (v4.5.41) ──────
   const sma20closes = k1dData.slice(-21, -1).map(k => parseFloat(k[4]));
   const sma20d = sma20closes.reduce((s,v) => s+v, 0) / sma20closes.length;
-  if (direction === 'LONG' && price < sma20d * 0.97) {
-    console.log('MeanRev LONG '+symbol+' omitido — precio bajo SMA20d ('+price.toFixed(2)+' < '+(sma20d*0.97).toFixed(2)+')');
+  if (direction === 'LONG' && price < sma20d * 0.90) {
+    console.log('MeanRev LONG '+symbol+' omitido — precio bajo SMA20d ('+price.toFixed(2)+' < '+(sma20d*0.90).toFixed(2)+') v4.5.81');
     return;
   }
-  if (direction === 'SHORT' && price > sma20d * 1.03) {
-    console.log('MeanRev SHORT '+symbol+' omitido — precio sobre SMA20d ('+price.toFixed(2)+' > '+(sma20d*1.03).toFixed(2)+')');
+  if (direction === 'SHORT' && price > sma20d * 1.15) {
+    console.log('MeanRev SHORT '+symbol+' omitido — precio sobre SMA20d ('+price.toFixed(2)+' > '+(sma20d*1.15).toFixed(2)+') v4.5.81');
     return;
   }
 
@@ -4649,7 +4662,7 @@ app.listen(PORT, async () => {
   // v4.5.51: restore weekly CB base persisted before last restart
   try { const _wcbF='/home/noc/samael_delta/.wcb_state.json'; if(require('fs').existsSync(_wcbF)){const _s=JSON.parse(require('fs').readFileSync(_wcbF));if((Date.now()-_s.ts)<7*24*3600*1000&&parseFloat(_s.base)>0){process.env.WEEKLY_CB_BALANCE=_s.base;console.log('Weekly CB base restaurado: $'+_s.base); if(_s.triggered){_LIVE_TRADING=false;process.env.LIVE_TRADING='false';console.log('Weekly CB fue activado antes del restart, LIVE=false');}}} } catch(e){console.error('Weekly CB state load:',e.message);} // v4.5.71
   circuitBreaker.initFromSupabase().catch(e => console.error('CB init error:', e.message));
-  if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),30*60*1000); } // v4.5.48: periodic every 30min
+  if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),10*60*1000); } // v4.5.83: periodic every 10min
   initSymTrackers().catch(e => console.error('symTracker init error:', e.message));
   updateBullRunState().catch(e => console.error('Bull run init error:', e.message));
   setInterval(() => updateBullRunState().catch(e => console.error('Bull run check error:', e.message)), 30 * 60 * 1000); // v4.5.23: re-evaluar cada 30min
