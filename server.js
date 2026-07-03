@@ -4668,16 +4668,27 @@ app.listen(PORT, async () => {
   (async()=>{ try {
     const _mrRestSyms=(process.env.MEANREV_REAL_SYMBOLS||'').split(',').filter(Boolean);
     for (const _rSym of _mrRestSyms) {
-      const {data:_rc}=await supabase.from('paper_trades').select('close_reason').eq('symbol',_rSym).eq('source','meanrev').not('status','eq','open').order('opened_at',{ascending:false}).limit(30);
+      const {data:_rc}=await supabase.from('paper_trades').select('close_reason,closed_at').eq('symbol',_rSym).eq('source','meanrev').not('status','eq','open').order('opened_at',{ascending:false}).limit(30);
       if(!_rc?.length) continue;
-      let _csl=0;
+      let _csl=0, _lastSlTs=0;
       for (const t of _rc) { // most recent first
         const r=t.close_reason;
-        if (r==='sl') _csl++; // only sl increments (kill_switch is neutral in live code)
+        if (r==='sl') { _csl++; if(!_lastSlTs&&t.closed_at) _lastSlTs=new Date(t.closed_at).getTime(); }
         else if (r==='tp1'||r==='trailing_tp') break; // win resets
         // timeout, kill_switch: neutral, skip
       }
-      if(_csl>=3){const _mid=new Date();_mid.setUTCHours(24,0,0,0);if(!_consecSLCount[_rSym])_consecSLCount[_rSym]={};_consecSLCount[_rSym].count=_csl;_consecSLCount[_rSym].blockedUntil=_mid.getTime();console.log(`[Restore] 3-SL block ${_rSym}: ${_csl} SLs consecutivos → bloqueado hasta medianoche UTC`);}
+      if(_csl>=3&&_lastSlTs>0){
+        // v4.5.91: use last-SL date for block expiry, not restart date
+        // prevents re-blocking for an extra day when restart happens after midnight UTC
+        const _blockDay=new Date(_lastSlTs); _blockDay.setUTCHours(24,0,0,0);
+        if(Date.now()<_blockDay.getTime()){
+          if(!_consecSLCount[_rSym])_consecSLCount[_rSym]={};
+          _consecSLCount[_rSym].count=_csl; _consecSLCount[_rSym].blockedUntil=_blockDay.getTime();
+          console.log(`[Restore] 3-SL block ${_rSym}: ${_csl} SLs → bloqueado hasta ${_blockDay.toISOString()} (basado en último SL)`);
+        } else {
+          console.log(`[Restore] 3-SL ${_rSym}: bloqueo ya expiró (último SL ${new Date(_lastSlTs).toISOString()}) — símbolo libre`);
+        }
+      }
     }
   } catch(_rErr){console.error('[Restore] consecSL state:',_rErr.message);}})();
   if(_LIVE_TRADING) { setTimeout(()=>checkOrphanPositions().catch(e=>console.error('Orphan:',e)),8000); setInterval(()=>checkOrphanPositions().catch(e=>console.error('Orphan periodic:',e)),10*60*1000); } // v4.5.83: periodic every 10min
