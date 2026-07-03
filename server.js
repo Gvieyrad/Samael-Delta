@@ -4672,9 +4672,9 @@ app.listen(PORT, async () => {
       let _csl=0;
       for (const t of _rc) { // most recent first
         const r=t.close_reason;
-        if (r==='sl'||r==='kill_switch') _csl++;
+        if (r==='sl') _csl++; // only sl increments (kill_switch is neutral in live code)
         else if (r==='tp1'||r==='trailing_tp') break; // win resets
-        // timeout: neutral, skip
+        // timeout, kill_switch: neutral, skip
       }
       if(_csl>=3){const _mid=new Date();_mid.setUTCHours(24,0,0,0);if(!_consecSLCount[_rSym])_consecSLCount[_rSym]={};_consecSLCount[_rSym].count=_csl;_consecSLCount[_rSym].blockedUntil=_mid.getTime();console.log(`[Restore] 3-SL block ${_rSym}: ${_csl} SLs consecutivos → bloqueado hasta medianoche UTC`);}
     }
