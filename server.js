@@ -670,7 +670,7 @@ async function checkSlTpOnTick(symbol, price, trailHigh = price, trailLow = pric
         const _srcLabelWs = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
         const _srcIconWs = _srcIconsWs[trade.source] || '📊', _srcNameWs = _srcLabelWs[trade.source] || trade.source || '–';
         const _isTrailingWs = closeReason?.includes('trailing');
-        const _razonMapWs = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout 2h', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+        const _razonMapWs = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
         const _razonWs = _razonMapWs[closeReason] || (closeReason || '–').toUpperCase();
         const _dCw = new Date(), _limaCw = `${_dCw.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCw.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
         const _closedEmojiWs = pnl_usd >= 0 ? '✅' : '❌';
@@ -2652,7 +2652,7 @@ async function monitorPaperTrades() {
             const _srcLabelM = { auto: 'Auto', scalping: 'Scalping', manual: 'Manual', sweep: 'Sweep', wall: 'Wall', meanrev: 'MeanRev' };
             const _srcIconM = _srcIconsM[trade.source] || '📊', _srcNameM = _srcLabelM[trade.source] || trade.source || '–';
             const _isTrailingM = closeReason?.includes('trailing');
-            const _razonMapM = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout 2h', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
+            const _razonMapM = { tp1: 'TP1', tp2: 'TP2', sl: 'SL', timeout: 'Timeout', timeout_lateral: 'Timeout lateral', kill_switch: 'Kill switch', signal_reversal: 'Reversión señal', manual_tp: 'TP manual', manual: 'Cierre manual' };
             const _razonM = _razonMapM[closeReason] || (closeReason || '–').toUpperCase();
             const _dCm = new Date(), _limaCm = `${_dCm.toLocaleDateString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit'})} ${_dCm.toLocaleTimeString('es-PE',{timeZone:'America/Lima',hour:'2-digit',minute:'2-digit',hour12:true})}`;
             const _closedEmojiM = pnl_usd >= 0 ? '✅' : '❌';
@@ -4440,8 +4440,6 @@ async function detectMeanReversion(symbol) {
   const h4Close = parseFloat(k4hData[0][4]);
   const h4Move  = (h4Close - h4Open) / h4Open * 100;
 
-  const h1Dir = h1Move < 0 ? 'down' : 'up';
-  const h4Dir = h4Move < 0 ? 'down' : 'up';
 
   // v4.5.74: filtro 4H eliminado — backtest mostró -$1024 vs base sin él
 
@@ -4551,7 +4549,7 @@ async function detectMeanReversion(symbol) {
     }
     return;
   }
-  meanRevCooldown[symbol] = now; // Bug #8: cooldown solo si INSERT exitoso
+  meanRevCooldown[symbol] = now; // v4.5.87: already set as mutex above; this line is now a no-op (cooldown was set before first await)
   _invalidateSlCache(symbol); // v4.5.67: nuevo trade visible al monitor WS sin esperar TTL
 
   console.log(`📈 MeanRev: ${direction} ${symbol} @ $${price.toFixed(1)} | 1H:${h1Move.toFixed(2)}% | Vol:${volMult.toFixed(1)}x | SL:$${sl.toFixed(1)} TP:$${tp.toFixed(1)} | RR 1:${rr.toFixed(1)}`);
@@ -4565,19 +4563,25 @@ async function detectMeanReversion(symbol) {
 
 // Endpoint para ver estado del módulo
 app.get('/api/meanrev/status', (req, res) => {
+  const _mrStatusSyms = (process.env.WS_SYMBOLS || 'XRPUSDT,SOLUSDT').split(',').map(s => s.trim());
+  const _mrRealSymsSet = new Set((process.env.MEANREV_REAL_SYMBOLS || '').split(',').filter(Boolean));
   const status = {};
-  for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+  for (const symbol of _mrStatusSyms) {
     const cdMs = meanRevCooldown[symbol]
       ? Math.max(0, MEANREV_COOLDOWN_MS - (Date.now() - meanRevCooldown[symbol]))
       : 0;
+    const csc = _consecSLCount[symbol] || {};
     status[symbol] = {
       lastPrice: wsState[symbol]?.lastPrice || 0,
       cooldownMin: (cdMs / 60000).toFixed(1),
       active: cdMs === 0,
+      real: _mrRealSymsSet.has(symbol),
+      consecSL: csc.count || 0,
+      blockedUntil: csc.blockedUntil ? new Date(csc.blockedUntil).toISOString() : null,
     };
   }
-  res.json({ module: 'Mean Reversion', version: '4.4.35', status });
-  });
+  res.json({ module: 'Mean Reversion', version: '4.5.91', status });
+});
 
 // ── Journal automático — captura contexto macro en cada entrada ──────────────
 async function captureTradeContext(symbol) {
