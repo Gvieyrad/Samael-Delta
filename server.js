@@ -4371,10 +4371,11 @@ async function detectMeanReversion(symbol) {
   // Filtro horario
   if (isHoraBloqueada()) return;
 
-  // Cooldown
+  // Cooldown + v4.5.87: set in-memory mutex BEFORE async ops to prevent h1Trig/scanner race
   if (meanRevCooldown[symbol] && now - meanRevCooldown[symbol] < MEANREV_COOLDOWN_MS) return;
+  meanRevCooldown[symbol] = now; // mutex: block concurrent triggers (cleared on failure below)
   // v4.5.83: DB-backed cooldown — survives restarts (in-memory resets on restart lose per-symbol state)
-  { const _mrCdDb = await supabase.from('paper_trades').select('id').eq('symbol', symbol).in('source', ['meanrev']).gte('opened_at', new Date(now - 30 * 60 * 1000).toISOString()); if (_mrCdDb.data?.length) /* v4.5.85: 30min DB cooldown */ { meanRevCooldown[symbol] = now; return; } }
+  { const _mrCdDb = await supabase.from('paper_trades').select('id').eq('symbol', symbol).in('source', ['meanrev']).gte('opened_at', new Date(now - 30 * 60 * 1000).toISOString()); if (_mrCdDb.data?.length) /* v4.5.85: 30min DB cooldown */ { return; /* keep cooldown set — DB has recent trade */ } }
 
   // v4.5.75: bloquear meanrev si BTC sweep activo en <90s
   const _btcAnomalyAge = wsState['BTCUSDT']?.anomaly?.time ? (now - wsState['BTCUSDT'].anomaly.time) : Infinity;
