@@ -4725,7 +4725,8 @@ async function checkSymbolPerformance() {
       const d=bySym[sym]||{pnl:0,comm:0}, net=d.pnl+d.comm;
       const e=net>=0?'OK':net<SYMPERF_KILL?'KILL':'WARN';
       lines.push(e+' '+sym+': PnL='+(d.pnl>=0?'+':'')+d.pnl.toFixed(2)+' COMM='+d.comm.toFixed(2)+' NET='+(net>=0?'+':'')+net.toFixed(2));
-      if (net<SYMPERF_KILL) toKill.push(sym);
+      const _mrProtected = new Set((process.env.MEANREV_REAL_SYMBOLS||'').split(',').filter(Boolean));
+      if (net<SYMPERF_KILL && !_mrProtected.has(sym)) toKill.push(sym); // v4.5.93: don't auto-kill symbols under active meanrev testing
     }
     const hasWarn=syms.some(s=>((bySym[s]||{pnl:0,comm:0}).pnl+(bySym[s]||{pnl:0,comm:0}).comm)<SYMPERF_WARN);
     if (!hasWarn){console.log('[SymPerf] todos OK');return;}
@@ -4750,7 +4751,7 @@ async function checkSymbolPerformance() {
 }
 
   startAlertJob();
-  checkSymbolPerformance().catch(e=>console.error('[SymPerf] init:',e.message));
+  // v4.5.93: removed startup call — symperf on startup kills real symbols after innocent restarts
   setInterval(()=>checkSymbolPerformance().catch(e=>console.error('[SymPerf]:',e.message)),6*60*60*1000);
 
   // ── Wall Absorption v2 — DESACTIVADO PERMANENTEMENTE v4.4.76
