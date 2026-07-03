@@ -4734,7 +4734,8 @@ async function checkSymbolPerformance() {
     sendWaDelta(msg).catch(()=>{});
     console.log('[SymPerf]',msg);
     if(toKill.length){
-      const newSyms=syms.filter(s=>!toKill.includes(s));
+      const _allWsSyms=(process.env.WS_SYMBOLS||'').split(',').filter(Boolean); // v4.5.92: preserve paper-only symbols
+      const newSyms=_allWsSyms.filter(s=>!toKill.includes(s));
       process.env.WS_SYMBOLS=newSyms.join(',');
       const fs=require('fs'),ep='/home/noc/samael_delta/.env';
       let env=fs.readFileSync(ep,'utf8');
